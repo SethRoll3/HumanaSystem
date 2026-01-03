@@ -1,0 +1,9 @@
+{
+  "name": "Asociación Humana - HIS",
+  "description": "Sistema de Gestión Clínica e Historial Médico con Firma Digital e IA.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}

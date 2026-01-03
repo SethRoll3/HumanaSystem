@@ -1,0 +1,17 @@
+{
+  "hosting": {
+    "target": "clinica-asociacion-humana-sys",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
