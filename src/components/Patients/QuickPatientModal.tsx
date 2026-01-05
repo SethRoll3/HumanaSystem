@@ -12,9 +12,10 @@ import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES } from '
 interface QuickPatientModalProps {
     onClose: () => void;
     currentUser: UserProfile;
+    onSuccess?: (newPatientId: string) => Promise<void>;
 }
 
-export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, currentUser }) => {
+export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, currentUser, onSuccess }) => {
     const [isSaving, setIsSaving] = useState(false);
     const [isNoResNew, setIsNoResNew] = useState(false);
     
@@ -81,11 +82,16 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
             // Asegurar ID
             if (!payload.id) payload.id = payload.billingCode;
 
-            await createPatient(payload);
+            const newId = await createPatient(payload);
             
             await logAuditAction(currentUser.email, "CREACION_PACIENTE_RAPIDO", `Paciente creado: ${payload.fullName} [DPI/Código: ${payload.billingCode}]`);
 
             toast.success("Paciente Registrado Exitosamente");
+            
+            if (onSuccess) {
+                await onSuccess(newId);
+            }
+            
             onClose(); 
         } catch (e) { 
             console.error(e);

@@ -37,7 +37,7 @@ export const appointmentService = {
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({
       id: doc.id,
-      ...doc.data()
+      ...(doc.data() as any)
     } as Appointment));
   },
 
@@ -71,7 +71,7 @@ export const appointmentService = {
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({
       id: doc.id,
-      ...doc.data()
+      ...(doc.data() as any)
     } as Appointment));
   },
 

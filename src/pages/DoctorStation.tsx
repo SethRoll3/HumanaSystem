@@ -558,7 +558,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                         setShowCreateAppointmentModal(true); 
                     }} 
                     currentUser={user}
-                    onSuccess={async (newPatientId) => {
+                    onSuccess={async (newPatientId: React.SetStateAction<string>) => {
                         await loadModalData();
                         setPreSelectedPatientId(newPatientId);
                         setShowQuickPatientModal(false);

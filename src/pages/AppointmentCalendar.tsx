@@ -403,6 +403,7 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
                         onNavigate={(d) => setViewDate(d)}
 
                         toolbar={false} 
+                        culture="es" // <--- Aquí es donde se forza el idioma
 
                         step={zoomConfig.step} 
                         timeslots={1} 

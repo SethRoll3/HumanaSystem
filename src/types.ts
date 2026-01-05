@@ -57,6 +57,7 @@ export interface Patient {
 
   // Legacy fields made optional for the new "Quick Create" flow
   age?: number;
+  birthDate?: string; // NUEVO: Fecha de nacimiento (ISO string YYYY-MM-DD)
   gender?: 'M' | 'F' | 'masculino' | 'femenino'; 
   origin?: PatientOrigin | string;
   protocol_code?: string;
