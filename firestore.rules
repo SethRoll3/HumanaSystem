@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- FUNCIONES DE AYUDA ---
+    
+    // Verifica si el usuario inició sesión
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    // Obtiene los datos del usuario actual desde la colección 'users'
+    function obtenerUsuario() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Verifica si el usuario tiene un rol específico (admin, doctor, etc.)
+    function tieneRol(rol) {
+      return estaAutenticado() && obtenerUsuario().role == rol;
+    }
+    
+    // Verifica si el usuario es Admin
+    function esAdmin() {
+      return tieneRol('admin');
+    }
+
+    // Verifica si es cualquier personal autorizado (Doctor, Enfermera, Recep, Admin)
+    function esPersonal() {
+      return estaAutenticado() 
+             && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+             && obtenerUsuario().isActive == true;
+    }
+
+    // --- REGLAS POR COLECCIÓN ---
+
+    // 1. USUARIOS (users)
+    match /users/{userId} {
+      allow read: if estaAutenticado();
+      allow create, delete: if esAdmin();
+      allow update: if esAdmin() || request.auth.uid == userId;
+    }
+
+    // 2. PACIENTES (patients)
+    match /patients/{patientId} {
+      allow read, write: if esPersonal();
+    }
+    
+    match /patients/{patientId}/files/{fileId} {
+      allow read, write: if esPersonal();
+    }
+
+    // 3. CONSULTAS (consultations)
+    match /consultations/{consultationId} {
+      allow read, write: if esPersonal();
+    }
+    
+    // 4. NUEVO: CITAS (appointments)
+    // Permitimos leer y escribir a todo el personal autorizado.
+    // (Recepción crea, Doctor lee, Cajero actualiza)
+    match /appointments/{appointmentId} {
+      allow read, write: if esPersonal();
+    }
+
+    // 5. INVENTARIOS Y CATALOGOS
+    match /inventory/{itemId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
+    }
+    
+    match /laboratory_catalog/{itemId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
+    }
+    
+    match /pathologies/{itemId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
+    }
+    
+    match /specialties/{itemId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
+    }
+
+    match /external_medicines/{itemId} {
+      allow read: if esPersonal();
+      allow write: if esPersonal();
+    }
+
+    // 6. NOTIFICACIONES
+    match /notifications/{notifId} {
+      allow read, write: if esPersonal();
+    }
+
+    // 7. LOGS DE AUDITORÍA (audit_logs)
+    match /audit_logs/{logId} {
+      allow create: if esPersonal();
+      allow read: if esAdmin();
+      allow update, delete: if false; 
+    }
+
+    // 8. CONFIGURACIÓN DEL SISTEMA (system_settings)
+    match /system_settings/{docId} {
+      allow read, write: if esAdmin();
+    }
+  }
+}

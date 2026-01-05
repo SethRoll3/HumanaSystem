@@ -202,3 +202,42 @@ export interface AppNotification {
   targetUserId?: string; // NEW: Target specific user (e.g. specific doctor)
   type: 'info' | 'success' | 'alert';
 }
+
+// --- MODULE 2: APPOINTMENTS SYSTEM ---
+
+export type AppointmentStatus = 
+  | 'scheduled'        // Cita agendada (Gris)
+  | 'confirmed_phone'  // Confirmada por teléfono (Amarillo)
+  | 'paid_checked_in'  // Pagada en caja / En sala (Verde) - UNICO ESTADO QUE PERMITE CONSULTA
+  | 'in_progress'      // En consulta (Azul)
+  | 'completed'        // Finalizada
+  | 'cancelled'        // Cancelada
+  | 'no_show';         // No se presentó
+
+export interface Appointment {
+  id?: string;
+  patientId: string;
+  patientName: string; // Desnormalizado para búsquedas rápidas
+  doctorId: string;
+  doctorName: string; // Desnormalizado
+  
+  // Timeframe
+  date: any; // Timestamp (Fecha y hora de inicio)
+  endDate: any; // Timestamp (Fecha y hora de fin estimada)
+  
+  status: AppointmentStatus;
+  reason?: string; // Motivo de la cita
+  
+  // CRM Tracking
+  createdAt: any;
+  createdBy: string; // User ID
+  
+  confirmedAt?: any;
+  confirmedBy?: string; // Recepcionista que llamó
+  confirmationMethod?: 'En Persona' | 'Por Teléfono' | 'Por WhatsApp'; // NUEVO CAMPO
+  
+  paymentReceipt?: string; // Número de boleta (Requisito para pasar a consulta)
+  paymentAmount?: number;
+  paidAt?: any;
+  paidBy?: string; // Cajero/Recepcionista que cobró
+}

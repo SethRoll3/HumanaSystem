@@ -2,9 +2,17 @@
 import { initializeApp, getApp, getApps, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut, updateEmail } from 'firebase/auth';
 import { collection, doc, getDocs, setDoc, updateDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
-import { db, firebaseConfig } from '../firebase/config.ts';
-import { UserProfile } from '../../types.ts';
-import { logAuditAction } from './auditService.ts';
+import { db, firebaseConfig } from '../firebase/config';
+import { UserProfile } from '../types';
+import { logAuditAction } from './auditService';
+
+export const userService = {
+  getDoctors: async (): Promise<UserProfile[]> => {
+    const usersRef = collection(db, 'users');
+    const snapshot = await getDocs(query(usersRef, where('role', '==', 'doctor')));
+    return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile)).filter(d => d.isActive !== false);
+  }
+};
 
 export const getAllUsers = async (): Promise<UserProfile[]> => {
     const usersRef = collection(db, 'users');

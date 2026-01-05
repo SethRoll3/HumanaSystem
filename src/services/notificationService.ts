@@ -1,7 +1,7 @@
 
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
-import { db } from '../firebase/config.ts';
-import { Consultation, Patient, UserProfile } from '../../types.ts';
+import { db } from '../firebase/config';
+import { Consultation, Patient, UserProfile } from '../../types';
 
 // Helper genérico para crear notificación en Firestore
 const createNotification = async (
@@ -26,9 +26,63 @@ const createNotification = async (
     }
 };
 
+// --- NOTIFICACIONES DE CITAS (AGENDA) ---
+
+export const notifyAppointmentCreated = async (
+    patientName: string,
+    doctorName: string,
+    doctorId: string,
+    dateString: string
+) => {
+    // Al Doctor
+    await createNotification(
+        "Nueva Cita Agendada", 
+        `Tiene una nueva cita con ${patientName} para el ${dateString}.`, 
+        'info', 
+        undefined, 
+        doctorId
+    );
+
+    // Al Admin
+    await createNotification(
+        "Nueva Cita en Agenda", 
+        `Se ha agendado una cita: Paciente ${patientName} con Dr. ${doctorName} (${dateString}).`, 
+        'info', 
+        'admin'
+    );
+};
+
+export const notifyAppointmentCancelled = async (
+    patientName: string,
+    doctorName: string,
+    doctorId: string,
+    reason: string,
+    cancelledBy: string
+) => {
+    const msg = `Cita de ${patientName} cancelada por ${cancelledBy}. Motivo: ${reason}`;
+
+    // Al Doctor
+    await createNotification(
+        "Cita Cancelada", 
+        msg, 
+        'alert', 
+        undefined, 
+        doctorId
+    );
+
+    // Al Admin
+    await createNotification(
+        "Cancelación de Cita", 
+        `Agenda Dr. ${doctorName}: ${msg}`, 
+        'alert', 
+        'admin'
+    );
+};
+
+
+// --- NOTIFICACIONES DE CONSULTAS (SALA/CLÍNICA) ---
+
 // 1. CUANDO SE CREA UNA CONSULTA (CHECK-IN)
-// - Doctor Asignado: Recibe aviso personal.
-// - Admin: Recibe aviso general de monitoreo.
 export const notifyConsultationCreated = async (
     doctor: UserProfile, 
     patient: Patient, 
@@ -55,9 +109,6 @@ export const notifyConsultationCreated = async (
 };
 
 // 2. CUANDO SE ANULA UNA CONSULTA
-// - Doctor Asignado: Aviso personal (si estaba asignado).
-// - Enfermería: Aviso para descartar preparación.
-// - Admin: Aviso de auditoría.
 export const notifyConsultationCancelled = async (
     consultation: Consultation,
     cancelledBy: string,
@@ -65,7 +116,6 @@ export const notifyConsultationCancelled = async (
 ) => {
     const details = `Paciente: ${consultation.patientName}. Anulado por: ${cancelledBy}. Motivo: ${reason}`;
 
-    // Al Doctor (si existe ID)
     if (consultation.doctorId) {
         await createNotification(
             "Consulta Cancelada",
@@ -76,7 +126,6 @@ export const notifyConsultationCancelled = async (
         );
     }
 
-    // A Enfermería
     await createNotification(
         "Consulta Anulada",
         `Atención cancelada en sala de espera. ${details}`,
@@ -84,7 +133,6 @@ export const notifyConsultationCancelled = async (
         'nurse'
     );
 
-    // Al Admin
     await createNotification(
         "Anulación Registrada",
         details,
@@ -94,9 +142,6 @@ export const notifyConsultationCancelled = async (
 };
 
 // 3. CUANDO EL MÉDICO COMPLETA LA CONSULTA
-// - Enfermería: Aviso "Listo para entrega/medicinas".
-// - Admin: Aviso de flujo.
-// - Recepción: Aviso de que terminó (NUEVO).
 export const notifyConsultationFinished = async (
     consultation: Consultation,
     doctorName: string
@@ -111,7 +156,7 @@ export const notifyConsultationFinished = async (
         'nurse'
     );
 
-    // A Recepción (NUEVO)
+    // A Recepción
     await createNotification(
         "Consulta Finalizada",
         `El Dr. ${doctorName} ha finalizado la atención de ${consultation.patientName}.`,
@@ -129,14 +174,12 @@ export const notifyConsultationFinished = async (
 };
 
 // 4. CUANDO ENFERMERÍA ENTREGA/FINALIZA EL PROCESO
-// - Admin: Aviso de cierre de ciclo.
 export const notifyConsultationDelivered = async (
     consultation: Consultation,
     nurseName: string
 ) => {
     const msg = `Paciente: ${consultation.patientName}. Entregado por: ${nurseName}.`;
 
-    // Al Admin
     await createNotification(
         "Expediente Entregado y Finalizado",
         `El ciclo de atención ha concluido. ${msg}`,

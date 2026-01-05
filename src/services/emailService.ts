@@ -1,8 +1,8 @@
 
 import emailjs from '@emailjs/browser';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../firebase/config.ts';
-import { Patient } from '../../types.ts';
+import { db } from '../firebase/config';
+import { Patient } from '../../types';
 
 const SERVICE_ID = "service_yiq2ht5"; 
 const TEMPLATE_ID = "template_j5rnsr9"; 
@@ -42,7 +42,7 @@ const sendEmail = async (toEmail: string, toName: string, subject: string, htmlM
     } catch (error) { console.error("Error enviando email:", error); }
 };
 
-// ÚNICA NOTIFICACIÓN ACTIVA: ANULACIÓN DE CONSULTA (SOLO A ADMINS)
+// NOTIFICACIÓN: ANULACIÓN DE CONSULTA (YA EXISTENTE)
 export const notifyCancellationToAdmins = async (patient: Patient, cancelledBy: string, reason: string) => {
     const cancelHtml = `
         <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 2px solid #fee2e2; border-radius: 16px; padding: 25px; background-color: #fef2f2;">
@@ -51,7 +51,6 @@ export const notifyCancellationToAdmins = async (patient: Patient, cancelledBy: 
             
             <table width="100%" style="font-size: 14px; color: #334155; margin-bottom: 20px;">
                 <tr><td style="padding: 5px 0;"><b>Paciente Afectado:</b></td><td>${patient.fullName}</td></tr>
-                <tr><td style="padding: 5px 0;"><b>Código/DPI:</b></td><td>${patient.billingCode || patient.id}</td></tr>
                 <tr><td style="padding: 5px 0;"><b>Responsable de la Acción:</b></td><td>${cancelledBy}</td></tr>
             </table>
 
@@ -59,17 +58,43 @@ export const notifyCancellationToAdmins = async (patient: Patient, cancelledBy: 
                 <div style="font-size: 12px; color: #94a3b8; margin-bottom: 5px;">MOTIVO REGISTRADO:</div>
                 <div style="font-size: 14px; color: #b91c1c; font-style: italic;">"${reason}"</div>
             </div>
+        </div>
+    `;
+
+    const admins = await getAdminEmails();
+    for (const admin of admins) {
+        await sendEmail(admin.email, admin.name, `ALERTA: Anulación de Consulta - ${patient.fullName}`, cancelHtml);
+    }
+};
+
+// NOTIFICACIÓN: CANCELACIÓN DE CITA (NUEVA)
+export const notifyAppointmentCancellationToAdmins = async (
+    patientName: string,
+    doctorName: string,
+    dateString: string,
+    cancelledBy: string,
+    reason: string
+) => {
+    const html = `
+        <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 2px solid #fef3c7; border-radius: 16px; padding: 25px; background-color: #fffbeb;">
+            <div style="color: #92400e; font-size: 18px; font-weight: bold; margin-bottom: 15px;">📅 AGENDA: CITA CANCELADA</div>
             
-            <div style="font-size: 11px; color: #94a3b8; margin-top: 20px; text-align: center;">
-                Este es un mensaje automático de auditoría para la administración.
+            <table width="100%" style="font-size: 14px; color: #334155; margin-bottom: 20px;">
+                <tr><td style="padding: 5px 0;"><b>Paciente:</b></td><td>${patientName}</td></tr>
+                <tr><td style="padding: 5px 0;"><b>Doctor:</b></td><td>${doctorName}</td></tr>
+                <tr><td style="padding: 5px 0;"><b>Fecha Original:</b></td><td>${dateString}</td></tr>
+                <tr><td style="padding: 5px 0;"><b>Cancelado por:</b></td><td>${cancelledBy}</td></tr>
+            </table>
+
+            <div style="background-color: #ffffff; border: 1px solid #fcd34d; border-radius: 12px; padding: 15px;">
+                <div style="font-size: 12px; color: #94a3b8; margin-bottom: 5px;">MOTIVO:</div>
+                <div style="font-size: 14px; color: #b45309; font-style: italic;">"${reason}"</div>
             </div>
         </div>
     `;
 
     const admins = await getAdminEmails();
-    
-    // Enviar a todos los admins encontrados
     for (const admin of admins) {
-        await sendEmail(admin.email, admin.name, `ALERTA: Anulación de Consulta - ${patient.fullName}`, cancelHtml);
+        await sendEmail(admin.email, admin.name, `AGENDA: Cita Cancelada - ${patientName}`, html);
     }
 };
