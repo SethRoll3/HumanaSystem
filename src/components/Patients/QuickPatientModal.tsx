@@ -27,6 +27,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
         email: '', 
         occupation: '', 
         age: '', 
+        birthDate: '', // NUEVO: Campo de fecha de nacimiento
         gender: 'M', 
         previousTreatment: 'No ha estado en tratamiento', 
         consultationType: 'Nueva',
@@ -161,16 +162,27 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                             />
                         </div>
 
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label>
-                            <input 
-                                required 
-                                type="number" 
-                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
-                                value={form.age} 
-                                onChange={e => setForm({...form, age: e.target.value})} 
-                                placeholder="0"
-                            />
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label>
+                                <input 
+                                    required 
+                                    type="number" 
+                                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
+                                    value={form.age} 
+                                    onChange={e => setForm({...form, age: e.target.value})} 
+                                    placeholder="0"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label>
+                                <input 
+                                    type="date" 
+                                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
+                                    value={form.birthDate} 
+                                    onChange={e => setForm({...form, birthDate: e.target.value})} 
+                                />
+                            </div>
                         </div>
 
                         <div>
