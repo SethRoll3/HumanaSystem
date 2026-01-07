@@ -78,6 +78,22 @@ export const deleteWaitingConsultation = async (consultationId: string) => {
     await deleteDoc(doc(db, 'consultations', consultationId));
 };
 
+import { logAuditAction } from './auditService';
+
+export const updateConsultation = async (patientId: string, consultationId: string, data: Partial<Consultation>, userEmail: string) => {
+    const consultRef = doc(db, 'consultations', consultationId);
+    
+    // Update main fields
+    await updateDoc(consultRef, {
+        ...data,
+        updatedAt: serverTimestamp(),
+        updatedBy: userEmail
+    });
+
+    // Log Audit
+    await logAuditAction(userEmail, "UPDATE_CONSULTATION", `Consulta ${consultationId} del paciente ${patientId} actualizada`);
+};
+
 // --- OBJECTO SERVICE UNIFICADO (Nuevo Estándar) ---
 
 export const patientService = {

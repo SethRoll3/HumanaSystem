@@ -1,7 +1,7 @@
 
 import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/config.ts';
-import { Consultation } from '../../types.ts';
+import { Consultation } from '../types.ts';
 
 export interface DailyIncomeSummary {
     totalIncome: number;

@@ -1,5 +1,5 @@
 
-import { Consultation, Patient, UserProfile, ReferralGroup } from '../../types.ts';
+import { Consultation, Patient, UserProfile, ReferralGroup } from '../types.ts';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config.ts';
 import { LOGO_BASE64 } from '../data/assets.ts';

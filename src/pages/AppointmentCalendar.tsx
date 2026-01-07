@@ -9,10 +9,13 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { Plus, Filter, Search, Calendar as CalendarIcon, RefreshCw, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from 'lucide-react';
 import { appointmentService } from '../services/appointmentService';
 import { userService } from '../services/userService';
+import { notifyAppointmentCancelled } from '../services/notificationService';
+import { notifyAppointmentCancellationToAdmins } from '../services/emailService';
 import { patientService } from '../services/patientService';
 import { Appointment, UserProfile, Patient } from '../types';
 import { CreateAppointmentModal } from '../components/Appointments/CreateAppointmentModal';
 import { AppointmentDetailsModal } from '../components/Appointments/AppointmentDetailsModal';
+import { ResidentIntakeModal } from '../components/Appointments/ResidentIntakeModal';
 import { toast } from 'sonner';
 import { startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays } from 'date-fns';
 
@@ -47,6 +50,7 @@ const statusStyles = {
   scheduled: { bg: '#F1F5F9', border: '#94A3B8', text: '#475569' },
   confirmed_phone: { bg: '#FEF9C3', border: '#FACC15', text: '#854D0E' },
   paid_checked_in: { bg: '#DCFCE7', border: '#4ADE80', text: '#166534' },
+  resident_intake: { bg: '#E0F2FE', border: '#38BDF8', text: '#0EA5E9' },
   in_progress: { bg: '#DBEAFE', border: '#60A5FA', text: '#1E40AF' },
   completed: { bg: '#E2E8F0', border: '#CBD5E1', text: '#64748B' },
   cancelled: { bg: '#FEE2E2', border: '#F87171', text: '#991B1B' },
@@ -142,8 +146,8 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   const isDoctor = user?.role === 'doctor';
   const isAdmin = user?.role === 'admin';
   const isReceptionist = user?.role === 'receptionist';
+  const isResident = user?.role === 'resident';
 
-  // Si no es doctor, puede crear citas
   const canCreate = !isDoctor;
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -154,6 +158,9 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [showResidentIntakeModal, setShowResidentIntakeModal] = useState(false);
+  const [residentAppointment, setResidentAppointment] = useState<Appointment | null>(null);
+  const [residentPatient, setResidentPatient] = useState<Patient | null>(null);
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(isDoctor ? user?.uid || '' : 'all');
   const [viewDate, setViewDate] = useState(new Date());
@@ -268,11 +275,48 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   };
 
   const handleCancelAppointment = async (id: string, reason: string) => {
-    if (isDoctor) {
+    if (isDoctor || isResident) {
         toast.error("No tiene permisos para cancelar citas.");
         return;
     }
-    try { await appointmentService.cancelAppointment(id, reason); toast.success("Cancelada"); setIsDetailsModalOpen(false); loadData(); } catch (e) { toast.error("Error"); }
+    try { 
+        await appointmentService.cancelAppointment(id, reason); 
+        
+        if (selectedAppointment) {
+            await notifyAppointmentCancelled(
+                selectedAppointment.patientName,
+                selectedAppointment.doctorName,
+                selectedAppointment.doctorId,
+                reason,
+                user?.name || 'Administrador'
+            );
+
+            // Enviar correo a administradores
+            await notifyAppointmentCancellationToAdmins(
+                selectedAppointment.patientName,
+                selectedAppointment.doctorName,
+                format(selectedAppointment.date, "dd/MM/yyyy HH:mm"),
+                user?.name || 'Administrador',
+                reason
+            );
+        }
+        
+        toast.success("Cancelada"); 
+        setIsDetailsModalOpen(false); 
+        loadData(); 
+    } catch (e) { toast.error("Error"); }
+  };
+
+  const handleOpenResidentIntake = () => {
+    if (!selectedAppointment || !user) return;
+    const p = patients.find(pt => pt.id === selectedAppointment.patientId);
+    if (!p) {
+      toast.error("Paciente no encontrado");
+      return;
+    }
+    setResidentAppointment(selectedAppointment);
+    setResidentPatient(p);
+    setShowResidentIntakeModal(true);
   };
 
   const eventStyleGetter = (event: Appointment) => {
@@ -451,7 +495,29 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
         onRegisterPayment={handleRegisterPayment}
         onCancel={handleCancelAppointment}
         userRole={user?.role || ''}
+        onOpenResidentIntake={isResident ? handleOpenResidentIntake : undefined}
       />
+
+      {isResident && user && residentAppointment && residentPatient && (
+        <ResidentIntakeModal
+          isOpen={showResidentIntakeModal}
+          onClose={() => setShowResidentIntakeModal(false)}
+          patient={residentPatient}
+          currentUser={user}
+          onSaveComplete={async () => {
+            if (!residentAppointment.id) return;
+            await appointmentService.completeResidentIntake(residentAppointment.id);
+            setSelectedAppointment(prev =>
+              prev && prev.id === residentAppointment.id ? { ...prev, status: 'resident_intake' } : prev
+            );
+            setResidentAppointment(null);
+            setResidentPatient(null);
+            setShowResidentIntakeModal(false);
+            setIsDetailsModalOpen(false);
+            await loadData();
+          }}
+        />
+      )}
     </div>
   );
 };

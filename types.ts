@@ -2,7 +2,7 @@
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'doctor' | 'admin' | 'receptionist' | 'nurse';
+  role: 'doctor' | 'admin' | 'receptionist' | 'nurse' | 'resident';
   name: string; 
   specialty: string;
   isActive?: boolean; // New field for soft delete
@@ -57,6 +57,7 @@ export interface Patient {
 
   // Legacy fields made optional for the new "Quick Create" flow
   age?: number;
+  birthDate?: string; // NUEVO: Fecha de nacimiento (ISO string YYYY-MM-DD)
   gender?: 'M' | 'F' | 'masculino' | 'femenino'; 
   origin?: PatientOrigin | string;
   protocol_code?: string;
@@ -134,6 +135,7 @@ export interface Consultation {
   id?: string; 
   status: 'waiting' | 'in_progress' | 'finished' | 'delivered'; // Workflow Status Updated
   paymentReceipt?: string; // Boleta de Pago
+  paymentAmount?: number; // NUEVO: Valor de la boleta para contabilidad
   
   receptionistId?: string; // Who created the check-in
   doctorId?: string; // Who is attending
@@ -188,7 +190,7 @@ export interface Consultation {
   nonPrintReason?: string; // Reason for not printing docs when delivering
 
   // NEW: Track confirmed empty fields
-  omittedFields?: { [key: string]: boolean };
+  omittedFields?: { [key: string]: boolean | string };
 }
 
 export interface AppNotification {
@@ -202,10 +204,13 @@ export interface AppNotification {
   type: 'info' | 'success' | 'alert';
 }
 
+// --- MODULE 2: APPOINTMENTS SYSTEM ---
+
 export type AppointmentStatus = 
   | 'scheduled'        // Cita agendada (Gris)
   | 'confirmed_phone'  // Confirmada por teléfono (Amarillo)
-  | 'paid_checked_in'  // Pagada en caja / En sala (Verde) - UNICO ESTADO QUE PERMITE CONSULTA
+  | 'paid_checked_in'  // Pagada en caja / En sala (Verde) - Esperando residente
+  | 'resident_intake'  // Evaluación por médico residente completada (Azul claro) - Listo para consulta
   | 'in_progress'      // En consulta (Azul)
   | 'completed'        // Finalizada
   | 'cancelled'        // Cancelada

@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { UserProfile, Specialty } from '../../types.ts';
+import { UserProfile, Specialty } from '../types.ts';
 import { motion } from 'framer-motion';
 // Fixed import to include UploadCloud, Eye, EyeOff
 import { User, Shield, Key, Mail, Save, Loader2, Lock, BadgeCheck, FileKey, Trash2, CheckCircle, UploadCloud, Eye, EyeOff } from 'lucide-react';

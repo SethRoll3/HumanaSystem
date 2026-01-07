@@ -2,7 +2,7 @@
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'doctor' | 'admin' | 'receptionist' | 'nurse';
+  role: 'doctor' | 'admin' | 'receptionist' | 'nurse' | 'resident';
   name: string; 
   specialty: string;
   isActive?: boolean; // New field for soft delete
@@ -190,7 +190,7 @@ export interface Consultation {
   nonPrintReason?: string; // Reason for not printing docs when delivering
 
   // NEW: Track confirmed empty fields
-  omittedFields?: { [key: string]: boolean };
+  omittedFields?: { [key: string]: boolean | string };
 }
 
 export interface AppNotification {
@@ -209,7 +209,8 @@ export interface AppNotification {
 export type AppointmentStatus = 
   | 'scheduled'        // Cita agendada (Gris)
   | 'confirmed_phone'  // Confirmada por teléfono (Amarillo)
-  | 'paid_checked_in'  // Pagada en caja / En sala (Verde) - UNICO ESTADO QUE PERMITE CONSULTA
+  | 'paid_checked_in'  // Pagada en caja / En sala (Verde) - Esperando residente
+  | 'resident_intake'  // Evaluación por médico residente completada (Azul claro) - Listo para consulta
   | 'in_progress'      // En consulta (Azul)
   | 'completed'        // Finalizada
   | 'cancelled'        // Cancelada

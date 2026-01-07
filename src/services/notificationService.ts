@@ -1,7 +1,7 @@
 
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Consultation, Patient, UserProfile } from '../../types';
+import { Consultation, Patient, UserProfile } from '../types';
 
 // Helper genérico para crear notificación en Firestore
 const createNotification = async (

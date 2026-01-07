@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { ClipboardList, Search, FileCheck, Clock, Eye, ShieldAlert } from 'lucide-react';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/config.ts';
-import { Consultation, UserProfile } from '../../../types.ts';
+import { Consultation, UserProfile } from '../../types.ts';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 

@@ -27,6 +27,7 @@ interface AppointmentDetailsModalProps {
   onRegisterPayment: (id: string, receiptNumber: string, amount: number) => void;
   onCancel: (id: string, reason: string) => void;
   userRole: string; 
+  onOpenResidentIntake?: () => void;
 }
 
 const paymentSchema = z.object({
@@ -41,7 +42,8 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
   onConfirmPhone,
   onRegisterPayment,
   onCancel,
-  userRole
+  userRole,
+  onOpenResidentIntake
 }) => {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
@@ -56,9 +58,9 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
   });
 
   const isDoctor = userRole === 'doctor';
-  
-  // Si es doctor, no puede cancelar ni gestionar pagos/confirmaciones
-  const canManage = !isDoctor;
+  const isResident = userRole === 'resident';
+  // Solo admins y recepcionistas pueden gestionar (confirmar, pagar, cancelar)
+  const canManage = userRole === 'admin' || userRole === 'receptionist';
 
   // Resetear estados internos cuando cambia la cita o se cierra
   React.useEffect(() => {
@@ -84,7 +86,9 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
       case 'confirmed_phone':
         return <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-sm font-medium border border-yellow-200">Confirmada</span>;
       case 'paid_checked_in':
-        return <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium border border-green-200">Pagada / En Sala</span>;
+        return <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium border border-green-200">Pagada / En Sala (Residente)</span>;
+      case 'resident_intake':
+        return <span className="bg-sky-100 text-sky-700 px-3 py-1 rounded-full text-sm font-medium border border-sky-200">Evaluación Residente Completa</span>;
       case 'in_progress':
         return <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium border border-blue-200">En Consulta</span>;
       case 'completed':
@@ -198,6 +202,23 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                  </div>
                </div>
              </div>
+          )}
+
+          {isResident && appointment.status === 'paid_checked_in' && (
+            <div className="mb-8 bg-sky-50 p-4 rounded-lg border border-sky-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-sky-800">Evaluación por Residente</h3>
+                <p className="text-xs text-sky-700">Complete antecedentes y adjunte archivos antes de la consulta.</p>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenResidentIntake}
+                disabled={!onOpenResidentIntake}
+                className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm disabled:opacity-50"
+              >
+                Llenar datos de residente
+              </button>
+            </div>
           )}
 
           {/* ACTIONS AREA (SOLO SI TIENE PERMISOS) */}

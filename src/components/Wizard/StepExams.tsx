@@ -4,11 +4,12 @@ import { useState, useEffect } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { Share2, FileText, CheckSquare, Square, Stethoscope, X, FlaskConical, StickyNote, Trash2, ArrowDownCircle, Microscope, Clock, PenTool, Search } from 'lucide-react';
 import { getPathologies, getLaboratories } from '../../services/inventoryService.ts';
-import { Pathology, ReferralGroup, LaboratoryItem } from '../../../types.ts';
+import { Pathology, ReferralGroup, LaboratoryItem, Patient } from '../../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface StepExamsProps {
     userSpecialty?: string;
+    patient?: Patient | null;
 }
 
 const OPTIONAL_EXAMS_TYPES = ['EG', 'SuperEG', 'Resonancia', 'Laboratorios', 'Otros'];
@@ -19,7 +20,7 @@ const normalizeText = (text: string) => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 };
 
-export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty }) => {
+export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) => {
   const { register, watch, setValue, getValues } = useFormContext();
   
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
@@ -145,17 +146,20 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty }) => {
           const existingGroupIndex = currentGroups.findIndex(g => g.id === groupId);
 
           if (existingGroupIndex === -1) {
+              // Si es reconsulta, NO seleccionamos exámenes automáticamente
+              const isReconsulta = patient?.consultationType === 'Reconsulta' || (patient?.consultationType as string) === 'Reeconsulta';
+
               const newGroup: ReferralGroup = {
                   id: groupId,
                   pathology: selectedPathology.name,
-                  exams: [...selectedPathology.exams], 
+                  exams: isReconsulta ? [] : [...selectedPathology.exams], 
                   note: ''
               };
               currentGroups.push(newGroup);
               setValue('referralGroups', currentGroups);
           }
       }
-  }, [selectedPathology, getValues, setValue]);
+   }, [selectedPathology, getValues, setValue, patient]);
 
   const handlePathologyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
       const patName = e.target.value;

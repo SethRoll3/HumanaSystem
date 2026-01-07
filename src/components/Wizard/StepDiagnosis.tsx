@@ -7,6 +7,7 @@ import { History, Activity, Calendar, FileText, Stethoscope, Lock, User, Eye, X,
 import { db } from '../../firebase/config.ts';
 import { Patient, UserProfile, Consultation } from '../../../types.ts';
 import { motion } from 'framer-motion';
+import { ReferralNotesAlert } from './ReferralNotesAlert';
 
 interface StepDiagnosisProps {
   patient: Patient;
@@ -66,6 +67,8 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
         <h3 className="text-xl font-bold text-slate-800">Evaluación Clínica</h3>
         <span className="text-sm font-medium text-brand-600 bg-brand-50 px-3 py-1 rounded-full">Paso 1 de 4</span>
       </div>
+
+      <ReferralNotesAlert patientId={patient.id} doctorSpecialty={currentUser.specialty} />
       
       {/* --- SECCIÓN A: HISTORIAL (TOP) --- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

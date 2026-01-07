@@ -1,15 +1,11 @@
 import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useForm, FormProvider } from 'react-hook-form';
-import { 
-    Search, Loader2, UserPlus, Save, CheckCircle, Trash2, 
-    Clock, Zap, UserSearch, ChevronRight, Plus, AlertTriangle, 
-    X, User, Briefcase, Phone, CreditCard, Users, RefreshCcw, 
-    MapPin, FileText, Home, ArrowRight, DollarSign, Lock, 
-    Calendar as CalendarIcon, List, LayoutGrid 
+import {  Loader2, CheckCircle, Zap, Plus, AlertTriangle, 
+     Lock, Calendar as CalendarIcon, List, LayoutGrid 
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { collection, addDoc, doc, Timestamp, updateDoc, query, where, onSnapshot, getDocs, getDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, Timestamp, updateDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -27,13 +23,10 @@ import { QuickPatientModal } from '../components/Patients/QuickPatientModal';
 import { CreateAppointmentModal } from '../components/Appointments/CreateAppointmentModal';
 import { AppointmentCalendar } from './AppointmentCalendar'; 
 
-import { searchPatients, getPatientByDPI, checkAndSwitchToReconsultation, deleteWaitingConsultation, patientService } from '../services/patientService';
+import {  getPatientByDPI, patientService } from '../services/patientService';
 import { appointmentService } from '../services/appointmentService'; 
-import { getActiveDoctors, userService } from '../services/userService';
-import { notifyCancellationToAdmins } from '../services/emailService'; 
-import { notifyConsultationCreated, notifyConsultationCancelled, notifyConsultationFinished, notifyConsultationDelivered } from '../services/notificationService';
-import { logAuditAction } from '../services/auditService';
-import { generatePrescriptionPDF, generateExamsPDF, generateNursingPDF } from '../services/pdfService';
+import {userService } from '../services/userService';
+import {  notifyConsultationFinished } from '../services/notificationService';
 
 interface DoctorStationProps {
   user: UserProfile;
@@ -184,8 +177,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   // --- INICIAR CONSULTA (MÁQUINA DE ESTADOS) ---
   const handleStartConsultation = async (appt: Appointment) => {
-    if (appt.status !== 'paid_checked_in' && appt.status !== 'in_progress') {
-        toast.error("El paciente debe completar el pago en caja antes de ser atendido.");
+    if (appt.status !== 'resident_intake' && appt.status !== 'in_progress') {
+        toast.error("El paciente debe pasar primero por evaluación del residente.");
         return;
     }
 
@@ -351,6 +344,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                    onPrint={handlePrintDoc}
                    onDeliver={attemptFinalizeDelivery}
                    isSaving={isSaving}
+                   onUpdate={(updated) => setSelectedHistoryConsultation(updated)}
                />
            ) : currentPatient ? (
                /* --- WIZARD DE CONSULTA ACTIVA --- */
@@ -376,7 +370,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
                            {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />}
                            {step === 2 && <StepPrescription currentUser={user} />}
-                           {step === 3 && <StepExams userSpecialty={user.specialty} />}
+                           {step === 3 && <StepExams userSpecialty={user.specialty} patient={currentPatient} />}
                            {step === 4 && <StepFinalize 
                                 currentUser={user} 
                                 onFinish={methods.handleSubmit(async (d) => {
@@ -389,6 +383,24 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                         printedDocs: { prescription: false, labs: false, report: false } 
                                     };
                                     await updateDoc(consultationRef, finishedData);
+
+                                    // Si la consulta era NUEVA, actualizamos al paciente a RECONSULTA
+                                    if (currentPatient && (currentPatient.consultationType === 'Nueva' || (currentPatient.consultationType as string) === 'Primera Consulta')) {
+                                        try {
+                                            const patientRef = doc(db, 'patients', currentPatient.id!);
+                                            await updateDoc(patientRef, { consultationType: 'Reconsulta' });
+                                        } catch (err) {
+                                            console.error("Error al actualizar tipo de consulta del paciente", err);
+                                        }
+                                    }
+
+                                    // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
+                                    const notificationPayload = { 
+                                        ...finishedData, 
+                                        patientName: currentPatient.fullName,
+                                        id: currentConsultationId 
+                                    } as Consultation;
+                                    await notifyConsultationFinished(notificationPayload, user.name);
                                     
                                     setLastFinishedConsultation({ ...finishedData, patientName: currentPatient.fullName } as Consultation);
                                     setCurrentPatient(null);
@@ -470,9 +482,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {todaysAppointments.map(appt => {
-                                                const isPaid = appt.status === 'paid_checked_in';
+                                                const isReadyForDoctor = appt.status === 'resident_intake';
                                                 const isInProgress = appt.status === 'in_progress';
-                                                const isLocked = !isPaid && !isInProgress;
+                                                const isLocked = !isReadyForDoctor && !isInProgress;
                                                 
                                                 const timeString = appt.date instanceof Date 
                                                     ? appt.date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
@@ -489,10 +501,10 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                                         <td className="p-4 text-sm text-slate-600 truncate max-w-[150px]">{appt.reason}</td>
                                                         <td className="p-4 text-sm font-medium text-brand-700">Dr. {appt.doctorName}</td>
                                                         <td className="p-4">
-                                                            {/* BADGES */}
                                                             {appt.status === 'scheduled' && <span className="px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-xs font-bold border border-slate-200">Agendada</span>}
                                                             {appt.status === 'confirmed_phone' && <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs font-bold border border-yellow-200">Confirmada</span>}
                                                             {appt.status === 'paid_checked_in' && <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold border border-green-200 flex w-fit items-center gap-1"><CheckCircle className="w-3 h-3"/> En Sala</span>}
+                                                            {appt.status === 'resident_intake' && <span className="px-3 py-1 bg-sky-100 text-sky-700 rounded-full text-xs font-bold border border-sky-200 flex w-fit items-center gap-1"><CheckCircle className="w-3 h-3"/> Listo para consulta</span>}
                                                             {appt.status === 'in_progress' && <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold border border-blue-200 animate-pulse">En Consulta</span>}
                                                             {appt.status === 'completed' && <span className="px-3 py-1 bg-gray-100 text-gray-500 rounded-full text-xs font-bold">Finalizada</span>}
                                                         </td>

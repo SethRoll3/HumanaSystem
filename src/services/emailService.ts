@@ -2,7 +2,7 @@
 import emailjs from '@emailjs/browser';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Patient } from '../../types';
+import { Patient } from '../types';
 
 const SERVICE_ID = "service_yiq2ht5"; 
 const TEMPLATE_ID = "template_j5rnsr9"; 

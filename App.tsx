@@ -54,6 +54,7 @@ export function App() {
   // --- 1. FUNCIÓN PARA CERRAR SESIÓN ---
   const handleLogout = async (reason?: string) => {
     try {
+        setLoading(false);
         await signOut(auth);
         
         // Limpieza: Borramos cookie de sesión
@@ -161,6 +162,7 @@ export function App() {
               }
           } else {
               setUser(null);
+              setLoading(false);
               if (sessionTimeoutRef.current) clearTimeout(sessionTimeoutRef.current);
           }
           setIsAuthChecking(false);

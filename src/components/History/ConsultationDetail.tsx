@@ -1,9 +1,10 @@
 
 import * as React from 'react';
 import { useState } from 'react';
-import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink } from 'lucide-react';
+import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool } from 'lucide-react';
 import { Consultation, Patient, UserProfile } from '../../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
+import { EditConsultationModal } from './EditConsultationModal';
 
 interface ConsultationDetailProps {
     consultation: Consultation;
@@ -14,6 +15,7 @@ interface ConsultationDetailProps {
     onPrint: (type: 'prescription' | 'labs' | 'report') => void;
     onDeliver: () => void;
     isSaving: boolean;
+    onUpdate?: (updated: Consultation) => void;
 }
 
 const OMISSION_TRANSLATIONS: Record<string, string> = {
@@ -34,15 +36,18 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
     onBack,
     onPrint,
     onDeliver,
-    isSaving
+    isSaving,
+    onUpdate
 }) => {
     const isNurseOrAdmin = user.role === 'nurse' || user.role === 'admin';
     const isDoctor = user.role === 'doctor';
+    const canEdit = user.role === 'admin' || (user.role === 'doctor' && consultation.doctorId === user.uid);
     
     // Si es nurse/admin o doctor, puede ver el panel de documentos
     const showDocsPanel = isNurseOrAdmin || isDoctor;
 
     const [showHistoryModal, setShowHistoryModal] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
 
     // Helper para formatear fecha con Zona Horaria de Guatemala (Forzada)
     const formatDateTimeGT = (ts: number) => {
@@ -54,16 +59,62 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
         });
     };
 
+    // Helper para badge de omisión/edición
+    const renderOmissionBadge = (fieldKey: string) => {
+        const status = consultation.omittedFields?.[fieldKey] as boolean | string | undefined;
+        if (!status) return null;
+
+        if (status === 'edited') {
+            return (
+                <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-bold uppercase border border-amber-200 shadow-sm ml-2">
+                    Omitido (Editado)
+                </span>
+            );
+        }
+
+        return (
+            <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold uppercase border border-red-200 ml-2">
+                Omitido
+            </span>
+        );
+    };
+
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="max-w-7xl mx-auto space-y-6 pb-12">
             
             {/* HEADER DE NAVEGACIÓN */}
-            <div className="flex items-center gap-4 mb-2">
-                <button onClick={onBack} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition shadow-sm">
-                    <ArrowLeft className="w-5 h-5 text-slate-600" />
-                </button>
-                <h2 className="text-xl md:text-2xl font-bold text-slate-800">Detalle Completo del Expediente</h2>
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-4">
+                    <button onClick={onBack} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition shadow-sm">
+                        <ArrowLeft className="w-5 h-5 text-slate-600" />
+                    </button>
+                    <h2 className="text-xl md:text-2xl font-bold text-slate-800">Detalle Completo del Expediente</h2>
+                </div>
+                
+                {canEdit && (
+                    <button 
+                        onClick={() => setShowEditModal(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-bold text-sm hover:bg-indigo-100 transition border border-indigo-200"
+                    >
+                        <PenTool className="w-4 h-4" />
+                        Editar Consulta
+                    </button>
+                )}
             </div>
+
+            {/* EDIT MODAL */}
+            {showEditModal && patient && (
+                <EditConsultationModal 
+                    consultation={consultation}
+                    patient={patient}
+                    currentUser={user}
+                    onClose={() => setShowEditModal(false)}
+                    onSuccess={(updated) => {
+                        if (onUpdate) onUpdate(updated);
+                        setShowEditModal(false);
+                    }}
+                />
+            )}
 
             {/* --- SECCIÓN 1: RESUMEN DE PERSONAL Y TIEMPOS --- */}
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 text-sm">
@@ -140,7 +191,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                     <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                             <HeartPulse className="w-5 h-5 text-brand-600" /> Diagnóstico Médico 
-                            {consultation.omittedFields?.diagnosis && <span className="text-[10px] bg-red-100 text-red-600 px-2 rounded font-bold uppercase">Omitido</span>}
+                            {renderOmissionBadge('diagnosis')}
                         </h3>
                         <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
                             {consultation.diagnosis || 'No se registró diagnóstico.'}
@@ -151,7 +202,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                     <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                             <Pill className="w-5 h-5 text-emerald-600" /> Tratamiento Farmacológico 
-                            {consultation.omittedFields?.prescription && <span className="text-[10px] bg-red-100 text-red-600 px-2 rounded font-bold uppercase">Omitido</span>}
+                            {renderOmissionBadge('prescription')}
                         </h3>
                         {consultation.prescription && consultation.prescription.length > 0 ? (
                             <div className="border rounded-2xl overflow-hidden overflow-x-auto">
@@ -179,7 +230,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
                             <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                                 <FlaskConical className="w-5 h-5 text-blue-600" /> Laboratorios 
-                                {consultation.omittedFields?.exams && <span className="text-[10px] bg-red-100 text-red-600 px-2 rounded font-bold uppercase">Omitido</span>}
+                                {renderOmissionBadge('exams')}
                             </h3>
                             {(consultation.referralGroups?.length || 0) > 0 || (consultation.exams && consultation.exams.length > 0) ? (
                                 <div className="space-y-3">
@@ -199,7 +250,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
                             <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                                 <Share2 className="w-5 h-5 text-pink-600" /> Referencias 
-                                {consultation.omittedFields?.referrals && <span className="text-[10px] bg-red-100 text-red-600 px-2 rounded font-bold uppercase">Omitido</span>}
+                                {renderOmissionBadge('referrals')}
                             </h3>
                             {consultation.specialtyReferrals && consultation.specialtyReferrals.length > 0 ? (
                                 <div className="space-y-2">
@@ -218,7 +269,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                     <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                             <ShieldCheck className="w-5 h-5 text-amber-600" /> Anotaciones para Enfermería 
-                            {consultation.omittedFields?.nursing && <span className="text-[10px] bg-red-100 text-red-600 px-2 rounded font-bold uppercase">Omitido</span>}
+                            {renderOmissionBadge('nursing')}
                         </h3>
                         <div className="p-4 bg-amber-50/20 border border-amber-100 rounded-2xl text-slate-700 text-sm leading-relaxed italic">
                             {consultation.followUpText || 'Sin instrucciones adicionales registradas.'}
@@ -248,11 +299,14 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             <div className="col-span-full p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
                                 <span className="block font-bold text-slate-500 mb-3">Omisiones Confirmadas por Médico:</span>
                                 <div className="flex flex-wrap gap-2">
-                                    {Object.entries(consultation.omittedFields || {}).filter(([_, v]) => v).map(([k, _]) => (
-                                        <span key={k} className="px-3 py-1 bg-orange-50 border border-orange-100 text-orange-600 rounded-lg text-[10px] uppercase font-bold">
+                                    {Object.entries(consultation.omittedFields || {}).filter(([_, v]) => v).map(([k, val]) => {
+                                        const v = val as boolean | string;
+                                        return (
+                                        <span key={k} className={`px-3 py-1 border rounded-lg text-[10px] uppercase font-bold ${v === 'edited' ? 'bg-amber-100 border-amber-200 text-amber-700' : 'bg-orange-50 border-orange-100 text-orange-600'}`}>
                                             {OMISSION_TRANSLATIONS[k] || k}
+                                            {v === 'edited' && ' (Editado)'}
                                         </span>
-                                    ))}
+                                    )})}
                                     {Object.values(consultation.omittedFields || {}).every(v => !v) && <span className="text-slate-400 italic">Ninguna omisión registrada.</span>}
                                 </div>
                             </div>

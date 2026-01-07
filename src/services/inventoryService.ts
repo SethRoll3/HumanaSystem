@@ -2,7 +2,7 @@
 import { collection, query, where, getDocs, limit, orderBy, startAt, endAt, addDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { db, auth } from '../firebase/config.ts';
-import { Medicine, Specialty, Pathology, LaboratoryItem } from '../../types.ts';
+import { Medicine, Specialty, Pathology, LaboratoryItem } from '../types.ts';
 
 // --- BÚSQUEDA HÍBRIDA (INVENTARIO + EXTERNOS) ---
 export const searchMedicine = async (term: string): Promise<Medicine[]> => {

@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Appointment, AppointmentStatus } from '../types';
+import { notifyAppointmentCreated } from './notificationService';
 
 const COLLECTION_NAME = 'appointments';
 
@@ -23,6 +24,16 @@ export const appointmentService = {
       status: 'scheduled',
       createdAt: serverTimestamp(),
     });
+
+    // NOTIFICAR CREACIÓN (Doctor + Admins)
+    try {
+      const dateObj = data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date);
+      const dateStr = dateObj.toLocaleString('es-GT', { dateStyle: 'long', timeStyle: 'short' });
+      await notifyAppointmentCreated(data.patientName, data.doctorName, data.doctorId, dateStr);
+    } catch (error) {
+      console.error("Error sending notification:", error);
+    }
+
     return docRef.id;
   },
 
@@ -97,6 +108,14 @@ export const appointmentService = {
       paymentAmount: amount,
       paidBy: cashierId,
       paidAt: serverTimestamp()
+    });
+  },
+
+  // Paso B2: Completar evaluación por residente
+  async completeResidentIntake(id: string) {
+    const ref = doc(db, COLLECTION_NAME, id);
+    await updateDoc(ref, {
+      status: 'resident_intake'
     });
   },
 
