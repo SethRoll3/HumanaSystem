@@ -6,13 +6,14 @@ import { startOfWeek } from 'date-fns/startOfWeek';
 import { getDay } from 'date-fns/getDay';
 import { es } from 'date-fns/locale/es';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { Plus, Filter, Search, Calendar as CalendarIcon, RefreshCw, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Filter, Search, Calendar as CalendarIcon, RefreshCw, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Building2, Stethoscope, Video, Users } from 'lucide-react';
 import { appointmentService } from '../services/appointmentService';
 import { userService } from '../services/userService';
+import { getClinics } from '../services/clinicService';
 import { notifyAppointmentCancelled } from '../services/notificationService';
 import { notifyAppointmentCancellationToAdmins } from '../services/emailService';
 import { patientService } from '../services/patientService';
-import { Appointment, UserProfile, Patient } from '../types';
+import { Appointment, UserProfile, Patient, Clinic } from '../types';
 import { CreateAppointmentModal } from '../components/Appointments/CreateAppointmentModal';
 import { AppointmentDetailsModal } from '../components/Appointments/AppointmentDetailsModal';
 import { ResidentIntakeModal } from '../components/Appointments/ResidentIntakeModal';
@@ -46,6 +47,8 @@ const messages = {
   noEventsInRange: 'No hay citas en este rango',
 };
 
+type CalendarAppointment = Appointment & { resourceId?: string };
+
 const statusStyles = {
   scheduled: { bg: '#F1F5F9', border: '#94A3B8', text: '#475569' },
   confirmed_phone: { bg: '#FEF9C3', border: '#FACC15', text: '#854D0E' },
@@ -54,8 +57,21 @@ const statusStyles = {
   in_progress: { bg: '#DBEAFE', border: '#60A5FA', text: '#1E40AF' },
   completed: { bg: '#E2E8F0', border: '#CBD5E1', text: '#64748B' },
   cancelled: { bg: '#FEE2E2', border: '#F87171', text: '#991B1B' },
-  no_show: { bg: '#F3F4F6', border: '#D1D5DB', text: '#374151' },
-};
+  no_show: { bg: '#E5E7EB', border: '#6B7280', text: '#111827' }, // Más oscuro para diferenciar
+} as const;
+
+type AppointmentStatusKey = keyof typeof statusStyles;
+
+const statusOptions: { key: AppointmentStatusKey; label: string }[] = [
+  { key: 'scheduled',        label: 'Creada' },
+  { key: 'confirmed_phone',  label: 'Confirmada' },
+  { key: 'paid_checked_in',  label: 'Pagada / Check-in' },
+  { key: 'resident_intake',  label: 'Con enfermería' },
+  { key: 'in_progress',      label: 'En consulta' },
+  { key: 'completed',        label: 'Finalizada' },
+  { key: 'cancelled',        label: 'Cancelada' },
+  { key: 'no_show',          label: 'No se presentó' },
+];
 
 interface AppointmentCalendarProps {
     user?: UserProfile; 
@@ -65,12 +81,14 @@ const CustomMonthView = ({
     date, 
     appointments, 
     onSelectSlot, 
-    onSelectEvent 
+    onSelectEvent,
+    onShowDayAppointments
 }: { 
     date: Date, 
-    appointments: Appointment[], 
+    appointments: CalendarAppointment[], 
     onSelectSlot: (d: Date) => void,
-    onSelectEvent: (app: Appointment) => void
+    onSelectEvent: (app: Appointment) => void,
+    onShowDayAppointments: (day: Date, apps: CalendarAppointment[]) => void
 }) => {
     const monthStart = startOfMonth(date);
     const monthEnd = endOfMonth(date);
@@ -117,7 +135,7 @@ const CustomMonthView = ({
                                     <div 
                                         key={app.id}
                                         onClick={(e) => { e.stopPropagation(); onSelectEvent(app); }}
-                                        className="text-[10px] px-1.5 py-0.5 rounded border truncate font-medium cursor-pointer hover:brightness-95 transition-all"
+                                        className="text-xs px-1.5 py-0.5 rounded border truncate font-medium cursor-pointer hover:brightness-95 transition-all"
                                         style={{ 
                                             backgroundColor: statusStyles[app.status]?.bg || '#eee',
                                             borderColor: statusStyles[app.status]?.border || '#ccc',
@@ -125,13 +143,23 @@ const CustomMonthView = ({
                                         }}
                                         title={`${format(app.date, 'HH:mm')} - ${app.patientName}`}
                                     >
-                                        {format(app.date, 'HH:mm')} {app.patientName}
+                                        <div className="flex items-center gap-1">
+                                            {app.modality === 'Virtual' ? <Video className="w-3 h-3 flex-shrink-0" /> : <Users className="w-3 h-3 flex-shrink-0" />}
+                                            <span className="truncate">{format(app.date, 'HH:mm')} {app.patientName}</span>
+                                        </div>
                                     </div>
                                 ))}
                                 {dayApps.length > 3 && (
-                                    <div className="text-[10px] text-slate-400 font-bold text-center">
+                                    <button
+                                        type="button"
+                                        className="w-full text-xs text-blue-600 font-bold text-center mt-0.5 hover:underline"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onShowDayAppointments(day, dayApps);
+                                        }}
+                                    >
                                         + {dayApps.length - 3} más
-                                    </div>
+                                    </button>
                                 )}
                             </div>
                         </div>
@@ -150,8 +178,10 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
 
   const canCreate = !isDoctor;
 
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+    const [appointments, setAppointments] = useState<CalendarAppointment[]>([]);
   const [doctors, setDoctors] = useState<UserProfile[]>([]);
+  const [clinics, setClinics] = useState<Clinic[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -163,10 +193,18 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   const [residentPatient, setResidentPatient] = useState<Patient | null>(null);
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(isDoctor ? user?.uid || '' : 'all');
+  const [selectedClinicId, setSelectedClinicId] = useState<string>('all');
   const [viewDate, setViewDate] = useState(new Date());
   
   const [currentView, setCurrentView] = useState<any>('month'); 
   const [zoomLevel, setZoomLevel] = useState(4); 
+
+  const [dayAppointmentsModal, setDayAppointmentsModal] = useState<{
+      date: Date;
+      apps: CalendarAppointment[];
+  } | null>(null);
+
+  const [selectedStatus, setSelectedStatus] = useState<'all' | AppointmentStatusKey>('all');
 
   const getCalendarConfig = (level: number) => {
       switch(level) {
@@ -187,52 +225,99 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   }, [user, isDoctor]);
 
   useEffect(() => {
-    loadData();
-  }, [viewDate, selectedDoctorId, currentView]);
+    // Cargar datos estáticos (doctores, clínicas, pacientes) UNA VEZ
+    const loadStaticData = async () => {
+        try {
+            if (!isDoctor) {
+                const [docs, clinicList] = await Promise.all([
+                    userService.getDoctors(),
+                    getClinics()
+                ]);
+                setDoctors(docs);
+                setClinics(clinicList);
+            }
+            
+            const [pats, users] = await Promise.all([
+                patientService.getAll(),
+                userService.getAllUsers()
+            ]);
+            setPatients(pats);
+            setAllUsers(users);
+        } catch (error) {
+            console.error("Error loading static data:", error);
+        }
+    };
+    loadStaticData();
+  }, [isDoctor]);
 
-  const loadData = async () => {
-    try {
-      if (!isDoctor) {
-          const docs = await userService.getDoctors();
-          setDoctors(docs);
-      }
-      
-      const pats = await patientService.getAll();
-      setPatients(pats);
+  // SUSCRIPCIÓN EN TIEMPO REAL A CITAS
+  useEffect(() => {
+    let start = startOfMonth(viewDate);
+    let end = endOfMonth(viewDate);
 
-      let start = startOfMonth(viewDate);
-      let end = endOfMonth(viewDate);
-
-      if (currentView === Views.WEEK) {
-          start = startOfWeek(viewDate, { locale: es });
-          end = new Date(start); end.setDate(end.getDate() + 7);
-      } else if (currentView === Views.DAY) {
-          start = new Date(viewDate); start.setHours(0,0,0,0);
-          end = new Date(viewDate); end.setHours(23,59,59,999);
-      } else {
-          start = startOfWeek(startOfMonth(viewDate), { weekStartsOn: 0 });
-          end = startOfWeek(endOfMonth(viewDate), { weekStartsOn: 0 });
-          end.setDate(end.getDate() + 6);
-      }
-
-      let apps = await appointmentService.getAppointmentsByRange(start, end);
-      
-      apps = apps.map(app => ({
-        ...app,
-        date: app.date instanceof Object && 'toDate' in app.date ? app.date.toDate() : new Date(app.date),
-        endDate: app.endDate instanceof Object && 'toDate' in app.endDate ? app.endDate.toDate() : new Date(app.endDate)
-      }));
-
-      if (isDoctor) {
-          apps = apps.filter(app => app.doctorId === user?.uid);
-      } else if (selectedDoctorId !== 'all') {
-          apps = apps.filter(app => app.doctorId === selectedDoctorId);
-      }
-
-      setAppointments(apps);
-    } catch (error) {
-      console.error("Error loading calendar data:", error);
+    if (currentView === Views.WEEK) {
+        start = startOfWeek(viewDate, { locale: es });
+        end = new Date(start); end.setDate(end.getDate() + 7);
+    } else if (currentView === Views.DAY) {
+        start = new Date(viewDate); start.setHours(0,0,0,0);
+        end = new Date(viewDate); end.setHours(23,59,59,999);
+    } else {
+        start = startOfWeek(startOfMonth(viewDate), { weekStartsOn: 0 });
+        end = startOfWeek(endOfMonth(viewDate), { weekStartsOn: 0 });
+        end.setDate(end.getDate() + 6);
     }
+
+    // Usar la nueva función de suscripción
+    const unsubscribe = appointmentService.subscribeToAppointmentsByRange(start, end, (updatedApps) => {
+        let apps = updatedApps.map(app => ({
+            ...app,
+            date: app.date instanceof Object && 'toDate' in app.date ? app.date.toDate() : new Date(app.date),
+            endDate: app.endDate instanceof Object && 'toDate' in app.endDate ? app.endDate.toDate() : new Date(app.endDate),
+            resourceId: app.doctorId
+        })) as CalendarAppointment[];
+
+        if (isDoctor) {
+            apps = apps.filter(app => app.doctorId === user?.uid);
+        } else {
+            if (selectedClinicId !== 'all') {
+                // Necesitamos 'doctors' aquí, pero como es un efecto, usaremos el estado actual
+                // Nota: doctors podría estar vacío al inicio, pero se actualizará
+                // Para simplificar y evitar dependencias circulares complejas, filtramos si tenemos doctores cargados
+                // O confiamos en que el filtro se reaplicará cuando 'doctors' cambie (si lo agregamos a deps)
+                // MEJOR: Filtrar en el render o aquí mismo si doctors ya tiene datos.
+                // Si doctors está vacío, no filtramos por clínica todavía (o mostramos todo/nada).
+                if (doctors.length > 0) {
+                     const clinicDoctors = doctors.filter(d => d.clinicId === selectedClinicId).map(d => d.uid);
+                     apps = apps.filter(app => clinicDoctors.includes(app.doctorId));
+                }
+            }
+            if (selectedDoctorId !== 'all') {
+                apps = apps.filter(app => app.doctorId === selectedDoctorId);
+            }
+        }
+
+        if (selectedStatus !== 'all') {
+            apps = apps.filter(app => app.status === selectedStatus);
+        }
+
+        setAppointments(apps);
+    });
+
+    return () => unsubscribe(); // Limpiar suscripción al desmontar o cambiar filtros
+
+  }, [viewDate, selectedDoctorId, selectedClinicId, currentView, selectedStatus, isDoctor, user, doctors]); // Agregamos dependencias relevantes
+
+  /* DEPRECATED: loadData manual
+  const loadData = async () => { ... } 
+  */
+  
+  // Función auxiliar para recargar SOLO si es necesario (ej. después de crear), 
+  // aunque con onSnapshot ya no es estrictamente necesario llamar a loadData() para ver cambios.
+  // Mantenemos una versión simplificada o vacía para compatibilidad con el código existente que llama a loadData()
+  const loadData = async () => {
+      // No-op: La suscripción se encarga de actualizar.
+      // Opcional: Podríamos refrescar datos estáticos si fuera necesario, pero raramente cambian.
+      console.log("Data refresh handled by realtime subscription");
   };
 
   const handleNavigate = (action: 'PREV' | 'NEXT' | 'TODAY') => {
@@ -255,10 +340,16 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
 
   const handleCreateAppointment = async (data: any) => {
     try {
-      await appointmentService.createAppointment({ ...data, createdBy: user?.uid || 'system' });
+      await appointmentService.createAppointment({ ...data, createdBy: user?.uid || 'system' }, user?.email || 'system@humana.com');
       toast.success("Cita agendada correctamente");
       loadData();
-    } catch (error) { console.error(error); toast.error("Error al guardar la cita"); }
+    } catch (error: any) {
+      console.error("Error al guardar la cita:", error);
+      const message = typeof error?.message === 'string' && error.message.trim()
+        ? error.message
+        : "Ocurrió un error al guardar la cita.";
+      toast.error(message);
+    }
   };
 
   const handleConfirmPhone = async (id: string, method: string) => {
@@ -280,9 +371,15 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
         return;
     }
     try { 
-        await appointmentService.cancelAppointment(id, reason); 
+        if (reason === 'no_show_internal') {
+            await appointmentService.markNoShow(id, user?.email || 'system@humana.com');
+            toast.success("Cita marcada como 'No se presentó'");
+        } else {
+            await appointmentService.cancelAppointment(id, reason, user?.email || 'system@humana.com'); 
+            toast.success("Cancelada");
+        }
         
-        if (selectedAppointment) {
+        if (selectedAppointment && reason !== 'no_show_internal') {
             await notifyAppointmentCancelled(
                 selectedAppointment.patientName,
                 selectedAppointment.doctorName,
@@ -295,16 +392,18 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
             await notifyAppointmentCancellationToAdmins(
                 selectedAppointment.patientName,
                 selectedAppointment.doctorName,
-                format(selectedAppointment.date, "dd/MM/yyyy HH:mm"),
+                format(selectedAppointment.date instanceof Date ? selectedAppointment.date : new Date(), "dd/MM/yyyy HH:mm"),
                 user?.name || 'Administrador',
                 reason
             );
         }
         
-        toast.success("Cancelada"); 
         setIsDetailsModalOpen(false); 
         loadData(); 
-    } catch (e) { toast.error("Error"); }
+    } catch (e) { 
+        console.error(e);
+        toast.error("Error al cancelar"); 
+    }
   };
 
   const handleOpenResidentIntake = () => {
@@ -317,6 +416,22 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
     setResidentAppointment(selectedAppointment);
     setResidentPatient(p);
     setShowResidentIntakeModal(true);
+  };
+
+  const handleUpdateAppointment = async (id: string, updates: Partial<Appointment>) => {
+    try {
+        await appointmentService.updateAppointment(id, updates, {
+            editorId: user?.uid || 'unknown',
+            editorName: user?.name || 'Unknown',
+            editorEmail: user?.email || 'system@humana.com'
+        });
+        toast.success("Cita actualizada");
+        setIsDetailsModalOpen(false);
+        loadData();
+    } catch (error) {
+        console.error("Error al actualizar cita", error);
+        toast.error("No se pudieron guardar los cambios de la cita. Verifique permisos.");
+    }
   };
 
   const eventStyleGetter = (event: Appointment) => {
@@ -340,7 +455,10 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
 
   const EventComponent = ({ event }: { event: Appointment }) => (
     <div className="h-full flex flex-col overflow-hidden leading-tight justify-center px-1">
-      <div className="font-bold truncate text-xs">{event.patientName}</div>
+      <div className="font-bold truncate text-xs flex items-center gap-1">
+        {event.modality === 'Virtual' ? <Video className="w-3 h-3 flex-shrink-0" /> : <Users className="w-3 h-3 flex-shrink-0" />}
+        {event.patientName}
+      </div>
       {zoomLevel >= 2 && <div className="text-[10px] opacity-80 truncate">{event.reason}</div>}
     </div>
   );
@@ -395,22 +513,78 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
           </div>
 
           {!isDoctor && (
-              <div className="relative">
-                <Filter className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                <select value={selectedDoctorId} onChange={(e) => setSelectedDoctorId(e.target.value)} className="pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none cursor-pointer hover:bg-slate-100">
-                  <option value="all">Todos los Médicos</option>
-                  {doctors.map(d => <option key={d.uid} value={d.uid}>Dr. {d.name}</option>)}
-                </select>
+              <div className="flex gap-2">
+                  <div className="relative">
+                    <Building2 className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <select 
+                        value={selectedClinicId} 
+                        onChange={(e) => setSelectedClinicId(e.target.value)} 
+                        className="pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none cursor-pointer hover:bg-slate-100"
+                    >
+                      <option value="all">Todas las Clínicas</option>
+                      {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+
+                  {selectedClinicId !== 'all' && (
+                      <div className="relative animate-in fade-in slide-in-from-left-2 duration-200">
+                        <Stethoscope className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                        <select 
+                            value={selectedDoctorId} 
+                            onChange={(e) => setSelectedDoctorId(e.target.value)} 
+                            className="pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none cursor-pointer hover:bg-slate-100"
+                        >
+                          <option value="all">Todos los Médicos</option>
+                          {doctors
+                            .filter(d => d.clinicId === selectedClinicId)
+                            .map(d => <option key={d.uid} value={d.uid}>Dr. {d.name}</option>)}
+                        </select>
+                      </div>
+                  )}
               </div>
           )}
 
-          <button onClick={() => loadData()} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><RefreshCw className="w-5 h-5" /></button>
+          <div className="relative">
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value as 'all' | AppointmentStatusKey)}
+              className="pl-3 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none cursor-pointer hover:bg-slate-100"
+            >
+              <option value="all">Todos los estados</option>
+              {statusOptions.map(s => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {canCreate && (
-              <button onClick={() => { setSelectedDate(new Date()); setIsModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 shadow-lg">
-                <Plus className="w-4 h-4" /> Nueva Cita
-              </button>
-          )}
+          <button onClick={() => loadData()} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><RefreshCw className="w-5 h-5" /></button>
+        </div>
+      </div>
+
+      <div className="bg-white px-4 pt-1 pb-3 rounded-xl shadow-sm border border-slate-200">
+        <div className="flex flex-wrap items-center gap-2 text-[10px]">
+          {statusOptions.map(s => {
+            const style = statusStyles[s.key];
+            return (
+              <div
+                key={s.key}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 bg-slate-50"
+              >
+                <span
+                  className="w-3 h-3 rounded-full border"
+                  style={{
+                    backgroundColor: style.bg,
+                    borderColor: style.border,
+                  }}
+                />
+                <span className="font-semibold text-slate-700">
+                  {s.label}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -426,6 +600,7 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
                       setSelectedDate(d); setIsModalOpen(true);
                   }}
                   onSelectEvent={(app) => { setSelectedAppointment(app); setIsDetailsModalOpen(true); }}
+                  onShowDayAppointments={(day, apps) => setDayAppointmentsModal({ date: day, apps })}
               />
           ) : (
               <>
@@ -489,16 +664,21 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
 
       <AppointmentDetailsModal 
         isOpen={isDetailsModalOpen}
-        onClose={() => setIsDetailsModalOpen(false)}
+        onClose={() => {
+          setIsDetailsModalOpen(false);
+          setSelectedAppointment(null);
+        }}
         appointment={selectedAppointment}
+        userRole={user?.role || ''}
+        users={allUsers}
         onConfirmPhone={handleConfirmPhone}
         onRegisterPayment={handleRegisterPayment}
         onCancel={handleCancelAppointment}
-        userRole={user?.role || ''}
-        onOpenResidentIntake={isResident ? handleOpenResidentIntake : undefined}
+        onOpenResidentIntake={user?.role === 'nurse' ? handleOpenResidentIntake : undefined}
+        onUpdateAppointment={handleUpdateAppointment}
       />
 
-      {isResident && user && residentAppointment && residentPatient && (
+      {user?.role === 'nurse' && user && residentAppointment && residentPatient && (
         <ResidentIntakeModal
           isOpen={showResidentIntakeModal}
           onClose={() => setShowResidentIntakeModal(false)}
@@ -517,6 +697,61 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
             await loadData();
           }}
         />
+      )}
+
+      {dayAppointmentsModal && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[70vh] flex flex-col">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-semibold text-slate-500">Citas del día</p>
+                <p className="text-sm font-bold text-slate-800">
+                  {format(dayAppointmentsModal.date, "EEEE d 'de' MMMM", { locale: es })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDayAppointmentsModal(null)}
+                className="text-xs font-bold text-slate-400 hover:text-slate-600"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="p-3 space-y-2 overflow-y-auto">
+              {dayAppointmentsModal.apps
+                .slice()
+                .sort((a, b) => a.date.getTime() - b.date.getTime())
+                .map(app => (
+                  <button
+                    key={app.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAppointment(app);
+                      setIsDetailsModalOpen(true);
+                      setDayAppointmentsModal(null);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 flex flex-col gap-0.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                        {format(app.date, 'HH:mm')}
+                        {app.modality === 'Virtual' ? <Video className="w-3 h-3 text-slate-400" /> : <Users className="w-3 h-3 text-slate-400" />}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                        {app.status.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    <div className="text-xs font-semibold text-slate-800 truncate">
+                      {app.patientName}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate">
+                      {app.doctorName}
+                    </div>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

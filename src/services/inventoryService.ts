@@ -4,6 +4,56 @@ import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { db, auth } from '../firebase/config.ts';
 import { Medicine, Specialty, Pathology, LaboratoryItem } from '../types.ts';
 
+// --- OBTENER TODOS LOS MEDICAMENTOS (PARA CACHÉ LOCAL) ---
+export const getAllMedicines = async (): Promise<Medicine[]> => {
+    try {
+        const inventoryRef = collection(db, 'inventory');
+        const externalRef = collection(db, 'external_medicines');
+
+        const [snapInv, snapExt] = await Promise.all([
+            getDocs(query(inventoryRef, orderBy('name'))),
+            getDocs(query(externalRef, orderBy('name')))
+        ]);
+
+        const internalResults: Medicine[] = snapInv.docs.map(doc => {
+            const d = doc.data() as any;
+            return {
+                id: doc.id,
+                name: d.name,
+                stock: d.stock || 0,
+                price: d.price || 0,
+                presentation: d.presentation || '',
+                units_per_box: d.units_per_box || 1,
+                category: d.category,
+                brandName: d.brandName || d.commercialName || '',
+                activeIngredient: d.activeIngredient || '',
+                isExternal: d.isExternal || false
+            } as Medicine;
+        });
+
+        const externalResults: Medicine[] = snapExt.docs.map(doc => {
+            const d = doc.data() as any;
+            return {
+                id: doc.id,
+                name: d.name,
+                stock: 0,
+                price: 0,
+                presentation: d.presentation || 'Externo',
+                units_per_box: d.units_per_box || 1,
+                category: d.category,
+                brandName: d.brandName || d.commercialName || '',
+                activeIngredient: d.activeIngredient || '',
+                isExternal: true
+            } as Medicine;
+        });
+
+        return [...internalResults, ...externalResults];
+    } catch (error) {
+        console.error("Error fetching all medicines:", error);
+        return [];
+    }
+};
+
 // --- BÚSQUEDA HÍBRIDA (INVENTARIO + EXTERNOS) ---
 export const searchMedicine = async (term: string): Promise<Medicine[]> => {
   try {
@@ -17,16 +67,34 @@ export const searchMedicine = async (term: string): Promise<Medicine[]> => {
             getDocs(query(externalRef, orderBy('name'), limit(5)))
         ]);
 
-        const internalResults: Medicine[] = snapInv.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Medicine));
-        const externalResults: Medicine[] = snapExt.docs.map(doc => {
-            const data = doc.data() as any;
+        const internalResults: Medicine[] = snapInv.docs.map(doc => {
+            const d = doc.data() as any;
             return {
                 id: doc.id,
-                name: data.name,
+                name: d.name,
+                stock: d.stock || 0,
+                price: d.price || 0,
+                presentation: d.presentation || '',
+                units_per_box: d.units_per_box || 1,
+                category: d.category,
+                brandName: d.brandName || d.commercialName || '',
+                activeIngredient: d.activeIngredient || '',
+                isExternal: d.isExternal || false
+            } as Medicine;
+        });
+
+        const externalResults: Medicine[] = snapExt.docs.map(doc => {
+            const d = doc.data() as any;
+            return {
+                id: doc.id,
+                name: d.name,
                 stock: 0,
                 price: 0,
-                presentation: 'Externo',
-                units_per_box: 1,
+                presentation: d.presentation || 'Externo',
+                units_per_box: d.units_per_box || 1,
+                category: d.category,
+                brandName: d.brandName || d.commercialName || '',
+                activeIngredient: d.activeIngredient || '',
                 isExternal: true
             } as Medicine;
         });
@@ -37,45 +105,59 @@ export const searchMedicine = async (term: string): Promise<Medicine[]> => {
     const termLower = term.toLowerCase();
     const termCap = termLower.charAt(0).toUpperCase() + termLower.slice(1);
     
-    // Helper para buscar en una colección con un prefijo específico
-    const fetchFromCol = async (colName: string, searchPrefix: string, isExternalCol: boolean) => {
+    const mapDocToMedicine = (docSnap: any, isExternalCol: boolean): Medicine => {
+        const d = docSnap.data() as any;
+        return {
+            id: docSnap.id,
+            name: d.name,
+            stock: isExternalCol ? 0 : (d.stock || 0),
+            price: isExternalCol ? 0 : (d.price || 0),
+            presentation: d.presentation || (isExternalCol ? 'Externo' : ''),
+            units_per_box: d.units_per_box || 1,
+            category: d.category,
+            brandName: d.brandName || d.commercialName || '',
+            activeIngredient: d.activeIngredient || '',
+            isExternal: isExternalCol || d.isExternal || false
+        } as Medicine;
+    };
+
+    const fetchFromCol = async (colName: string, field: string, searchPrefix: string, isExternalCol: boolean) => {
         const ref = collection(db, colName);
         const q = query(
             ref,
-            orderBy('name'),
+            orderBy(field),
             startAt(searchPrefix),
             endAt(searchPrefix + '\uf8ff'),
             limit(5)
         );
         const snap = await getDocs(q);
-        return snap.docs.map(doc => {
-            const d = doc.data() as any;
-            return {
-                id: doc.id,
-                name: d.name,
-                stock: isExternalCol ? 0 : (d.stock || 0),
-                price: isExternalCol ? 0 : (d.price || 0),
-                presentation: d.presentation || (isExternalCol ? 'Externo' : ''),
-                units_per_box: d.units_per_box || 1,
-                isExternal: isExternalCol || d.isExternal || false
-            } as Medicine;
-        });
+        return snap.docs.map(docSnap => mapDocToMedicine(docSnap, isExternalCol));
     };
 
-    // Ejecutamos búsquedas en paralelo para cubrir:
-    // 1. Inventario (Capitalizado - Estándar)
-    // 2. Externos (Capitalizado - Estándar)
-    // 3. Externos (Minúscula - Casos manuales como 'panadol')
-    
-    const [invResults, extCapResults, extLowResults] = await Promise.all([
-        fetchFromCol('inventory', termCap, false),
-        fetchFromCol('external_medicines', termCap, true),
-        // Solo buscamos en minúscula si es diferente a capitalizado para ahorrar lecturas
-        (termCap !== termLower) ? fetchFromCol('external_medicines', termLower, true) : Promise.resolve([])
-    ]);
+    const [invByName, extByNameCap, extByNameLow, invByBrand, extByBrandCap, extByBrandLow, invByActive, extByActiveCap, extByActiveLow] =
+      await Promise.all([
+        fetchFromCol('inventory', 'name', termCap, false),
+        fetchFromCol('external_medicines', 'name', termCap, true),
+        termCap !== termLower ? fetchFromCol('external_medicines', 'name', termLower, true) : Promise.resolve([]),
+        fetchFromCol('inventory', 'brandName', termCap, false),
+        fetchFromCol('external_medicines', 'brandName', termCap, true),
+        termCap !== termLower ? fetchFromCol('external_medicines', 'brandName', termLower, true) : Promise.resolve([]),
+        fetchFromCol('inventory', 'activeIngredient', termCap, false),
+        fetchFromCol('external_medicines', 'activeIngredient', termCap, true),
+        termCap !== termLower ? fetchFromCol('external_medicines', 'activeIngredient', termLower, true) : Promise.resolve([]),
+      ]);
 
-    // Unir y eliminar duplicados por ID
-    const allResults = [...invResults, ...extCapResults, ...extLowResults];
+    const allResults = [
+        ...invByName,
+        ...extByNameCap,
+        ...extByNameLow,
+        ...invByBrand,
+        ...extByBrandCap,
+        ...extByBrandLow,
+        ...invByActive,
+        ...extByActiveCap,
+        ...extByActiveLow
+    ];
     const uniqueMap = new Map();
     allResults.forEach(item => {
         if (!uniqueMap.has(item.id)) uniqueMap.set(item.id, item);
@@ -104,6 +186,7 @@ export const saveExternalMedicine = async (name: string, aiData: any) => {
             distributorGT: aiData?.distributorGT || '',
             pharmacy: aiData?.pharmacy || '',
             commercialName: aiData?.commercialName || name,
+            brandName: aiData?.commercialName || name,
             createdAt: new Date(),
             isExternal: true
         });

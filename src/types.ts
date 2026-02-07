@@ -14,6 +14,8 @@ export interface UserProfile {
       serialNumber: string; // Serial único
       expiryDate: string; // Fecha vencimiento
   }; 
+  clinicId?: string;
+  clinicName?: string;
 }
 
 export enum PatientOrigin {
@@ -53,7 +55,10 @@ export interface Patient {
 
   // Context Fields
   consultationType?: 'Nueva' | 'Reconsulta';
+  modality?: 'Virtual' | 'Presencial';
   previousTreatment?: 'IGSS' | 'Medico Privado' | 'Hospital Nacional' | 'No ha estado en tratamiento';
+  previousTreatmentDetail?: string;
+  referralChannel?: string;
 
   // Legacy fields made optional for the new "Quick Create" flow
   age?: number;
@@ -73,6 +78,8 @@ export interface Medicine {
   id: string;
   code?: string; // NUEVO: Código interno (ej. FAR0001)
   name: string;
+  brandName?: string;
+  activeIngredient?: string;
   stock: number; 
   units_per_box: number; 
   price: number; // Precio Público
@@ -116,6 +123,13 @@ export interface Specialty {
   name: string;
 }
 
+export interface Clinic {
+  id?: string;
+  name: string;
+  code?: string;
+  isActive?: boolean;
+}
+
 // --- UPDATED REFERRAL GROUP ---
 export interface ReferralGroup {
     id: string; // Unique ID for keying
@@ -136,6 +150,7 @@ export interface Consultation {
   status: 'waiting' | 'in_progress' | 'finished' | 'delivered'; // Workflow Status Updated
   paymentReceipt?: string; // Boleta de Pago
   paymentAmount?: number; // NUEVO: Valor de la boleta para contabilidad
+  consultationType?: 'Nueva' | 'Reconsulta';
   
   receptionistId?: string; // Who created the check-in
   doctorId?: string; // Who is attending
@@ -143,7 +158,9 @@ export interface Consultation {
   patientName?: string;
   patientIsForeign?: boolean; // NEW: Indica si el paciente es foráneo (no del depto Guatemala)
   doctorName?: string;
+  doctorSpecialty?: string;
   date: number; 
+  appointmentId?: string;
   
   // Clinical Data (Can be null initially)
   vitals?: {
@@ -177,12 +194,19 @@ export interface Consultation {
   
   followUpRequired?: boolean;
   followUpText?: string;
+  importantNotices?: string;
+  importantNoticesSeenBy?: string[];
+
+  // NUEVO: Datos de especialidad (Fichas dinámicas)
+  specialtyData?: Record<string, any>;
+  specialtyFormId?: string;
 
   // Track printing status for each doc
   printedDocs?: {
     prescription?: boolean;
     labs?: boolean;
     report?: boolean;
+    fullFicha?: boolean;
   };
 
   deliveredAt?: number;
@@ -222,13 +246,17 @@ export interface Appointment {
   patientName: string; // Desnormalizado para búsquedas rápidas
   doctorId: string;
   doctorName: string; // Desnormalizado
+  consultationType: 'Nueva' | 'Reconsulta';
+  goToNurse?: boolean;
   
   // Timeframe
   date: any; // Timestamp (Fecha y hora de inicio)
   endDate: any; // Timestamp (Fecha y hora de fin estimada)
   
   status: AppointmentStatus;
-  reason?: string; // Motivo de la cita
+  reason?: string; // Motivo / observaciones de la cita (campo legacy, se mantiene por compatibilidad)
+  reasonForConsultation?: string; // NUEVO: Razón de consulta (Especialidad)
+  modality?: 'Virtual' | 'Presencial'; // NUEVO: Modalidad de la cita
   
   // CRM Tracking
   createdAt: any;
@@ -242,4 +270,24 @@ export interface Appointment {
   paymentAmount?: number;
   paidAt?: any;
   paidBy?: string; // Cajero/Recepcionista que cobró
+  duration?: number; // Duración en minutos
+}
+
+// --- MODULE 3: DOCTOR SCHEDULE SYSTEM ---
+
+export interface DoctorDaySchedule {
+  id?: string;
+  doctorId: string;
+  doctorName: string;
+  date: string; // Formato 'YYYY-MM-DD' en zona GT
+  mode: 'available' | 'unavailable';
+  startTime?: string; // 'HH:mm'
+  endTime?: string;   // 'HH:mm'
+  maxPatients?: number;
+  createdAt: any;
+  createdBy: string;
+}
+
+export interface DoctorScheduleSettings {
+  allowDoctorSelfManage: boolean;
 }

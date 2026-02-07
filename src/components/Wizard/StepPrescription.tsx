@@ -1,9 +1,9 @@
 
 import * as React from 'react';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useFormContext, useFieldArray } from 'react-hook-form';
-import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote } from 'lucide-react';
-import { searchMedicine, saveExternalMedicine } from '../../services/inventoryService.ts';
+import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote, Filter } from 'lucide-react';
+import { getAllMedicines, saveExternalMedicine } from '../../services/inventoryService.ts';
 import { parsePrescriptionWithAI, analyzeExternalMedicine } from '../../services/geminiService.ts';
 import { Medicine, UserProfile } from '../../../types.ts';
 import { logAuditAction } from '../../services/auditService.ts';
@@ -22,24 +22,76 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
   });
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
   const [searchResults, setSearchResults] = useState<Medicine[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [filterSource, setFilterSource] = useState<'all' | 'external' | 'inventory'>('all');
+  const [loading, setLoading] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Search including external medicines
-  const performSearch = async (term: string) => {
-      const res = await searchMedicine(term);
-      setSearchResults(res);
+  // Load all medicines on mount
+  useEffect(() => {
+      const load = async () => {
+          setLoading(true);
+          const res = await getAllMedicines();
+          setAllMedicines(res);
+          setSearchResults(res);
+          setLoading(false);
+      };
+      load();
+  }, []);
+
+  useEffect(() => {
+      const handleClickOutside = (e: MouseEvent) => {
+          const el = containerRef.current;
+          if (!el) return;
+          if (e.target instanceof Node && !el.contains(e.target)) {
+              setShowDropdown(false);
+          }
+      };
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+          document.removeEventListener('mousedown', handleClickOutside);
+      };
+  }, []);
+  // Local filtering logic
+  const performLocalSearch = (term: string, source: 'all' | 'external' | 'inventory') => {
+      let filtered = allMedicines;
+      
+      // 1. Filter by Source
+      if (source === 'external') {
+          filtered = filtered.filter(m => m.isExternal);
+      } else if (source === 'inventory') {
+          filtered = filtered.filter(m => !m.isExternal);
+      }
+
+      // 2. Filter by Term
+      if (term.trim()) {
+          const lower = term.toLowerCase();
+          filtered = filtered.filter(m => 
+              m.name.toLowerCase().includes(lower) || 
+              (m.brandName && m.brandName.toLowerCase().includes(lower)) ||
+              (m.activeIngredient && m.activeIngredient.toLowerCase().includes(lower))
+          );
+      }
+
+      setSearchResults(filtered);
       setShowDropdown(true);
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const val = e.target.value;
       setSearchTerm(val);
-      performSearch(val);
+      performLocalSearch(val, filterSource);
+  };
+
+  const handleSourceChange = (source: 'all' | 'external' | 'inventory') => {
+      setFilterSource(source);
+      performLocalSearch(searchTerm, source);
   };
 
   const handleFocus = () => {
-      performSearch(searchTerm);
+      performLocalSearch(searchTerm, filterSource);
   };
 
   const addMedicine = (med: Medicine) => {
@@ -89,6 +141,10 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
           const aiAnalysis = await analyzeExternalMedicine(medName);
           await saveExternalMedicine(medName, aiAnalysis);
           
+          // Refresh list to include new external med
+          const updatedMeds = await getAllMedicines();
+          setAllMedicines(updatedMeds);
+
           // --- AUDITORÍA AGREGADA ---
           await logAuditAction(currentUser.email, "REGISTRO_MEDICAMENTO_EXTERNO", `Nuevo medicamento registrado manualmente: ${medName}`);
       } catch (e) {
@@ -127,7 +183,32 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
                 1. Receta de Medicamentos
           </h4>
 
-          <div className="relative z-20">
+          <div className="relative z-20 space-y-3" ref={containerRef}>
+              {/* FILTROS DE ORIGEN */}
+              <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl w-fit">
+                  <button 
+                    type="button"
+                    onClick={() => handleSourceChange('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filterSource === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                      Todos
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => handleSourceChange('inventory')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${filterSource === 'inventory' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                      <Pill className="w-3 h-3" /> Farmacia
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => handleSourceChange('external')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${filterSource === 'external' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                      <ExternalLink className="w-3 h-3" /> Externos
+                  </button>
+              </div>
+
               <div className="flex gap-2">
                 <div className="relative flex-1">
                     <Search className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
@@ -136,44 +217,56 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
                         value={searchTerm}
                         onChange={handleSearchChange}
                         onFocus={handleFocus}
-                        placeholder="Buscar medicamento..."
-                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm bg-white text-slate-900 text-sm md:text-base"
+                        disabled={loading}
+                        placeholder={loading ? "Cargando catálogo..." : "Buscar por nombre, marca o principio activo..."}
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm bg-white text-slate-900 text-sm md:text-base disabled:bg-slate-50 disabled:text-slate-400"
                         autoComplete="off"
                     />
-                    {showDropdown && searchResults.length > 0 && (
-                        <motion.ul 
-                          initial={{ opacity: 0, y: -10 }} 
-                          animate={{ opacity: 1, y: 0 }}
-                          className="absolute w-full bg-white border border-slate-200 rounded-lg mt-1 shadow-xl max-h-60 overflow-y-auto z-50"
-                        >
-                        {searchResults.map(med => (
-                            <li 
-                            key={med.id} 
-                            onMouseDown={(e) => { e.preventDefault(); addMedicine(med); }}
-                            className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 flex justify-between group items-center"
-                            >
-                                <div>
-                                    <span className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-emerald-700 text-sm">
-                                        {med.name}
-                                        {med.isExternal && (
-                                            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
-                                                <ExternalLink className="w-3 h-3" /> Externo
-                                            </span>
-                                        )}
-                                    </span>
-                                    <span className="text-xs text-slate-400 block">{med.presentation}</span>
-                                </div>
-                                <div className="text-right">
-                                    {(!med.isExternal && med.stock !== undefined) && (
-                                        <span className={`text-xs font-bold px-2 py-1 rounded ${med.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                            Stock: {med.stock}
-                                        </span>
-                                    )}
-                                </div>
-                            </li>
-                        ))}
-                        </motion.ul>
-                    )}
+                    <AnimatePresence>
+                      {showDropdown && (
+                          <motion.ul 
+                            initial={{ opacity: 0, y: -10 }} 
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            className="absolute w-full bg-white border border-slate-200 rounded-lg mt-1 shadow-xl max-h-80 overflow-y-auto z-50 custom-scrollbar"
+                          >
+                          {searchResults.length > 0 ? searchResults.map(med => (
+                              <li 
+                              key={med.id} 
+                              onMouseDown={(e) => { e.preventDefault(); addMedicine(med); }}
+                              className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 flex justify-between group items-center"
+                              >
+                                  <div>
+                                      <span className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-emerald-700 text-sm">
+                                          {med.name}
+                                          {med.isExternal && (
+                                              <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
+                                                  <ExternalLink className="w-3 h-3" /> Externo
+                                              </span>
+                                          )}
+                                      </span>
+                                      <span className="text-xs text-slate-400 block">
+                                          {med.presentation}
+                                          {med.brandName && ` • Marca: ${med.brandName}`}
+                                          {med.activeIngredient && ` • PA: ${med.activeIngredient}`}
+                                      </span>
+                                  </div>
+                                  <div className="text-right">
+                                      {(!med.isExternal && med.stock !== undefined) && (
+                                          <span className={`text-xs font-bold px-2 py-1 rounded ${med.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                              Stock: {med.stock}
+                                          </span>
+                                      )}
+                                  </div>
+                              </li>
+                          )) : (
+                              <li className="p-4 text-center text-slate-400 italic text-sm">
+                                  No se encontraron medicamentos con ese criterio.
+                              </li>
+                          )}
+                          </motion.ul>
+                      )}
+                    </AnimatePresence>
                 </div>
                 <button 
                     type="button"

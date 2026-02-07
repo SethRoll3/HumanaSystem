@@ -1,27 +1,46 @@
 
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { History, Activity, Calendar, FileText, Stethoscope, Lock, User, Eye, X, Pill, Thermometer, EyeOff, Paperclip, Image, File, FlaskConical, Download, ExternalLink, Share2, ShieldCheck, StickyNote } from 'lucide-react';
+import { History, Activity, Calendar, FileText, Stethoscope, Lock, User, Eye, X, Pill, Thermometer, EyeOff, Paperclip, Image, File, FlaskConical, Download, ExternalLink, Share2, ShieldCheck, StickyNote, Fuel, AlertTriangle } from 'lucide-react';
 import { db } from '../../firebase/config.ts';
-import { Patient, UserProfile, Consultation } from '../../../types.ts';
+import { Patient, UserProfile, Consultation, Specialty } from '../../../types.ts';
 import { motion } from 'framer-motion';
 import { ReferralNotesAlert } from './ReferralNotesAlert';
+import { SpecialtyFormContainer } from './SpecialtyForms/SpecialtyFormContainer';
+import { getSpecialties } from '../../services/inventoryService.ts';
+import { getActiveDoctors } from '../../services/userService.ts';
 
 interface StepDiagnosisProps {
   patient: Patient;
   currentUser: UserProfile;
+  appointmentType?: 'Nueva' | 'Reconsulta';
 }
 
-export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUser }) => {
+export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUser, appointmentType }) => {
   const { register, formState: { errors } } = useFormContext();
   const [history, setHistory] = useState<Consultation[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  
-  // Modals
-  const [selectedConsultation, setSelectedConsultation] = useState<Consultation | null>(null);
+  const [doctorFilter, setDoctorFilter] = useState<string>('all');
+  const [specialtyFilter, setSpecialtyFilter] = useState<string>('all');
+  const [doctors, setDoctors] = useState<UserProfile[]>([]);
+  const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const [exactDateFilter, setExactDateFilter] = useState<string>('');
+  const [fromDateFilter, setFromDateFilter] = useState<string>('');
+  const [toDateFilter, setToDateFilter] = useState<string>('');
+  const [expandedMedicalRecords, setExpandedMedicalRecords] = useState<Record<string, boolean>>({});
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const isReconsulta = appointmentType === 'Reconsulta';
+
+  const OMISSION_LABELS: Record<string, string> = {
+    diagnosis: 'Diagnóstico médico',
+    prescription: 'Receta / tratamiento',
+    exams: 'Laboratorios',
+    referrals: 'Referencias a especialistas',
+    nursing: 'Notas de enfermería',
+    signature: 'Firma del médico',
+  };
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -40,6 +59,14 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
             .sort((a, b) => b.date - a.date);
             
         setHistory(data);
+
+        // Set default fromDateFilter to the first consultation date
+        if (data.length > 0) {
+          const firstDate = new Date(data[data.length - 1].date);
+          const guatemalaOffset = -6 * 60; // Guatemala is UTC-6
+          const guatemalaDate = new Date(firstDate.getTime() + (guatemalaOffset + firstDate.getTimezoneOffset()) * 60000);
+          setFromDateFilter(guatemalaDate.toISOString().slice(0, 10));
+        }
       } catch (error) {
         console.error("Error fetching patient history", error);
       } finally {
@@ -49,7 +76,75 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
     fetchHistory();
   }, [patient]);
 
-  // Helper to extract optional exams (those NOT in groups)
+  useEffect(() => {
+    let isMounted = true;
+    const loadSpecialties = async () => {
+      try {
+        const data = await getSpecialties();
+        if (isMounted) setSpecialties(data);
+      } catch (e) {
+        console.error("Error cargando especialidades", e);
+      }
+    };
+    const loadDoctors = async () => {
+      try {
+        const data = await getActiveDoctors();
+        if (isMounted) setDoctors(data);
+      } catch (e) {
+        console.error("Error cargando doctores", e);
+      }
+    };
+    loadSpecialties();
+    loadDoctors();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const doctorOptions = useMemo(
+    () => Array.from(new Set(history.map(c => c.doctorName).filter(Boolean))) as string[],
+    [history]
+  );
+
+  const specialtyOptions = useMemo(
+    () => specialties.map(s => s.name).filter(Boolean),
+    [specialties]
+  );
+
+  const filteredHistory = useMemo(() => {
+    return history.filter(cons => {
+      if (doctorFilter !== 'all' && cons.doctorName !== doctorFilter) return false;
+
+      let consSpecialty = (cons as any).doctorSpecialty as string | undefined;
+      if (!consSpecialty && cons.doctorId) {
+        const docProfile = doctors.find(d => d.uid === cons.doctorId);
+        consSpecialty = docProfile?.specialty;
+      }
+      if (specialtyFilter !== 'all' && specialtyFilter && consSpecialty !== specialtyFilter) {
+        return false;
+      }
+
+      const consDate = new Date(cons.date);
+      // Adjust to Guatemala time for display/filtering logic consistency
+      const guatemalaOffset = -6 * 60; 
+      const guatemalaDate = new Date(consDate.getTime() + (guatemalaOffset + consDate.getTimezoneOffset()) * 60000);
+      const dateISO = guatemalaDate.toISOString().slice(0, 10);
+
+      if (exactDateFilter) {
+        if (dateISO !== exactDateFilter) return false;
+      } else {
+        if (fromDateFilter) {
+          if (dateISO < fromDateFilter) return false;
+        }
+        if (toDateFilter) {
+          if (dateISO > toDateFilter) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [history, doctors, doctorFilter, specialtyFilter, exactDateFilter, fromDateFilter, toDateFilter]);
+
   const getOptionalExams = (c: Consultation) => {
       const allExams = c.exams || [];
       const groupedExams = new Set<string>();
@@ -71,13 +166,447 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
       <ReferralNotesAlert patientId={patient.id} doctorSpecialty={currentUser.specialty} />
       
       {/* --- SECCIÓN A: HISTORIAL (TOP) --- */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* A1. Antecedentes (Card Resumen) */}
+      <div className="space-y-6">
+          {/* A1. Consultas Previas con filtros (ocupa todo el ancho) */}
           <motion.div 
-             initial={{ x: -20, opacity: 0 }}
-             animate={{ x: 0, opacity: 1 }}
+             initial={{ y: -10, opacity: 0 }}
+             animate={{ y: 0, opacity: 1 }}
              transition={{ delay: 0.1 }}
-             className="bg-amber-50/60 border border-amber-200 rounded-2xl p-6 shadow-sm h-full flex flex-col justify-between"
+             className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col gap-4"
+          >
+             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
+                 <h4 className="font-bold text-slate-800 flex items-center gap-2 text-base">
+                    <Activity className="w-5 h-5 text-brand-600"/> Consultas Previas ({filteredHistory.length})
+                 </h4>
+                 <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                    <Fuel className="w-3 h-3" />
+                    <span>Filtrar por médico, fecha o especialidad</span>
+                 </div>
+             </div>
+
+             <div className="space-y-3 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
+                            Médico
+                        </label>
+                        <select
+                          value={doctorFilter}
+                          onChange={e => {
+                            setDoctorFilter(e.target.value);
+                          }}
+                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                        >
+                          <option value="all">Todos los médicos</option>
+                          {doctorOptions.map(name => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
+                            Especialidad
+                        </label>
+                        <select
+                          value={specialtyFilter}
+                          onChange={e => {
+                            setSpecialtyFilter(e.target.value);
+                          }}
+                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                        >
+                          <option value="all">Todas las especialidades</option>
+                          {specialtyOptions.map(spec => (
+                            <option key={spec} value={spec}>{spec}</option>
+                          ))}
+                        </select>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
+                            Fecha específica
+                        </label>
+                        <input
+                          type="date"
+                          value={exactDateFilter}
+                          onChange={e => {
+                            setExactDateFilter(e.target.value);
+                            if (e.target.value) {
+                              setFromDateFilter('');
+                              setToDateFilter('');
+                            }
+                          }}
+                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
+                            Desde
+                        </label>
+                        <input
+                          type="date"
+                          value={fromDateFilter}
+                          disabled={!!exactDateFilter}
+                          onChange={e => {
+                            setFromDateFilter(e.target.value);
+                          }}
+                          className={`w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 ${!!exactDateFilter ? 'opacity-50 cursor-not-allowed bg-slate-100' : ''}`}
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
+                            Hasta
+                        </label>
+                        <input
+                          type="date"
+                          value={toDateFilter}
+                          disabled={!!exactDateFilter}
+                          onChange={e => {
+                            setToDateFilter(e.target.value);
+                          }}
+                          className={`w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 ${!!exactDateFilter ? 'opacity-50 cursor-not-allowed bg-slate-100' : ''}`}
+                        />
+                    </div>
+                </div>
+
+                <p className="text-[11px] text-slate-400">
+                    Si seleccionas una fecha específica, se ignorará el rango Desde/Hasta.
+                </p>
+             </div>
+             
+             {loadingHistory ? (
+                <div className="flex items-center justify-center py-6">
+                    <p className="text-sm text-slate-400 animate-pulse">Cargando...</p>
+                </div>
+             ) : history.length === 0 ? (
+                <div className="text-center py-6">
+                     <p className="text-sm text-slate-500 italic">No hay consultas finalizadas previas.</p>
+                </div>
+             ) : filteredHistory.length === 0 ? (
+                <div className="text-center py-6">
+                     <p className="text-sm text-slate-500 italic">No hay resultados con los filtros actuales.</p>
+                </div>
+             ) : (
+                <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+                   {filteredHistory.map((cons) => {
+                     const consDate = new Date(cons.date);
+                     const consKey = (cons.id as string) || String(cons.date);
+                     const hasPrescription = (cons.prescription && cons.prescription.length > 0) || !!cons.prescriptionNotes;
+                     const hasLabsSection =
+                       (cons.referralGroups && cons.referralGroups.length > 0) ||
+                       (cons.exams && cons.exams.length > 0) ||
+                       !!cons.referralNote;
+                     const hasSpecialtyRefs = !!(cons.specialtyReferrals && cons.specialtyReferrals.length > 0);
+                     const hasNurseNotes = !!cons.followUpText;
+                     const hasVitals = !!cons.vitals;
+                     const hasMentalObservation = !!cons.mentalHealthObservation;
+                     const omissionEntries = Object.entries(cons.omittedFields || {}).filter(
+                       ([, value]) => !!value
+                     );
+                     const hasOmissions = omissionEntries.length > 0;
+
+                     return (
+                      <div
+                        key={consKey}
+                        className="bg-slate-100 border border-slate-200 rounded-2xl p-4 md:p-5 space-y-4 shadow-sm"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="bg-white text-brand-600 p-2 rounded-xl border border-slate-200">
+                              <Calendar className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">
+                                {consDate.toLocaleDateString()}
+                                <span className="ml-2 text-[11px] text-slate-500">
+                                  {consDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                Dr. {cons.doctorName?.replace('Dr. ', '') || 'Sin nombre'}
+                                {(cons as any).doctorSpecialty && (
+                                  <span className="ml-1 text-[10px] text-slate-400">
+                                    · {(cons as any).doctorSpecialty}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                            <span className="px-2 py-1 rounded-full bg-slate-800 text-white uppercase tracking-wide">
+                              {cons.status === 'finished'
+                                ? 'Finalizada'
+                                : cons.status === 'delivered'
+                                ? 'Entregada'
+                                : cons.status}
+                            </span>
+                            {cons.followUpRequired && (
+                              <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
+                                <Lock className="w-3 h-3" /> Seguimiento
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="bg-slate-800 text-white p-1.5 rounded-lg">
+                                <Stethoscope className="w-3 h-3" />
+                              </div>
+                              <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Diagnóstico</p>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-slate-200 text-slate-700 text-xs md:text-sm leading-relaxed">
+                              {cons.diagnosis || 'Sin diagnóstico registrado.'}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="bg-emerald-50 text-emerald-700 p-1.5 rounded-lg border border-emerald-100">
+                                <Pill className="w-3 h-3" />
+                              </div>
+                              <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Receta médica</p>
+                            </div>
+                            {hasPrescription ? (
+                              <div className="space-y-2">
+                                {cons.prescription && cons.prescription.length > 0 && (
+                                  <div className="border border-slate-200 rounded-xl overflow-hidden overflow-x-auto bg-white">
+                                    <table className="w-full text-xs md:text-sm text-left min-w-[380px]">
+                                      <thead className="bg-slate-100 text-slate-500 font-semibold border-b border-slate-200">
+                                        <tr>
+                                          <th className="px-3 py-2 md:px-4">Medicamento</th>
+                                          <th className="px-3 py-2 md:px-4">Cant</th>
+                                          <th className="px-3 py-2 md:px-4">Ind</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {cons.prescription.map((item, idx) => (
+                                          <tr key={idx} className="bg-white">
+                                            <td className="px-3 py-2 md:px-4 font-medium text-slate-800">{item.name}</td>
+                                            <td className="px-3 py-2 md:px-4 text-slate-600">{item.quantity}</td>
+                                            <td className="px-3 py-2 md:px-4 text-slate-500 italic">{item.dosage}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                                {cons.prescriptionNotes && (
+                                  <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-xl">
+                                    <p className="text-[10px] font-bold text-yellow-700 uppercase mb-1 flex items-center gap-1">
+                                      <StickyNote className="w-3 h-3" /> Notas / Cuidados
+                                    </p>
+                                    <p className="text-xs text-yellow-900">{cons.prescriptionNotes}</p>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-400 italic">Sin receta registrada.</p>
+                            )}
+                          </div>
+
+                          {hasLabsSection && (
+                            <div className="md:col-span-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="bg-sky-50 text-sky-700 p-1.5 rounded-lg border border-sky-100">
+                                  <FlaskConical className="w-3 h-3" />
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                  Laboratorios y Diagnósticos Genéricos
+                                </p>
+                              </div>
+                              <div className="space-y-3">
+                                {cons.referralNote && (
+                                  <div className="bg-blue-50 border border-blue-100 p-3 rounded-lg text-xs text-blue-800">
+                                    <span className="font-semibold">Nota general: </span>
+                                    {cons.referralNote}
+                                  </div>
+                                )}
+                                {cons.referralGroups?.map((group, idx) => (
+                                  <div
+                                    key={group.id || idx}
+                                    className="p-3 rounded-lg border bg-brand-50/20 border-brand-100"
+                                  >
+                                    <div className="flex justify-between items-start mb-2">
+                                      <span className="text-sm font-bold text-brand-800">{group.pathology}</span>
+                                    </div>
+                                    {group.note && (
+                                      <p className="text-xs text-slate-500 italic mb-2 bg-white p-2 rounded border border-slate-100">
+                                        {group.note}
+                                      </p>
+                                    )}
+                                    <div className="flex flex-wrap gap-1">
+                                      {group.exams.map((e) => (
+                                        <span
+                                          key={e}
+                                          className="px-2 py-0.5 bg-white text-slate-600 rounded text-[10px] border shadow-sm"
+                                        >
+                                          {e}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                                {(() => {
+                                  const optionals = getOptionalExams(cons);
+                                  if (optionals.length > 0) {
+                                    return (
+                                      <div className="p-3 rounded-lg border bg-slate-50 border-slate-200">
+                                        <span className="text-xs font-bold text-slate-500 block mb-2 uppercase">
+                                          Otros exámenes / Laboratorios
+                                        </span>
+                                        <div className="flex flex-wrap gap-1">
+                                          {optionals.map((e) => (
+                                            <span
+                                              key={e}
+                                              className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px] border border-slate-200 font-medium"
+                                            >
+                                              {e}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            </div>
+                          )}
+
+                          {hasSpecialtyRefs && (
+                            <div className="md:col-span-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="bg-pink-50 text-pink-700 p-1.5 rounded-lg border border-pink-100">
+                                  <Share2 className="w-3 h-3" />
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                  Referencia a especialistas
+                                </p>
+                              </div>
+                              <div className="space-y-2">
+                                {cons.specialtyReferrals?.map((ref) => (
+                                  <div
+                                    key={ref.id}
+                                    className="p-3 bg-pink-50 border border-pink-100 rounded-xl text-xs text-pink-900"
+                                  >
+                                    <span className="text-[11px] font-bold uppercase block">{ref.specialty}</span>
+                                    {ref.note && <p className="mt-1 italic">{ref.note}</p>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {hasNurseNotes && (
+                            <div className="md:col-span-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="bg-slate-800 text-white p-1.5 rounded-lg">
+                                  <ShieldCheck className="w-3 h-3" />
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                  Notas de enfermería
+                                </p>
+                              </div>
+                              <div className="p-3 bg-white border border-slate-200 rounded-xl text-xs md:text-sm text-slate-600 italic leading-relaxed">
+                                {cons.followUpText}
+                              </div>
+                            </div>
+                          )}
+
+                          {(hasVitals || hasMentalObservation) && (
+                            <div className="md:col-span-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="bg-slate-100 text-slate-700 p-1.5 rounded-lg border border-slate-200">
+                                  <Thermometer className="w-3 h-3" />
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                  Resumen clínico
+                                </p>
+                              </div>
+                              <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 text-xs md:text-sm text-slate-700">
+                                {hasVitals && cons.vitals && (
+                                  <div>
+                                    <p className="font-semibold mb-1">Signos vitales</p>
+                                    <p>Temperatura: {cons.vitals.temp} °C</p>
+                                    <p>Peso: {cons.vitals.weight} kg</p>
+                                    <p>Presión arterial: {cons.vitals.pressure}</p>
+                                  </div>
+                                )}
+                                {hasMentalObservation && cons.mentalHealthObservation && (
+                                  <div>
+                                    <p className="font-semibold mb-1">Observación de salud mental</p>
+                                    <p className="italic">{cons.mentalHealthObservation}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {cons.importantNotices && (
+                            <div className="md:col-span-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="bg-red-50 text-red-600 p-1.5 rounded-lg border border-red-100">
+                                  <AlertTriangle className="w-3 h-3" />
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                  Avisos importantes
+                                </p>
+                              </div>
+                              <div className="p-3 bg-red-50/60 border border-red-100 rounded-xl text-xs md:text-sm text-red-900 leading-relaxed">
+                                {cons.importantNotices}
+                              </div>
+                            </div>
+                          )}
+
+                          {hasOmissions && (
+                            <div className="md:col-span-2">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="bg-slate-900 text-white p-1.5 rounded-lg">
+                                  <FileText className="w-3 h-3" />
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                  Omisiones en esta consulta
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {omissionEntries.map(([key, value]) => {
+                                  const v = value as boolean | string;
+                                  const label = OMISSION_LABELS[key] || key;
+                                  const isEdited = v === 'edited';
+                                  return (
+                                    <span
+                                      key={key}
+                                      className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase border ${
+                                        isEdited
+                                          ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                          : 'bg-red-50 border-red-200 text-red-700'
+                                      }`}
+                                    >
+                                      {label}
+                                      {isEdited ? ' (editado)' : ' omitido'}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                     );
+                   })}
+                </div>
+             )}
+          </motion.div>
+
+          {/* A2. Antecedentes (queda debajo y ocupa ancho completo) */}
+          <motion.div 
+             initial={{ y: 10, opacity: 0 }}
+             animate={{ y: 0, opacity: 1 }}
+             transition={{ delay: 0.15 }}
+             className="bg-amber-50/60 border border-amber-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between"
           >
              <div>
                 <h4 className="font-bold text-amber-800 flex items-center gap-2 mb-2 text-base">
@@ -97,69 +626,43 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
              <button 
                 type="button" 
                 onClick={() => setShowHistoryModal(true)}
-                className="self-start text-xs font-bold bg-white text-amber-700 px-4 py-2 rounded-lg border border-amber-200 hover:bg-amber-100 transition shadow-sm flex items-center gap-2"
+                className="self-start text-xs font-bold bg-white text-amber-700 px-4 py-2 rounded-lg border border-amber-200 hover:bg-amber-100 transition shadow-sm flex items-center gap-2 mt-4"
              >
                 <FileText className="w-4 h-4" /> Ver Expediente Completo
              </button>
           </motion.div>
-
-          {/* A2. Consultas Previas (Lista Compacta) */}
-          <motion.div 
-             initial={{ x: 20, opacity: 0 }}
-             animate={{ x: 0, opacity: 1 }}
-             transition={{ delay: 0.2 }}
-             className="bg-slate-50 border border-slate-200 rounded-2xl p-6 shadow-sm max-h-[300px] overflow-y-auto custom-scrollbar flex flex-col"
-          >
-             <div className="flex items-center justify-between mb-4 sticky top-0 bg-slate-50 pb-2 border-b border-slate-200 z-10">
-                 <h4 className="font-bold text-slate-800 flex items-center gap-2 text-base">
-                    <Activity className="w-5 h-5 text-brand-600"/> Consultas Previas ({history.length})
-                 </h4>
-             </div>
-             
-             {loadingHistory ? (
-                <div className="flex items-center justify-center py-6">
-                    <p className="text-sm text-slate-400 animate-pulse">Cargando...</p>
-                </div>
-             ) : history.length === 0 ? (
-                <div className="text-center py-6">
-                     <p className="text-sm text-slate-500 italic">No hay consultas finalizadas previas.</p>
-                </div>
-             ) : (
-                <div className="space-y-2">
-                   {history.map((cons) => (
-                      <div key={cons.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:shadow-md transition-all flex items-center justify-between group">
-                          <div className="flex items-center gap-3">
-                             <div className="bg-brand-100 text-brand-600 p-2 rounded-lg">
-                                 <Calendar className="w-3 h-3" />
-                             </div>
-                             <div>
-                                 <p className="text-sm font-bold text-slate-800">{new Date(cons.date).toLocaleDateString()}</p>
-                                 <p className="text-xs text-slate-500">Dr. {cons.doctorName?.replace('Dr. ', '')}</p>
-                             </div>
-                          </div>
-                          <button 
-                            type="button"
-                            onClick={() => setSelectedConsultation(cons)}
-                            className="text-xs font-medium bg-slate-100 text-slate-600 hover:text-brand-700 px-3 py-1.5 rounded-full border border-slate-200 transition-colors"
-                          >
-                             Ver
-                          </button>
-                      </div>
-                   ))}
-                </div>
-             )}
-          </motion.div>
       </div>
+
+      {!isReconsulta ? (
+        <SpecialtyFormContainer doctorSpecialty={currentUser.specialty} />
+      ) : (
+        <div className="mt-8 mb-8">
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-6 shadow-sm flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-red-700 text-sm mb-1">
+                Aviso: esta es una RECONSULTA
+              </h3>
+              <p className="text-xs text-red-700/80">
+                Debido a que la cita fue marcada como reconsulta, no se muestra la ficha de especialidad. 
+                Puede avanzar directamente al diagnóstico y tratamiento.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <hr className="border-slate-200" />
 
-      {/* --- SECCIÓN B: DIAGNÓSTICO --- */}
+      {/* --- SECCIÓN B: RESUMEN DE CONSULTA --- */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
           <h4 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
             <div className="bg-slate-800 text-white p-1.5 rounded-lg">
                 <Stethoscope className="w-4 h-4"/>
             </div>
-            Diagnóstico Médico
+            Resumen de consulta
           </h4>
           
           <textarea 
@@ -227,131 +730,6 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
       )}
 
       {/* --- MODAL 2: DETALLE CONSULTA PASADA (FULL) --- */}
-      {selectedConsultation && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-                <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center rounded-t-2xl shrink-0">
-                    <div>
-                        <h3 className="font-bold text-slate-800 text-lg">Consulta del {new Date(selectedConsultation.date).toLocaleDateString()}</h3>
-                        <p className="text-xs text-slate-500">Dr. {selectedConsultation.doctorName}</p>
-                    </div>
-                    <button onClick={() => setSelectedConsultation(null)} className="p-2 bg-white rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 transition shadow-sm border border-slate-200"><X className="w-5 h-5" /></button>
-                </div>
-
-                <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
-                    {/* 1. Diagnostico */}
-                    <div>
-                        <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2"><Stethoscope className="w-3 h-3"/> Diagnóstico</h5>
-                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 text-sm leading-relaxed">
-                            {selectedConsultation.diagnosis || "Sin diagnóstico registrado."}
-                        </div>
-                    </div>
-
-                    {/* 2. Receta */}
-                    {(selectedConsultation.prescription && selectedConsultation.prescription.length > 0) || selectedConsultation.prescriptionNotes ? (
-                        <div>
-                            <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2"><Pill className="w-3 h-3" /> Receta Médica</h5>
-                            
-                            {selectedConsultation.prescription && selectedConsultation.prescription.length > 0 && (
-                                <div className="border border-slate-200 rounded-xl overflow-hidden mb-3 overflow-x-auto">
-                                    <table className="w-full text-sm text-left min-w-[400px]">
-                                        <thead className="bg-slate-100 text-slate-500 font-semibold border-b border-slate-200">
-                                            <tr><th className="px-4 py-2">Medicamento</th><th className="px-4 py-2">Cant</th><th className="px-4 py-2">Ind</th></tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {selectedConsultation.prescription.map((item, idx) => (
-                                                <tr key={idx} className="bg-white">
-                                                    <td className="px-4 py-2 font-medium text-slate-800">{item.name}</td>
-                                                    <td className="px-4 py-2 text-slate-600">{item.quantity}</td>
-                                                    <td className="px-4 py-2 text-slate-500 italic">{item.dosage}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-
-                            {selectedConsultation.prescriptionNotes && (
-                                <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-xl">
-                                    <p className="text-[10px] font-bold text-yellow-700 uppercase mb-1 flex items-center gap-1"><StickyNote className="w-3 h-3"/> Notas / Cuidados:</p>
-                                    <p className="text-xs text-yellow-900">{selectedConsultation.prescriptionNotes}</p>
-                                </div>
-                            )}
-                        </div>
-                    ) : null}
-
-                    {/* 3. Referencias y Patologías (LABS) */}
-                    {(selectedConsultation.referralGroups?.length || 0) > 0 || (selectedConsultation.exams && selectedConsultation.exams.length > 0) || selectedConsultation.referralNote ? (
-                         <div>
-                            <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2"><FlaskConical className="w-3 h-3" /> Laboratorios y Patologías</h5>
-                            <div className="space-y-3">
-                                {/* Nota General */}
-                                {selectedConsultation.referralNote && <div className="bg-blue-50 border border-blue-100 p-3 rounded-lg text-xs text-blue-800"><strong>Nota General:</strong> {selectedConsultation.referralNote}</div>}
-                                
-                                {/* Grupos de Patologías */}
-                                {selectedConsultation.referralGroups?.map((group, idx) => (
-                                    <div key={idx} className="p-3 rounded-lg border bg-brand-50/20 border-brand-100">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <span className="text-sm font-bold text-brand-800">{group.pathology}</span>
-                                        </div>
-                                        {group.note && <p className="text-xs text-slate-500 italic mb-2 bg-white p-2 rounded border border-slate-100">{group.note}</p>}
-                                        <div className="flex flex-wrap gap-1">
-                                            {group.exams.map(e => <span key={e} className="px-2 py-0.5 bg-white text-slate-600 rounded text-[10px] border shadow-sm">{e}</span>)}
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {/* Exámenes Opcionales (que no están en grupos) - Includes OTROS/Labs */}
-                                {(() => {
-                                    const optionals = getOptionalExams(selectedConsultation);
-                                    if (optionals.length > 0) {
-                                        return (
-                                            <div className="p-3 rounded-lg border bg-slate-50 border-slate-200">
-                                                <span className="text-xs font-bold text-slate-500 block mb-2 uppercase">Otros Exámenes / Laboratorios</span>
-                                                <div className="flex flex-wrap gap-1">
-                                                    {optionals.map(e => (
-                                                        <span key={e} className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px] border border-slate-200 font-medium">
-                                                            {e}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        );
-                                    }
-                                    return null;
-                                })()}
-                            </div>
-                         </div>
-                    ) : null}
-
-                    {/* 4. Referencias a Especialistas */}
-                    {selectedConsultation.specialtyReferrals && selectedConsultation.specialtyReferrals.length > 0 && (
-                        <div>
-                            <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2"><Share2 className="w-3 h-3" /> Referencia a Especialistas</h5>
-                            <div className="space-y-2">
-                                {selectedConsultation.specialtyReferrals.map((ref, idx) => (
-                                    <div key={idx} className="p-3 bg-pink-50 border border-pink-100 rounded-xl">
-                                        <span className="text-xs font-bold text-pink-700 uppercase block">{ref.specialty}</span>
-                                        {ref.note && <p className="text-xs text-pink-900 mt-1 italic">{ref.note}</p>}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 5. Notas de Enfermería */}
-                    {selectedConsultation.followUpText && (
-                        <div>
-                            <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2"><ShieldCheck className="w-3 h-3"/> Notas de Enfermería</h5>
-                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 italic leading-relaxed">
-                                {selectedConsultation.followUpText}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-      )}
     </motion.div>
   );
 };

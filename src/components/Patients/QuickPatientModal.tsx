@@ -18,6 +18,30 @@ interface QuickPatientModalProps {
 export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, currentUser, onSuccess }) => {
     const [isSaving, setIsSaving] = useState(false);
     const [isNoResNew, setIsNoResNew] = useState(false);
+
+    const calculateAgeFromBirthDate = (dateStr: string) => {
+        if (!dateStr) return '';
+        const today = new Date();
+        const dob = new Date(dateStr);
+        if (Number.isNaN(dob.getTime())) return '';
+        let age = today.getFullYear() - dob.getFullYear();
+        const m = today.getMonth() - dob.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+            age--;
+        }
+        return age >= 0 ? String(age) : '';
+    };
+
+    const calculateBirthDateFromAge = (ageStr: string) => {
+        const age = parseInt(ageStr, 10);
+        if (!age || Number.isNaN(age)) return '';
+        const today = new Date();
+        const year = today.getFullYear() - age;
+        const month = today.getMonth();
+        const day = today.getDate();
+        const date = new Date(year, month, day);
+        return date.toISOString().slice(0, 10);
+    };
     
     // Estado inicial limpio
     const [form, setForm] = useState<any>({ 
@@ -27,14 +51,16 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
         email: '', 
         occupation: '', 
         age: '', 
-        birthDate: '', // NUEVO: Campo de fecha de nacimiento
+        birthDate: '', 
         gender: 'M', 
         previousTreatment: 'No ha estado en tratamiento', 
+        previousTreatmentDetail: '',
         consultationType: 'Nueva',
+        modality: 'Presencial',
+        referralChannel: '',
         responsibleName: '',
         responsiblePhone: '',
         responsibleEmail: '', 
-        // Address structure
         address: {
             country: 'Guatemala',
             department: '',
@@ -77,7 +103,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                 payload.responsibleName = 'No hay'; 
                 payload.responsiblePhone = 'No hay';
                 payload.responsibleEmail = 'No hay';
-                if (!payload.phone) payload.phone = 'No registrado';
+                if (!payload.phone) payload.phone = '00000000';
             }
 
             // Asegurar ID
@@ -128,10 +154,10 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                     <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 overflow-y-auto custom-scrollbar flex-1 bg-white">
                         
                         {/* SECCIÓN DATOS PERSONALES */}
-                        <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2">Datos Personales</div>
+                        <div className="md:col-span-2 text-base font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2">Datos Personales</div>
 
                         <div className="md:col-span-2">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre del Paciente</label>
+                            <label className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre del Paciente</label>
                             <input 
                                 required 
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-lg font-bold outline-none focus:ring-2 focus:ring-brand-500 transition-all text-slate-900 text-base md:text-lg" 
@@ -142,11 +168,10 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                         </div>
 
                         <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI / Código Facturación</label>
+                            <label className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI / Código Facturación</label>
                             <input 
-                                required 
-                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
-                                value={form.billingCode} 
+                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base" 
+                                value={form.billingCode}  
                                 onChange={e => setForm({...form, billingCode: e.target.value, id: e.target.value})} 
                                 placeholder="0000000000000"
                             />
@@ -155,6 +180,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                         <div>
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ocupación</label>
                             <input 
+                                required
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
                                 value={form.occupation} 
                                 onChange={e => setForm({...form, occupation: e.target.value})} 
@@ -164,23 +190,32 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
 
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label>
+                                <label className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label>
                                 <input 
                                     required 
                                     type="number" 
-                                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
+                                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base" 
                                     value={form.age} 
-                                    onChange={e => setForm({...form, age: e.target.value})} 
+                                    onChange={e => {
+                                        const numeric = e.target.value.replace(/[^0-9]/g, '');
+                                        const birthDate = numeric ? calculateBirthDateFromAge(numeric) : '';
+                                        setForm({...form, age: numeric, birthDate});
+                                    }} 
                                     placeholder="0"
                                 />
                             </div>
                             <div>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label>
                                 <input 
+                                    required
                                     type="date" 
                                     className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
                                     value={form.birthDate} 
-                                    onChange={e => setForm({...form, birthDate: e.target.value})} 
+                                    onChange={e => {
+                                        const birthDate = e.target.value;
+                                        const age = calculateAgeFromBirthDate(birthDate);
+                                        setForm({...form, birthDate, age});
+                                    }} 
                                 />
                             </div>
                         </div>
@@ -204,9 +239,13 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                         <div>
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono (Paciente)</label>
                             <input 
+                                required
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
                                 value={form.phone} 
-                                onChange={e => setForm({...form, phone: e.target.value})} 
+                                onChange={e => {
+                                    const numeric = e.target.value.replace(/[^0-9]/g, '');
+                                    setForm({...form, phone: numeric});
+                                }} 
                                 placeholder="1234 5678"
                             />
                         </div>
@@ -297,17 +336,81 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                         </div>
 
                         <div>
+                            <label className="text-[10px] font-bold text-brand-600 uppercase tracking-widest mb-2 block">Modalidad</label>
+                            <select 
+                                required 
+                                className="w-full p-4 bg-white border border-brand-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 font-medium text-slate-900 text-base md:text-sm" 
+                                value={form.modality} 
+                                onChange={e => setForm({...form, modality: e.target.value as 'Virtual' | 'Presencial'})}
+                            >
+                                <option value="Presencial">Presencial</option>
+                                <option value="Virtual">Virtual</option>
+                            </select>
+                        </div>
+
+                        <div>
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Médico Tratante Anterior</label>
                             <select 
                                 required 
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
                                 value={form.previousTreatment} 
-                                onChange={e => setForm({...form, previousTreatment: e.target.value})}
+                                onChange={e => {
+                                    const value = e.target.value;
+                                    setForm({
+                                        ...form,
+                                        previousTreatment: value,
+                                        previousTreatmentDetail: value === 'IGSS' ? form.previousTreatmentDetail : ''
+                                    });
+                                }}
                             >
                                 <option value="No ha estado en tratamiento">No ha estado en tratamiento</option>
                                 <option value="IGSS">IGSS</option>
                                 <option value="Medico Privado">Médico Privado</option>
                                 <option value="Hospital Nacional">Hospital Nacional</option>
+                            </select>
+                        </div>
+
+                        {form.previousTreatment === 'IGSS' && (
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Detalle IGSS</label>
+                                <select
+                                    required
+                                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm"
+                                    value={form.previousTreatmentDetail}
+                                    onChange={e => setForm({ ...form, previousTreatmentDetail: e.target.value })}
+                                >
+                                    <option value="">-- Seleccionar --</option>
+                                    <option value="IGSS consulta privada">IGSS consulta privada</option>
+                                    <option value="IGSS examenes de diagnostico">IGSS exámenes de diagnóstico</option>
+                                    <option value="Servicio Contratado">Servicio Contratado</option>
+                                </select>
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Canal de referencia (¿De dónde nos conoció?)</label>
+                            <select
+                                required
+                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm"
+                                value={form.referralChannel}
+                                onChange={e => setForm({ ...form, referralChannel: e.target.value })}
+                            >
+                                <option value="">-- Seleccionar --</option>
+                                <option value="CONOCIDO">CONOCIDO</option>
+                                <option value="EMAIL">EMAIL</option>
+                                <option value="FACEBOOK">FACEBOOK</option>
+                                <option value="FAMILIA">FAMILIA</option>
+                                <option value="GOOGLE">GOOGLE</option>
+                                <option value="IA">IA</option>
+                                <option value="INSTAGRAM">INSTAGRAM</option>
+                                <option value="LINKEDIN">LINKEDIN</option>
+                                <option value="OTROS">OTROS</option>
+                                <option value="PAGINA WEB">PAGINA WEB</option>
+                                <option value="RADIO">RADIO</option>
+                                <option value="TELEVISION">TELEVISION</option>
+                                <option value="TIKTOK">TIKTOK</option>
+                                <option value="WHATSAPP">WHATSAPP</option>
+                                <option value="YOUTUBE">YOUTUBE</option>
                             </select>
                         </div>
 

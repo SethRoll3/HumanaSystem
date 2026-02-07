@@ -8,26 +8,46 @@ import {
   where, 
   Timestamp,
   serverTimestamp,
-  orderBy
+  orderBy,
+  arrayUnion,
+  getDoc,
+  onSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Appointment, AppointmentStatus } from '../types';
-import { notifyAppointmentCreated } from './notificationService';
+import { doctorScheduleService } from './doctorScheduleService';
+import { notifyAppointmentCreated, notifyAppointmentNoShow } from './notificationService';
+import { logAuditAction } from './auditService';
 
 const COLLECTION_NAME = 'appointments';
 
 export const appointmentService = {
   // 1. Crear una nueva cita (Estado inicial: scheduled)
-  async createAppointment(data: Omit<Appointment, 'id' | 'status' | 'createdAt'>) {
+  async createAppointment(data: Omit<Appointment, 'id' | 'status' | 'createdAt'>, userEmail?: string) {
+    const dateObj = data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date);
+
+    const validation = await doctorScheduleService.validateAppointmentForDoctor(data.doctorId, dateObj);
+    if (!validation.ok) {
+      throw new Error(validation.message || 'El doctor no tiene horario disponible para esta fecha.');
+    }
+
     const docRef = await addDoc(collection(db, COLLECTION_NAME), {
       ...data,
       status: 'scheduled',
       createdAt: serverTimestamp(),
     });
 
+    // AUDIT LOG
+    if (userEmail) {
+      await logAuditAction(
+        userEmail,
+        "Crear Cita",
+        `Cita creada para paciente ${data.patientName} con Dr. ${data.doctorName} el ${dateObj.toLocaleString()}`
+      );
+    }
+
     // NOTIFICAR CREACIÓN (Doctor + Admins)
     try {
-      const dateObj = data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date);
       const dateStr = dateObj.toLocaleString('es-GT', { dateStyle: 'long', timeStyle: 'short' });
       await notifyAppointmentCreated(data.patientName, data.doctorName, data.doctorId, dateStr);
     } catch (error) {
@@ -37,7 +57,25 @@ export const appointmentService = {
     return docRef.id;
   },
 
-  // 2. Obtener citas por rango de fechas (para el Calendario)
+  // 2. Suscripción en tiempo real a citas por rango de fechas (para el Calendario)
+  subscribeToAppointmentsByRange(startDate: Date, endDate: Date, onUpdate: (appointments: Appointment[]) => void) {
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('date', '>=', Timestamp.fromDate(startDate)),
+      where('date', '<=', Timestamp.fromDate(endDate))
+    );
+    
+    // onSnapshot returns an unsubscribe function
+    return onSnapshot(q, (snapshot) => {
+      const appointments = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as any)
+      } as Appointment));
+      onUpdate(appointments);
+    });
+  },
+
+  // 2b. (DEPRECATED for Calendar, keep for other uses) Obtener citas por rango de fechas (One-time fetch)
   async getAppointmentsByRange(startDate: Date, endDate: Date) {
     const q = query(
       collection(db, COLLECTION_NAME),
@@ -102,8 +140,14 @@ export const appointmentService = {
   // Paso B: Pagar en caja (Check-in)
   async registerPayment(id: string, cashierId: string, receiptNumber: string, amount: number) {
     const ref = doc(db, COLLECTION_NAME, id);
+    const snapshot = await getDoc(ref);
+    const data = snapshot.exists() ? (snapshot.data() as Appointment) : undefined;
+    const consultationType = data?.consultationType;
+    const goToNurse = data?.goToNurse;
+    const shouldSkipNurse = consultationType === 'Reconsulta' && goToNurse === false;
+
     await updateDoc(ref, {
-      status: 'paid_checked_in',
+      status: shouldSkipNurse ? 'resident_intake' : 'paid_checked_in',
       paymentReceipt: receiptNumber,
       paymentAmount: amount,
       paidBy: cashierId,
@@ -135,12 +179,92 @@ export const appointmentService = {
     });
   },
 
+  // Marcar como no se presentó
+  async markNoShow(id: string, userEmail?: string) {
+    const ref = doc(db, COLLECTION_NAME, id);
+    const snapshot = await getDoc(ref);
+    
+    if (snapshot.exists()) {
+        const appt = snapshot.data() as Appointment;
+        await updateDoc(ref, {
+          status: 'no_show'
+        });
+
+        // Audit Log
+        if (userEmail) {
+            await logAuditAction(
+                userEmail,
+                "Marcar No Show",
+                `Paciente ${appt.patientName} marcado como no presentado (Cita ID: ${id})`
+            );
+        }
+
+        // Notificaciones
+        try {
+            const dateVal = appt.date instanceof Timestamp ? appt.date.toDate() : new Date(appt.date);
+            const dateStr = dateVal.toLocaleString('es-GT');
+            await notifyAppointmentNoShow(appt.patientName, appt.doctorName, appt.doctorId, dateStr);
+        } catch (e) {
+            console.error("Error sending no-show notification", e);
+        }
+    }
+  },
+
   // Cancelación
-  async cancelAppointment(id: string, reason?: string) {
+  async cancelAppointment(id: string, reason?: string, userEmail?: string) {
     const ref = doc(db, COLLECTION_NAME, id);
     await updateDoc(ref, {
       status: 'cancelled',
       reason: reason 
     });
+
+    // Audit Log
+    if (userEmail) {
+        await logAuditAction(
+            userEmail,
+            "Cancelar Cita",
+            `Cita ${id} cancelada. Razón: ${reason || 'Sin razón'}`
+        );
+    }
+  },
+
+  async updateAppointment(
+    id: string,
+    updates: Partial<Appointment>,
+    audit?: { editorId: string; editorName?: string; editorEmail?: string }
+  ) {
+    const ref = doc(db, COLLECTION_NAME, id);
+    const payload: any = { ...updates };
+
+    if (updates.date instanceof Date) {
+      payload.date = Timestamp.fromDate(updates.date);
+    }
+    if (updates.endDate instanceof Date) {
+      payload.endDate = Timestamp.fromDate(updates.endDate);
+    }
+
+    if (audit) {
+      const auditEntry = {
+        editorId: audit.editorId,
+        editorName: audit.editorName || null,
+        changes: payload,
+        timestamp: Date.now()
+      };
+      await updateDoc(ref, {
+        ...payload,
+        auditTrail: arrayUnion(auditEntry)
+      });
+
+      // GLOBAL AUDIT LOG
+      if (audit.editorEmail) {
+        await logAuditAction(
+            audit.editorEmail,
+            "Editar Cita",
+            `Cita ${id} actualizada. Campos: ${Object.keys(updates).join(', ')}`
+        );
+      }
+    } else {
+      await updateDoc(ref, payload);
+    }
   }
 };

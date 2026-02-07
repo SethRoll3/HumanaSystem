@@ -11,6 +11,11 @@ export const userService = {
     const usersRef = collection(db, 'users');
     const snapshot = await getDocs(query(usersRef, where('role', '==', 'doctor')));
     return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile)).filter(d => d.isActive !== false);
+  },
+  getAllUsers: async (): Promise<UserProfile[]> => {
+    const usersRef = collection(db, 'users');
+    const snapshot = await getDocs(query(usersRef, orderBy('name')));
+    return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile));
   }
 };
 
@@ -36,13 +41,19 @@ export const createSystemUser = async (userData: any, password: string): Promise
     const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, password);
     const uid = userCredential.user.uid;
 
+    const clinic = userData.clinicId ? {
+        clinicId: userData.clinicId,
+        clinicName: userData.clinicName || ''
+    } : {};
+
     await setDoc(doc(db, 'users', uid), {
         email: userData.email,
         name: userData.name,
         role: userData.role,
         specialty: userData.specialty || '',
         isActive: true,
-        createdAt: Timestamp.now()
+        createdAt: Timestamp.now(),
+        ...clinic
     });
 
     await signOut(secondaryAuth);

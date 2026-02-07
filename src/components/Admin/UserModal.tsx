@@ -2,8 +2,8 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UserProfile, Specialty } from '../../../types';
-import { X, Save, Loader2, Edit2, Plus, Lock, Mail, User, Stethoscope, Shield } from 'lucide-react';
+import { UserProfile, Specialty, Clinic } from '../../types';
+import { X, Save, Loader2, Edit2, Plus, Lock, Mail, User, Stethoscope, Shield, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createSystemUser, updateSystemUser } from '../../services/userService';
 
@@ -13,9 +13,10 @@ interface UserModalProps {
     userToEdit: UserProfile | null;
     currentUser: UserProfile;
     specialtiesList: Specialty[];
+    clinics: Clinic[];
 }
 
-export const UserModal: React.FC<UserModalProps> = ({ isOpen, onClose, userToEdit, currentUser, specialtiesList }) => {
+export const UserModal: React.FC<UserModalProps> = ({ isOpen, onClose, userToEdit, currentUser, specialtiesList, clinics }) => {
     const [formValues, setFormValues] = useState<any>({});
     const [isSaving, setIsSaving] = useState(false);
 
@@ -144,26 +145,55 @@ export const UserModal: React.FC<UserModalProps> = ({ isOpen, onClose, userToEdi
                             </div>
 
                             {formValues.role === 'doctor' && (
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                        <Stethoscope className="w-3 h-3" /> Especialidad
-                                    </label>
-                                    <div className="relative">
-                                        <select 
-                                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 transition-all appearance-none" 
-                                            value={formValues.specialty || ''} 
-                                            onChange={e => setFormValues({...formValues, specialty: e.target.value})}
-                                        >
-                                            <option value="">-- General --</option>
-                                            {specialtiesList.map(spec => (
-                                                <option key={spec.id} value={spec.name}>{spec.name}</option>
-                                            ))}
-                                        </select>
-                                        <div className="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-slate-500">
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                <>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                            <Stethoscope className="w-3 h-3" /> Especialidad
+                                        </label>
+                                        <div className="relative">
+                                            <select 
+                                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 transition-all appearance-none" 
+                                                value={formValues.specialty || ''} 
+                                                onChange={e => setFormValues({...formValues, specialty: e.target.value})}
+                                            >
+                                                <option value="">-- General --</option>
+                                                {specialtiesList.map(spec => (
+                                                    <option key={spec.id} value={spec.name}>{spec.name}</option>
+                                                ))}
+                                            </select>
+                                            <div className="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-slate-500">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                            <Building2 className="w-3 h-3" /> Clínica
+                                        </label>
+                                        <div className="relative">
+                                            <select
+                                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 transition-all appearance-none"
+                                                value={formValues.clinicId || ''}
+                                                onChange={e => {
+                                                    const clinic = clinics.find(c => c.id === e.target.value);
+                                                    setFormValues({
+                                                        ...formValues,
+                                                        clinicId: e.target.value || undefined,
+                                                        clinicName: clinic?.name || ''
+                                                    });
+                                                }}
+                                            >
+                                                <option value="">-- Sin clínica asignada --</option>
+                                                {clinics.map(clinic => (
+                                                    <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+                                                ))}
+                                            </select>
+                                            <div className="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-slate-500">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
                             )}
                         </div>
                         

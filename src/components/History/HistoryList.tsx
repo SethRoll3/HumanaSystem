@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { ClipboardList, Search, FileCheck, Clock, Eye, ShieldAlert } from 'lucide-react';
+import { ClipboardList, Search, FileCheck, Clock, Eye, ShieldAlert, Calendar, X } from 'lucide-react';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/config.ts';
 import { Consultation, UserProfile } from '../../types.ts';
@@ -17,6 +17,11 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
     const [consultations, setConsultations] = useState<Consultation[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    
+    // Filtros de fecha
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
+    const [specificDate, setSpecificDate] = useState('');
 
     const isDoctor = user.role === 'doctor';
     const isAdmin = user.role === 'admin';
@@ -80,11 +85,74 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
         });
     };
 
-    // Client-side filtering for search
-    const filteredConsultations = consultations.filter(c => 
-        (c.patientName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-         c.doctorName?.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    // Helper para comparar fechas (YYYY-MM-DD)
+    const getYMDFromTimestamp = (ts: number) => {
+        // Crear fecha ajustada a zona horaria GT para comparación correcta
+        // Usamos Intl para obtener partes y reconstruir YYYY-MM-DD
+        const d = new Date(ts);
+        const parts = new Intl.DateTimeFormat('es-GT', {
+            timeZone: 'America/Guatemala',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).formatToParts(d);
+        
+        const year = parts.find(p => p.type === 'year')?.value;
+        const month = parts.find(p => p.type === 'month')?.value;
+        const day = parts.find(p => p.type === 'day')?.value;
+        
+        return `${year}-${month}-${day}`;
+    };
+
+    // Client-side filtering for search and dates
+    const filteredConsultations = consultations.filter(c => {
+        // 1. Text Search (Patient or Doctor)
+        const matchesText = (c.patientName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                             c.doctorName?.toLowerCase().includes(searchTerm.toLowerCase()));
+
+        if (!matchesText) return false;
+
+        // 2. Date Filtering
+        const dateStr = getYMDFromTimestamp(c.date);
+
+        if (specificDate) {
+            return dateStr === specificDate;
+        }
+
+        if (fromDate) {
+            if (dateStr < fromDate) return false;
+        }
+
+        if (toDate) {
+            if (dateStr > toDate) return false;
+        }
+
+        return true;
+    });
+
+    const handleSpecificDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSpecificDate(e.target.value);
+        if (e.target.value) {
+            setFromDate('');
+            setToDate('');
+        }
+    };
+
+    const handleRangeChange = (type: 'from' | 'to', value: string) => {
+        if (type === 'from') setFromDate(value);
+        else setToDate(value);
+        
+        if (value) {
+            setSpecificDate('');
+        }
+    };
+
+    const clearFilters = () => {
+        setSearchTerm('');
+        setFromDate('');
+        setToDate('');
+        setSpecificDate('');
+    };
 
     if (!hasAccess) {
         return (
@@ -100,32 +168,88 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
         <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y: 0}} className="max-w-6xl mx-auto space-y-6">
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[500px]">
                 {/* Header */}
-                <div className="p-6 border-b flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/30">
-                    <div className="flex items-center gap-3">
-                        <div className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm text-brand-600">
-                            <ClipboardList className="w-6 h-6" />
+                <div className="p-6 border-b bg-slate-50/30 space-y-4">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm text-brand-600">
+                                <ClipboardList className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-slate-800 text-lg">Historial de Consultas</h3>
+                                <p className="text-xs text-slate-500">Pacientes atendidos y finalizados</p>
+                            </div>
                         </div>
-                        <div>
-                            <h3 className="font-bold text-slate-800 text-lg">Historial de Consultas</h3>
-                            <p className="text-xs text-slate-500">Pacientes atendidos y finalizados</p>
+                        <div className="relative w-full md:max-w-xs">
+                            <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
+                            <input 
+                                type="text" 
+                                placeholder="Buscar por paciente..." 
+                                className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand-200 transition-all shadow-sm" 
+                                value={searchTerm} 
+                                onChange={e => setSearchTerm(e.target.value)} 
+                            />
                         </div>
                     </div>
-                    <div className="relative flex-1 md:max-w-xs w-full">
-                        <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
-                        <input 
-                            type="text" 
-                            placeholder="Buscar por paciente o médico..." 
-                            className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand-200 transition-all shadow-sm" 
-                            value={searchTerm} 
-                            onChange={e => setSearchTerm(e.target.value)} 
-                        />
+
+                    {/* Date Filters */}
+                    <div className="flex flex-col md:flex-row items-center gap-4 pt-2 border-t border-slate-200">
+                        <div className="flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-slate-400" />
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Filtros de Fecha:</span>
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-3 flex-1">
+                            {/* Fecha Específica */}
+                            <div className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-slate-200">
+                                <span className="text-[10px] text-slate-400 font-semibold px-1">Día:</span>
+                                <input 
+                                    type="date" 
+                                    className={`text-xs border-none p-0 focus:ring-0 text-slate-600 ${fromDate || toDate ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    value={specificDate}
+                                    disabled={!!fromDate || !!toDate}
+                                    onChange={handleSpecificDateChange}
+                                />
+                            </div>
+
+                            <span className="text-xs text-slate-300 font-bold">O</span>
+
+                            {/* Rango */}
+                            <div className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-slate-200">
+                                <span className="text-[10px] text-slate-400 font-semibold px-1">Desde:</span>
+                                <input 
+                                    type="date" 
+                                    className={`text-xs border-none p-0 focus:ring-0 text-slate-600 ${!!specificDate ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    value={fromDate}
+                                    disabled={!!specificDate}
+                                    onChange={(e) => handleRangeChange('from', e.target.value)}
+                                />
+                                <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                                <span className="text-[10px] text-slate-400 font-semibold px-1">Hasta:</span>
+                                <input 
+                                    type="date" 
+                                    className={`text-xs border-none p-0 focus:ring-0 text-slate-600 ${!!specificDate ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    value={toDate}
+                                    disabled={!!specificDate}
+                                    onChange={(e) => handleRangeChange('to', e.target.value)}
+                                />
+                            </div>
+
+                            {(fromDate || toDate || specificDate || searchTerm) && (
+                                <button 
+                                    onClick={clearFilters}
+                                    className="ml-auto text-xs text-red-500 hover:text-red-700 font-bold flex items-center gap-1 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 transition-colors"
+                                >
+                                    <X className="w-3 h-3" /> Limpiar
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
 
                 {/* Table */}
                 <div className="flex-1 overflow-x-auto">
                     <table className="w-full text-left">
-                        <thead className="bg-slate-50 text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b">
+                        <thead className="bg-slate-200 text-[10px] text-slate-600 uppercase font-bold tracking-widest border-b border-slate-300">
                             <tr>
                                 <th className="p-4">Fecha</th>
                                 <th className="p-4">Paciente</th>

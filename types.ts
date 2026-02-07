@@ -73,6 +73,8 @@ export interface Medicine {
   id: string;
   code?: string; // NUEVO: Código interno (ej. FAR0001)
   name: string;
+  brandName?: string;
+  activeIngredient?: string;
   stock: number; 
   units_per_box: number; 
   price: number; // Precio Público
@@ -136,6 +138,7 @@ export interface Consultation {
   status: 'waiting' | 'in_progress' | 'finished' | 'delivered'; // Workflow Status Updated
   paymentReceipt?: string; // Boleta de Pago
   paymentAmount?: number; // NUEVO: Valor de la boleta para contabilidad
+  consultationType?: 'Nueva' | 'Reconsulta';
   
   receptionistId?: string; // Who created the check-in
   doctorId?: string; // Who is attending
@@ -177,12 +180,14 @@ export interface Consultation {
   
   followUpRequired?: boolean;
   followUpText?: string;
+  importantNotices?: string;
 
   // Track printing status for each doc
   printedDocs?: {
     prescription?: boolean;
     labs?: boolean;
     report?: boolean;
+    fullFicha?: boolean;
   };
 
   deliveredAt?: number;
@@ -222,13 +227,17 @@ export interface Appointment {
   patientName: string; // Desnormalizado para búsquedas rápidas
   doctorId: string;
   doctorName: string; // Desnormalizado
+  consultationType: 'Nueva' | 'Reconsulta';
+  goToNurse?: boolean;
   
   // Timeframe
   date: any; // Timestamp (Fecha y hora de inicio)
   endDate: any; // Timestamp (Fecha y hora de fin estimada)
   
   status: AppointmentStatus;
-  reason?: string; // Motivo de la cita
+  reason?: string; // Motivo / observaciones de la cita (campo legacy, se mantiene por compatibilidad)
+  reasonForConsultation?: string; // NUEVO: Razón de consulta (Especialidad)
+  modality?: 'Virtual' | 'Presencial'; // NUEVO: Modalidad de la cita
   
   // CRM Tracking
   createdAt: any;
@@ -242,4 +251,11 @@ export interface Appointment {
   paymentAmount?: number;
   paidAt?: any;
   paidBy?: string; // Cajero/Recepcionista que cobró
+  duration?: number; // Duración en minutos
+}
+
+export interface Clinic{
+  id: string
+  name: string;
+  code: string;
 }

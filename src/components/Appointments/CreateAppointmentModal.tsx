@@ -1,10 +1,19 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { X, Calendar as CalendarIcon, Clock, User, Stethoscope, AlertCircle, Plus } from 'lucide-react';
-import { UserProfile, Patient, Appointment } from '../../types';
+import { UserProfile, Patient, Appointment, Specialty } from '../../types';
 import { toast } from 'sonner';
+import { doctorScheduleService } from '../../services/doctorScheduleService';
+import { getSpecialties } from '../../services/inventoryService';
+
+const formatDateInput = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 // Schema para validación rápida del formulario
 const appointmentFormSchema = z.object({
@@ -12,9 +21,23 @@ const appointmentFormSchema = z.object({
   doctorId: z.string().min(1, "Seleccione un médico"),
   date: z.string().min(1, "Fecha requerida"),
   time: z.string().min(1, "Hora requerida"),
-  reason: z.string().min(3, "Indique el motivo de la consulta"),
-  duration: z.string(), // "15", "30", "60"
-});
+  reason: z.string().optional(),
+  reasonForConsultation: z.string().min(1, "Seleccione una razón de consulta"),
+  consultationType: z.enum(['Nueva', 'Reconsulta']),
+  modality: z.enum(['Virtual', 'Presencial']),
+  duration: z.string().optional(),
+}).refine(
+  (data) => {
+    if (data.consultationType !== 'Reconsulta') return true;
+    if (!data.duration || data.duration.trim() === "") return true;
+    const value = Number(data.duration);
+    return !Number.isNaN(value) && value >= 10 && value <= 240;
+  },
+  {
+    path: ['duration'],
+    message: "Duración debe estar entre 10 y 240 minutos",
+  }
+);
 
 type FormData = z.infer<typeof appointmentFormSchema>;
 
@@ -44,15 +67,35 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
   const { register, handleSubmit, formState: { errors }, reset, setValue, watch } = useForm<FormData>({
     resolver: zodResolver(appointmentFormSchema),
     defaultValues: {
-      duration: "30",
-      date: initialDate ? initialDate.toISOString().split('T')[0] : '',
+      consultationType: 'Nueva',
+      modality: 'Presencial',
+      date: initialDate ? formatDateInput(initialDate) : '',
     }
   });
+
+  const [goToNurse, setGoToNurse] = useState(true);
+  const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const consultationType = watch('consultationType');
+
+  // Load Specialties
+  useEffect(() => {
+    const loadSpecialties = async () => {
+      try {
+        const data = await getSpecialties();
+        setSpecialties(data);
+      } catch (e) {
+        console.error("Failed to load specialties", e);
+      }
+    };
+    if (isOpen) {
+      loadSpecialties();
+    }
+  }, [isOpen]);
 
   // Efecto para actualizar la fecha si cambia desde fuera
   useEffect(() => {
     if (initialDate) {
-      setValue('date', initialDate.toISOString().split('T')[0]);
+      setValue('date', formatDateInput(initialDate));
       const hours = String(initialDate.getHours()).padStart(2, '0');
       const minutes = String(initialDate.getMinutes()).padStart(2, '0');
       setValue('time', `${hours}:${minutes}`);
@@ -67,29 +110,36 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleFormSubmit = (data: FormData) => {
-    // 1. Construir fechas
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const handleFormSubmit = async (data: FormData) => {
     const startDateTime = new Date(`${data.date}T${data.time}`);
-    const endDateTime = new Date(startDateTime.getTime() + parseInt(data.duration) * 60000);
+    const baseDurationMinutes = data.consultationType === 'Nueva' ? 60 : 45;
+    let durationMinutes = baseDurationMinutes;
+
+    if (data.consultationType === 'Reconsulta' && data.duration && data.duration.trim() !== "") {
+      const parsed = Number(data.duration);
+      if (!Number.isNaN(parsed) && parsed >= 10 && parsed <= 240) {
+        durationMinutes = parsed;
+      }
+    }
+    const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60000);
     const now = new Date();
 
-    // 2. VALIDACIÓN: NO PASADO
     if (startDateTime < now) {
         toast.error("No se pueden crear citas en el pasado.");
         return;
     }
 
-    // 3. VALIDACIÓN: NO CONFLICTOS (SOLAPAMIENTO)
-    // Buscamos si hay alguna cita existente para ESTE doctor que se traslape
     const hasConflict = existingAppointments.some(appt => {
-        // Solo importa si es el mismo doctor y la cita no está cancelada
         if (appt.doctorId !== data.doctorId || appt.status === 'cancelled') return false;
 
         const apptStart = appt.date instanceof Date ? appt.date : appt.date.toDate();
         const apptEnd = appt.endDate instanceof Date ? appt.endDate : appt.endDate.toDate();
 
-        // Lógica de solapamiento de rangos:
-        // (StartA < EndB) && (EndA > StartB)
         return startDateTime < apptEnd && endDateTime > apptStart;
     });
 
@@ -98,7 +148,18 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
         return;
     }
 
-    // 4. Si todo OK, enviar
+    try {
+      const validation = await doctorScheduleService.validateAppointmentForDoctor(data.doctorId, startDateTime);
+      if (!validation.ok) {
+        toast.error(validation.message || "El horario del médico no permite esta cita.");
+        return;
+      }
+    } catch (e) {
+      console.error("Error validando horario del médico:", e);
+      toast.error("No se pudo validar el horario del médico. Intente nuevamente.");
+      return;
+    }
+
     const patient = patients.find(p => p.id === data.patientId);
     const doctor = doctors.find(d => d.uid === data.doctorId);
 
@@ -110,7 +171,11 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
       date: startDateTime,
       endDate: endDateTime,
       reason: data.reason,
-      duration: parseInt(data.duration)
+      reasonForConsultation: data.reasonForConsultation,
+      duration: durationMinutes,
+      consultationType: data.consultationType,
+      modality: data.modality,
+      goToNurse: data.consultationType === 'Reconsulta' ? goToNurse : true
     };
 
     onSubmit(payload);
@@ -119,21 +184,21 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
         
         {/* Header */}
-        <div className="bg-slate-900 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <CalendarIcon className="w-5 h-5 text-blue-400" />
+        <div className="bg-brand-900 px-6 py-4 flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+            <CalendarIcon className="w-6 h-6 text-brand-200" />
             Nueva Cita
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+          <button onClick={handleClose} className="text-slate-400 hover:text-white transition-colors">
             <X className="w-6 h-6" />
           </button>
         </div>
 
         {/* Body */}
-        <form onSubmit={handleSubmit(handleFormSubmit)} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit(handleFormSubmit)} className="p-6 space-y-5 flex-1 overflow-y-auto">
           
           {/* Paciente y Doctor */}
           <div className="grid grid-cols-1 gap-4">
@@ -156,17 +221,17 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
                   <button 
                       type="button"
                       onClick={onCreatePatientClick}
-                      className="bg-slate-900 text-white p-2 rounded-lg hover:bg-slate-800 transition shadow-sm"
+                      className="bg-brand-700 text-white p-2 rounded-lg hover:bg-brand-800 transition shadow-sm"
                       title="Crear Nuevo Paciente"
                   >
                       <Plus className="w-5 h-5" />
                   </button>
               </div>
-              {errors.patientId && <p className="text-xs text-red-500">{errors.patientId.message}</p>}
+              {errors.patientId && <p className="text-sm text-red-500">{errors.patientId.message}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-slate-700">Médico</label>
+              <label className="block text-base font-medium text-slate-700">Médico</label>
               <div className="relative">
                 <Stethoscope className="absolute left-3 top-2.5 w-5 h-5 text-slate-400" />
                 <select 
@@ -179,59 +244,148 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
                   ))}
                 </select>
               </div>
-              {errors.doctorId && <p className="text-xs text-red-500">{errors.doctorId.message}</p>}
+              {errors.doctorId && <p className="text-sm text-red-500">{errors.doctorId.message}</p>}
             </div>
           </div>
 
           {/* Fecha y Hora */}
           <div className="grid grid-cols-3 gap-4">
             <div className="col-span-2 space-y-1">
-              <label className="block text-sm font-medium text-slate-700">Fecha</label>
+              <label className="block text-base font-medium text-slate-700">Fecha</label>
               <input 
                 type="date" 
-                min={new Date().toISOString().split('T')[0]} // Minimo hoy en el input HTML
+                min={formatDateInput(new Date())}
                 {...register('date')}
                 className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
               />
-              {errors.date && <p className="text-xs text-red-500">{errors.date.message}</p>}
+              {errors.date && <p className="text-sm text-red-500">{errors.date.message}</p>}
             </div>
             
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-slate-700">Hora</label>
+              <label className="block text-base font-medium text-slate-700">Hora</label>
               <input 
                 type="time" 
                 {...register('time')}
                 className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
               />
-              {errors.time && <p className="text-xs text-red-500">{errors.time.message}</p>}
+              {errors.time && <p className="text-sm text-red-500">{errors.time.message}</p>}
             </div>
           </div>
 
-          {/* Duración y Motivo */}
-          <div className="space-y-4">
+          {/* Tipo de consulta y Modalidad */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             {/* Tipo de consulta */}
             <div className="space-y-1">
-               <label className="block text-sm font-medium text-slate-700">Duración Estimada</label>
-               <div className="flex gap-4">
-                 {['15', '30', '60'].map((val) => (
-                   <label key={val} className="flex items-center gap-2 cursor-pointer">
-                     <input 
-                       type="radio" 
-                       value={val} 
-                       {...register('duration')}
-                       className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                     />
-                     <span className="text-sm text-slate-600">{val} min</span>
-                   </label>
-                 ))}
-               </div>
+              <label className="block text-base font-medium text-slate-700">Tipo de consulta</label>
+              <div className="flex gap-4">
+                {(['Nueva','Reconsulta'] as const).map(type => (
+                  <label key={type} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      value={type}
+                      {...register('consultationType')}
+                      className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                    />
+                    <span className="text-base text-slate-600">{type}</span>
+                  </label>
+                ))}
+              </div>
+              {errors.consultationType && <p className="text-sm text-red-500">{errors.consultationType.message}</p>}
+              <p className="text-sm text-slate-500 mt-1">
+                Nueva: 60 min. Reconsulta: 45 min.
+              </p>
             </div>
 
+            {/* Modalidad */}
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-slate-700">Motivo de la Consulta</label>
+              <label className="block text-base font-medium text-slate-700">Modalidad</label>
+              <div className="flex gap-4">
+                {(['Presencial','Virtual'] as const).map(mod => (
+                  <label key={mod} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      value={mod}
+                      {...register('modality')}
+                      className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                    />
+                    <span className="text-base text-slate-600">{mod}</span>
+                  </label>
+                ))}
+              </div>
+              {errors.modality && <p className="text-sm text-red-500">{errors.modality.message}</p>}
+            </div>
+          </div>
+
+          {consultationType === 'Reconsulta' && (
+            <div className="space-y-1">
+              <label className="block text-base font-medium text-slate-700">Duración de la cita (minutos)</label>
+              <input
+                type="number"
+                min={10}
+                max={240}
+                placeholder="45"
+                {...register('duration')}
+                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+              />
+              <p className="text-[11px] text-slate-500">
+                Si lo dejas vacío se usará la duración predeterminada de 45 minutos.
+              </p>
+              {errors.duration && <p className="text-xs text-red-500">{errors.duration.message}</p>}
+            </div>
+          )}
+
+          {consultationType === 'Reconsulta' && (
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-slate-700">Paso por enfermería</label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={goToNurse}
+                    onChange={() => setGoToNurse(true)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-slate-600">Con enfermería</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={!goToNurse}
+                    onChange={() => setGoToNurse(false)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-slate-600">Directo con doctor</span>
+                </label>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Solo aplica para reconsultas y define si se pasa por enfermería.
+              </p>
+            </div>
+          )}
+
+          {/* Razón de Consulta (Especialidad) */}
+          <div className="space-y-1">
+            <label className="block text-sm font-medium text-slate-700">Razón de Consulta</label>
+            <select 
+              {...register('reasonForConsultation')}
+              className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-slate-50"
+            >
+              <option value="">Seleccione especialidad...</option>
+              {specialties.map(s => (
+                <option key={s.id || s.name} value={s.name}>{s.name}</option>
+              ))}
+            </select>
+            {errors.reasonForConsultation && <p className="text-xs text-red-500">{errors.reasonForConsultation.message}</p>}
+          </div>
+
+          {/* Observaciones */}
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-slate-700">Observaciones</label>
               <textarea 
                 {...register('reason')}
                 rows={2}
-                placeholder="Ej. Dolor de cabeza persistente, control mensual..."
+                placeholder="Ej. observaciones relevantes para esta cita..."
                 className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all resize-none"
               />
               {errors.reason && <p className="text-xs text-red-500">{errors.reason.message}</p>}
@@ -250,14 +404,14 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
           <div className="flex justify-end gap-3 pt-2">
             <button 
               type="button" 
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors font-medium"
             >
               Cancelar
             </button>
             <button 
               type="submit"
-              className="px-6 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-lg transition-colors font-medium shadow-lg shadow-slate-900/20"
+              className="px-6 py-2 bg-brand-700 text-white hover:bg-brand-800 rounded-lg transition-colors font-medium shadow-lg shadow-brand-700/25"
             >
               Agendar Cita
             </button>

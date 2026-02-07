@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "sistema-hospital-farmacia"
+  },
+  "targets": {
+    "sistema-hospital-farmacia": {
+      "hosting": {
+        "clinica-asociacion-humana-sys": [
+          "clinica-asociacion-humana-sys"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

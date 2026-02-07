@@ -304,7 +304,7 @@ export const AccountingDashboard: React.FC = () => {
                 
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
-                        <thead className="bg-slate-50 text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b">
+                        <thead className="bg-slate-200 text-[10px] text-slate-600 uppercase font-bold tracking-widest border-b border-slate-300">
                             <tr>
                                 <th className="p-4">Hora</th>
                                 <th className="p-4">No. Boleta</th>

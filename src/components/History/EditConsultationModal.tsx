@@ -6,11 +6,13 @@ import { X, Save, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 
-import { Consultation, Patient, UserProfile } from '../../../types';
+import { Consultation, Patient, UserProfile, SpecialtyReferral, Specialty } from '../../../types';
 import { StepDiagnosis } from '../Wizard/StepDiagnosis';
 import { StepExams } from '../Wizard/StepExams';
 import { StepPrescription } from '../Wizard/StepPrescription';
 import { updateConsultation } from '../../services/patientService';
+import { getSpecialties } from '../../services/inventoryService';
+import { Trash2, Plus, UserPlus, FileText, AlertCircle } from 'lucide-react';
 
 interface EditConsultationModalProps {
     consultation: Consultation;
@@ -27,8 +29,10 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
     onClose,
     onSuccess
 }) => {
-    const [activeTab, setActiveTab] = useState<'diagnosis' | 'exams' | 'prescription'>('diagnosis');
+    const [activeTab, setActiveTab] = useState<'diagnosis' | 'exams' | 'prescription' | 'finalize'>('diagnosis');
     const [isSaving, setIsSaving] = useState(false);
+    const [specialties, setSpecialties] = useState<Specialty[]>([]);
+    const [selectedSpecialty, setSelectedSpecialty] = useState<string>('');
 
     const methods = useForm({
         defaultValues: {
@@ -41,12 +45,22 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
             specialtyReferrals: [],
             referralNote: '',
             followUpText: '',
+            importantNotices: '',
+            specialtyFormId: '',
+            specialtyData: {},
             // Initialize with consultation data
             ...consultation
         }
     });
 
-    const { handleSubmit, reset, formState: { isDirty } } = methods;
+    const { handleSubmit, reset, formState: { isDirty }, watch, setValue, register } = methods;
+
+    const specialtyReferrals: SpecialtyReferral[] = watch('specialtyReferrals') || [];
+
+    // Load specialties for references
+    useEffect(() => {
+        getSpecialties().then(setSpecialties);
+    }, []);
 
     // Load initial data
     useEffect(() => {
@@ -58,7 +72,10 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
                 exams: consultation.exams || [],
                 prescription: consultation.prescription || [],
                 specialtyReferrals: consultation.specialtyReferrals || [],
-                omittedFields: consultation.omittedFields || {}
+                omittedFields: consultation.omittedFields || {},
+                importantNotices: consultation.importantNotices || '',
+                specialtyFormId: (consultation as any).specialtyFormId || '',
+                specialtyData: (consultation as any).specialtyData || {}
             });
         }
     }, [consultation, reset]);
@@ -136,11 +153,11 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
                     <div>
                         <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                             Editar Consulta
-                            <span className="text-xs font-normal text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
+                            <span className="text-sm font-normal text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
                                 {new Date(consultation.date).toLocaleDateString()}
                             </span>
                         </h2>
-                        <p className="text-xs text-slate-500">Editando expediente de {patient.fullName}</p>
+                        <p className="text-sm text-slate-500">Editando expediente de {patient.fullName}</p>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition text-slate-500">
                         <X className="w-5 h-5" />
@@ -167,6 +184,12 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
                     >
                         Receta Médica
                     </button>
+                    <button
+                        onClick={() => setActiveTab('finalize')}
+                        className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'finalize' ? 'border-brand-600 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                    >
+                        Finalización y Referencias
+                    </button>
                 </div>
 
                 {/* Content */}
@@ -174,13 +197,106 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
                     <FormProvider {...methods}>
                         <form id="edit-consultation-form" onSubmit={handleSubmit(onSubmit)}>
                             <div className={activeTab === 'diagnosis' ? 'block' : 'hidden'}>
-                                <StepDiagnosis patient={patient} currentUser={currentUser} />
+                                <StepDiagnosis 
+                                    patient={patient} 
+                                    currentUser={currentUser} 
+                                    appointmentType={consultation.consultationType} 
+                                />
                             </div>
                             <div className={activeTab === 'exams' ? 'block' : 'hidden'}>
                                 <StepExams userSpecialty={currentUser.specialty} />
                             </div>
                             <div className={activeTab === 'prescription' ? 'block' : 'hidden'}>
                                 <StepPrescription currentUser={currentUser} />
+                            </div>
+                            <div className={activeTab === 'finalize' ? 'block' : 'hidden'}>
+                                <div className="space-y-8">
+                                    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+                                            <UserPlus className="w-5 h-5 text-brand-600" />
+                                            <h4>Referencia a Especialistas</h4>
+                                        </div>
+                                        <div className="flex flex-col sm:flex-row gap-2 mb-4">
+                                            <select 
+                                                className="flex-1 rounded-lg border-slate-300 p-2.5 text-sm bg-slate-50 focus:ring-2 focus:ring-brand-500 outline-none text-slate-700" 
+                                                value={selectedSpecialty} 
+                                                onChange={(e) => setSelectedSpecialty(e.target.value)}
+                                            >
+                                                <option value="">-- Seleccionar Especialidad --</option>
+                                                {specialties.filter(s => !specialtyReferrals.some(r => r.specialty === s.name)).map(s => (
+                                                    <option key={s.id} value={s.name}>{s.name}</option>
+                                                ))}
+                                            </select>
+                                            <button 
+                                                type="button" 
+                                                onClick={() => { 
+                                                    if(selectedSpecialty) { 
+                                                        setValue('specialtyReferrals', [...specialtyReferrals, {id: `ref-${Date.now()}`, specialty: selectedSpecialty, note: ''}]); 
+                                                        setSelectedSpecialty(''); 
+                                                    } 
+                                                }} 
+                                                className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 w-full sm:w-auto"
+                                            >
+                                                Agregar
+                                            </button>
+                                        </div>
+                                        <div className="space-y-3">
+                                            {specialtyReferrals.map(r => (
+                                                <div key={r.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
+                                                    <div className="flex justify-between items-center mb-2">
+                                                        <span className="font-bold text-slate-800 text-sm">{r.specialty}</span>
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))} 
+                                                            className="text-red-400 hover:text-red-600"
+                                                        >
+                                                            <Trash2 className="w-4 h-4"/>
+                                                        </button>
+                                                    </div>
+                                                    <textarea 
+                                                        placeholder={`Motivo de la referencia o nota para ${r.specialty}...`}
+                                                        className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-2 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none"
+                                                        rows={2}
+                                                        value={r.note || ''}
+                                                        onChange={(e) => {
+                                                            const updated = specialtyReferrals.map(ref => {
+                                                                if (ref.id === r.id) return { ...ref, note: e.target.value };
+                                                                return ref;
+                                                            });
+                                                            setValue('specialtyReferrals', updated);
+                                                        }}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+                                            <FileText className="w-5 h-5 text-brand-600" />
+                                            <h4>Anotaciones para Enfermería</h4>
+                                        </div>
+                                        <textarea 
+                                            {...register('followUpText')} 
+                                            rows={3} 
+                                            placeholder="Instrucciones post-consulta..." 
+                                            className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-3 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none" 
+                                        />
+                                    </div>
+
+                                    <div className="bg-white rounded-xl border border-red-200 p-6 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+                                            <AlertCircle className="w-5 h-5 text-red-500" />
+                                            <h4>Avisos Importantes</h4>
+                                        </div>
+                                        <textarea 
+                                            {...register('importantNotices')} 
+                                            rows={3} 
+                                            placeholder="Registrar alertas críticas, advertencias al paciente o recordatorios importantes..."
+                                            className="w-full text-sm bg-red-50/40 border border-red-200 rounded-lg p-3 focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-red-400 text-red-800 resize-none" 
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         </form>
                     </FormProvider>

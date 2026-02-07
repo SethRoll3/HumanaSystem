@@ -52,6 +52,32 @@ export const notifyAppointmentCreated = async (
     );
 };
 
+export const notifyAppointmentNoShow = async (
+    patientName: string,
+    doctorName: string,
+    doctorId: string,
+    dateString: string
+) => {
+    const msg = `El paciente ${patientName} no se presentó a su cita de las ${dateString}.`;
+
+    // Al Doctor
+    await createNotification(
+        "Paciente No Presentado", 
+        msg, 
+        'alert', 
+        undefined, 
+        doctorId
+    );
+
+    // Al Admin
+    await createNotification(
+        "Ausencia de Paciente", 
+        `Paciente ${patientName} no se presentó a cita con Dr. ${doctorName} (${dateString}).`, 
+        'alert', 
+        'admin'
+    );
+};
+
 export const notifyAppointmentCancelled = async (
     patientName: string,
     doctorName: string,
@@ -170,6 +196,30 @@ export const notifyConsultationFinished = async (
         msg,
         'success',
         'admin'
+    );
+};
+
+export const notifyReceptionFollowUp = async (
+    consultation: Consultation,
+    doctorName: string,
+    days: number,
+    followUpDate: Date
+) => {
+    const dateStr = followUpDate.toLocaleDateString('es-GT', {
+        timeZone: 'America/Guatemala',
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit'
+    });
+
+    const title = "Reconsulta Solicitada";
+    const body = `El Dr. ${doctorName} desea volver a ver a ${consultation.patientName} en aproximadamente ${days} días. Fecha sugerida: ${dateStr}.`;
+
+    await createNotification(
+        title,
+        body,
+        'info',
+        'receptionist'
     );
 };
 

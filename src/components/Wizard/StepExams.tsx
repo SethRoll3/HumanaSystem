@@ -10,9 +10,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 interface StepExamsProps {
     userSpecialty?: string;
     patient?: Patient | null;
+    appointmentType?: 'Nueva' | 'Reconsulta';
 }
 
-const OPTIONAL_EXAMS_TYPES = ['EG', 'SuperEG', 'Resonancia', 'Laboratorios', 'Otros'];
+const OPTIONAL_EXAMS_TYPES = ['EEG', 'SuperEEG', 'Resonancia', 'Laboratorios', 'Otros'];
 const EG_DURATIONS = ['1/2 hora', '1 hora', '3 horas', '5 horas', '8 horas'];
 
 // Helper para normalizar texto (quitar tildes y minúsculas)
@@ -20,7 +21,7 @@ const normalizeText = (text: string) => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 };
 
-export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) => {
+export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, appointmentType }) => {
   const { register, watch, setValue, getValues } = useFormContext();
   
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
@@ -113,9 +114,9 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
       }
 
       // 3. Add Categories (EG, Resonancia, etc) if they are standalone
-      selectedOptionals.forEach(opt => {
+          selectedOptionals.forEach(opt => {
           if (opt.type !== 'Otros' && opt.type !== 'Laboratorios') {
-             if (opt.type === 'EG' || opt.type === 'SuperEG') {
+             if (opt.type === 'EEG' || opt.type === 'SuperEEG') {
                  optionalExamsList.add(`${opt.type} (${opt.duration || '1 hora'})`);
              } else {
                  optionalExamsList.add(opt.type); // e.g. "Resonancia"
@@ -125,7 +126,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
 
       // 4. Formatted string for UI chips/summary
       const formattedOptionals = selectedOptionals.map(opt => {
-          if (opt.type === 'EG' || opt.type === 'SuperEG') {
+          if (opt.type === 'EEG' || opt.type === 'SuperEEG') {
               return `${opt.type} (${opt.duration || 'Sin duración'})`;
           }
           return opt.type;
@@ -147,7 +148,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
 
           if (existingGroupIndex === -1) {
               // Si es reconsulta, NO seleccionamos exámenes automáticamente
-              const isReconsulta = patient?.consultationType === 'Reconsulta' || (patient?.consultationType as string) === 'Reeconsulta';
+              const isReconsulta = appointmentType === 'Reconsulta' || patient?.consultationType === 'Reconsulta' || (patient?.consultationType as string) === 'Reeconsulta';
 
               const newGroup: ReferralGroup = {
                   id: groupId,
@@ -159,7 +160,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
               setValue('referralGroups', currentGroups);
           }
       }
-   }, [selectedPathology, getValues, setValue, patient]);
+   }, [selectedPathology, getValues, setValue, patient, appointmentType]);
 
   const handlePathologyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
       const patName = e.target.value;
@@ -229,7 +230,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
               setLabSearchTerm(''); // Clear search
           }
       } else {
-          const defaultDuration = (type === 'EG' || type === 'SuperEG') ? '1 hora' : undefined;
+          const defaultDuration = (type === 'EEG' || type === 'SuperEEG') ? '1 hora' : undefined;
           setSelectedOptionals(prev => [...prev, { type, duration: defaultDuration }]);
       }
   };
@@ -268,7 +269,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
                 <div className="flex items-center gap-2 text-brand-800 font-bold">
                     <Microscope className="w-5 h-5" />
-                    <h4>1. Seleccionar Patología</h4>
+                    <h4>1. Seleccionar Diagnóstico Genérico</h4>
                 </div>
                 {userSpecialty && (
                     <div className="text-xs text-brand-700 flex items-center gap-1 bg-white px-3 py-1.5 rounded-full border border-brand-200 shadow-sm">
@@ -279,20 +280,20 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
            </div>
            
            <div>
-               <label className="block text-sm font-semibold text-slate-700 mb-2">Patología / Cuadro Clínico</label>
-               {loadingPaths ? <p className="text-xs text-slate-400">Cargando patologías...</p> : (
+               <label className="block text-sm font-semibold text-slate-700 mb-2">Diagnóstico Genérico</label>
+               {loadingPaths ? <p className="text-xs text-slate-400">Cargando diagnósticos...</p> : (
                    <select 
                        value={selectedPathology?.name || ''}
                        onChange={handlePathologyChange}
                        className="w-full rounded-lg border-slate-300 p-2.5 bg-white text-slate-800 focus:ring-brand-500 focus:border-brand-500 shadow-sm"
                    >
-                       <option value="">-- Seleccionar Patología --</option>
+                       <option value="">-- Seleccionar Diagnóstico Genérico --</option>
                        {pathologies.map(p => (
                            <option key={p.name} value={p.name}>{p.name}</option>
                        ))}
                    </select>
                )}
-               <p className="text-xs text-slate-400 mt-2">Al seleccionar una patología, los exámenes obligatorios se marcarán automáticamente.</p>
+               <p className="text-xs text-slate-400 mt-2">Al seleccionar un diagnóstico genérico, los exámenes del protocolo se marcarán automáticamente.</p>
            </div>
        </div>
 
@@ -301,7 +302,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
              <div className="flex justify-between items-end mb-3">
                 <label className="block text-sm font-bold text-slate-700">
-                    2. Exámenes Obligatorios: <span className="text-brand-600">{selectedPathology.name}</span>
+                    2. Protocolo: <span className="text-brand-600">{selectedPathology.name}</span>
                 </label>
              </div>
              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4">
@@ -393,7 +394,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient }) 
                <div className="space-y-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                    {OPTIONAL_EXAMS_TYPES.map(type => {
                        const isChecked = isCategoryChecked(type);
-                       const showHours = isChecked && (type === 'EG' || type === 'SuperEG');
+                       const showHours = isChecked && (type === 'EEG' || type === 'SuperEEG');
                        const showLabsPanel = isChecked && type === 'Laboratorios';
                        const showOthersInput = isChecked && type === 'Otros';
 

@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check } from 'lucide-react';
+import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check, Calendar } from 'lucide-react';
 import { UserProfile, AppNotification } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, onSnapshot, orderBy, doc, updateDoc } from 'firebase/firestore';
@@ -16,8 +16,9 @@ interface MainLayoutProps {
   children: React.ReactNode;
   currentTitle?: string;
   onBack?: () => void;
-  activeView: 'dashboard' | 'history' | 'admin' | 'settings';
-  onViewChange: (view: 'dashboard' | 'history' | 'admin' | 'settings') => void;
+  activeView: 'dashboard' | 'history' | 'admin' | 'settings' | 'my_schedule';
+  onViewChange: (view: 'dashboard' | 'history' | 'admin' | 'settings' | 'my_schedule') => void;
+  allowDoctorSelfManage?: boolean;
 }
 
 // --- COLOR PALETTES DEFINITION ---
@@ -41,7 +42,7 @@ const THEMES = {
 };
 
 export const MainLayout: React.FC<MainLayoutProps> = ({ 
-  user, onLogout, children, currentTitle, onBack, activeView, onViewChange 
+  user, onLogout, children, currentTitle, onBack, activeView, onViewChange, allowDoctorSelfManage 
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -50,6 +51,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   
   const isReceptionist = user.role === 'receptionist';
   const isAdmin = user.role === 'admin';
+  const isDoctor = user.role === 'doctor';
   
   const canSeeNotifications = ['doctor', 'nurse', 'admin', 'receptionist'].includes(user.role);
 
@@ -147,6 +149,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     { id: 'dashboard', label: 'Gestión / Check-In', icon: Ticket, show: true, onClick: () => onViewChange('dashboard') },
     { id: 'history', label: 'Historiales', icon: ClipboardList, show: !isReceptionist, onClick: () => onViewChange('history') },
     { id: 'admin', label: 'Panel Administrativo', icon: ShieldCheck, show: isAdmin, onClick: () => onViewChange('admin') },
+    { id: 'my_schedule', label: 'Mi Horario', icon: Calendar, show: isDoctor && allowDoctorSelfManage, onClick: () => onViewChange('my_schedule') },
     { id: 'settings', label: 'Configuración', icon: Settings, show: true, onClick: () => onViewChange('settings') }
   ];
 
@@ -164,16 +167,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           </div>
         ))}
       </nav>
-      <div className="p-4 border-t border-slate-800 shrink-0">
-        <button onClick={onLogout} className="w-full flex items-center gap-3 p-3.5 rounded-xl text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-all font-medium">
-          <LogOut className="w-5 h-5"/><span>Cerrar Sesión</span>
+      <div className="p-4 border-t border-slate-800 shrink-0 space-y-3">
+        {user.role === 'doctor' && (
+          <div className="px-3 py-2 rounded-xl bg-slate-800/60 border border-slate-700">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Especialidad
+            </p>
+            <p className="text-sm font-semibold text-slate-100 mt-1 truncate">
+              {user.specialty || 'No definida'}
+            </p>
+          </div>
+        )}
+        <button
+          onClick={onLogout}
+          className="w-full flex items-center gap-3 p-3.5 rounded-xl text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-all font-medium"
+        >
+          <LogOut className="w-5 h-5" />
+          <span>Cerrar Sesión</span>
         </button>
       </div>
     </div>
   );
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden font-inter text-slate-900">
+    <div className="flex h-screen bg-slate-200 overflow-hidden font-inter text-slate-900">
       <AnimatePresence>
         {showBackupAlert && (
             <motion.div initial={{y: -100}} animate={{y: 0}} exit={{y: -100}} className="fixed top-0 left-0 right-0 z-[9999] bg-amber-500 text-white p-3 shadow-xl flex justify-center items-center gap-4 flex-col md:flex-row text-center">
@@ -206,7 +223,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             {onBack ? (
               <button onClick={onBack} className="flex items-center gap-2 font-bold text-slate-800 hover:text-brand-600 transition truncate"><span className="text-brand-600 mr-1">←</span><span className="truncate">{currentTitle}</span></button>
             ) : (
-              <h2 className="font-bold text-slate-800 text-sm lg:text-base truncate">{currentTitle || (activeView === 'history' ? 'Historial de Consultas' : activeView === 'admin' ? 'Administración' : activeView === 'settings' ? 'Configuración' : 'Panel de Control')}</h2>
+              <h2 className="font-bold text-slate-800 text-sm lg:text-base truncate">{currentTitle || (activeView === 'history' ? 'Historial de Consultas' : activeView === 'admin' ? 'Administración' : activeView === 'my_schedule' ? 'Mi Horario' : activeView === 'settings' ? 'Configuración' : 'Panel de Control')}</h2>
             )}
           </div>
 

@@ -5,7 +5,7 @@ import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, deleteD
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase/config.ts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UserProfile, Patient, PatientFile, Specialty } from '../../types.ts';
+import { UserProfile, Patient, PatientFile, Specialty, Clinic } from '../types.ts';
 import { Users, ClipboardList, Package, FlaskConical, Stethoscope, History, Edit2, Trash2, Ban, Plus, X, Save, Loader2, AlertTriangle, CheckCircle, Search, UserMinus, ShieldAlert, ChevronLeft, ChevronRight, Globe, Building2, UploadCloud, FileText, Database, Download, Upload, Clock, FileSpreadsheet, Cloud, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { logAuditAction } from '../services/auditService.ts';
@@ -16,6 +16,9 @@ import { generateSystemBackup, restoreSystemBackup, getBackupSettings, saveBacku
 import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES } from '../data/geography.ts';
 import { UserModal } from '../components/Admin/UserModal.tsx';
 import { AccountingDashboard } from '../components/Admin/AccountingDashboard.tsx';
+import { SpecialtyFormsAdmin } from '../components/Admin/SpecialtyFormsAdmin.tsx';
+import { getClinics, createClinic, updateClinic, deleteClinic } from '../services/clinicService.ts';
+import { DoctorScheduleAdmin } from '../components/Admin/DoctorScheduleManager.tsx';
 // @ts-ignore
 import * as XLSX from 'xlsx';
 
@@ -23,7 +26,7 @@ interface AdminPanelProps {
   user: UserProfile;
 }
 
-type AdminTab = 'users' | 'patients' | 'inventory' | 'laboratories' | 'external' | 'pathologies' | 'specialties' | 'logs' | 'security' | 'accounting';
+type AdminTab = 'users' | 'patients' | 'inventory' | 'laboratories' | 'external' | 'pathologies' | 'specialties' | 'forms' | 'logs' | 'security' | 'accounting' | 'clinics' | 'doctor_schedule';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
@@ -56,11 +59,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
+  const [clinics, setClinics] = useState<Clinic[]>([]);
 
   useEffect(() => {
     setLoading(true);
     setCurrentPage(1);
-    
+    setData([]);
+
     if (activeTab === 'security') {
         getBackupSettings().then(cfg => {
             setBackupConfig(cfg || { days: [] });
@@ -69,7 +74,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
         return;
     }
 
-    if (activeTab === 'accounting') {
+    if (activeTab === 'accounting' || activeTab === 'forms' || activeTab === 'doctor_schedule') {
         setLoading(false);
         return;
     }
@@ -82,6 +87,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
         case 'external': collectionName = 'external_medicines'; break;
         case 'pathologies': collectionName = 'pathologies'; break;
         case 'specialties': collectionName = 'specialties'; break;
+        case 'clinics': collectionName = 'clinics'; break;
         case 'users': collectionName = 'users'; break;
         case 'patients': collectionName = 'patients'; break;
         default: collectionName = 'users';
@@ -109,12 +115,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
         setLoading(false);
     }, (error) => {
         console.error("Data Sync Error:", error);
+        setData([]);
         toast.error(`Error cargando ${activeTab}. Verifique permisos o conexión.`);
         setLoading(false);
     });
 
     if(activeTab === 'users') {
         getSpecialties().then(setSpecialtiesList);
+        getClinics()
+          .then((clinics) => setClinics(clinics))
+          .catch(() => setClinics([]));
     }
 
     return () => unsubscribe();
@@ -289,7 +299,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
           }
       } else {
           const defaults: any = {};
-          if (activeTab === 'patients') { defaults.consultationType = 'Nueva'; defaults.previousTreatment = 'No ha estado en tratamiento'; defaults.address = { country: 'Guatemala' }; }
+          if (activeTab === 'patients') { 
+              defaults.consultationType = 'Nueva'; 
+              defaults.previousTreatment = 'No ha estado en tratamiento'; 
+              defaults.previousTreatmentDetail = ''; 
+              defaults.referralChannel = ''; 
+              defaults.address = { country: 'Guatemala' }; 
+          }
           setFormValues(item || defaults);
           setIsNoResponsible(false);
       }
@@ -308,6 +324,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
               case 'external': collectionName = 'external_medicines'; break;
               case 'pathologies': collectionName = 'pathologies'; break;
               case 'specialties': collectionName = 'specialties'; break;
+              case 'clinics': collectionName = 'clinics'; break;
           }
           
           let finalPayload = { ...formValues };
@@ -366,6 +383,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
               case 'external': collectionName = 'external_medicines'; break;
               case 'pathologies': collectionName = 'pathologies'; break;
               case 'specialties': collectionName = 'specialties'; break;
+              case 'clinics': collectionName = 'clinics'; break;
           }
           const isSoftDelete = activeTab === 'users' || activeTab === 'patients';
           const itemName = itemToDelete.name || itemToDelete.fullName || itemToDelete.commercialName || 'Item';
@@ -399,6 +417,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
       { id: 'external', label: 'Meds. Externos', icon: Globe },
       { id: 'pathologies', label: 'Patologías', icon: Stethoscope },
       { id: 'specialties', label: 'Especialidades', icon: Stethoscope },
+      { id: 'forms', label: 'Fichas Clínicas', icon: FileSpreadsheet },
+      { id: 'doctor_schedule', label: 'Horario de doctores', icon: Clock },
+      { id: 'clinics', label: 'Clínicas', icon: Building2 },
       { id: 'security', label: 'Seguridad & Datos', icon: Database },
       { id: 'logs', label: 'Auditoría', icon: History },
   ];
@@ -406,12 +427,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
   const hasZones = (muni: string) => MUNICIPALITIES_WITH_ZONES.includes(muni);
 
+  const calculateAgeFromBirthDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const today = new Date();
+    const dob = new Date(dateStr);
+    if (Number.isNaN(dob.getTime())) return '';
+    let age = today.getFullYear() - dob.getFullYear();
+    const m = today.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+      age--;
+    }
+    return age >= 0 ? String(age) : '';
+  };
+
+  const calculateBirthDateFromAge = (ageStr: string) => {
+    const age = parseInt(ageStr, 10);
+    if (!age || Number.isNaN(age)) return '';
+    const today = new Date();
+    const year = today.getFullYear() - age;
+    const month = today.getMonth();
+    const day = today.getDate();
+    const date = new Date(year, month, day);
+    return date.toISOString().slice(0, 10);
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4">
         <div className="flex bg-white p-2 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto scrollbar-hide snap-x">
             <div className="flex gap-2 min-w-max">
                 {tabs.map(tab => (
-                    <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSearchTerm(''); setCurrentPage(1); }} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all whitespace-nowrap snap-center ${activeTab === tab.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}>
+                    <button key={tab.id} onClick={() => { setData([]); setActiveTab(tab.id); setSearchTerm(''); setCurrentPage(1); }} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all whitespace-nowrap snap-center ${activeTab === tab.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}>
                         <tab.icon className="w-4 h-4" /> {tab.label}
                     </button>
                 ))}
@@ -426,6 +471,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
         >
             {activeTab === 'accounting' ? (
                 <AccountingDashboard />
+            ) : activeTab === 'forms' ? (
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[650px]">
+                    <SpecialtyFormsAdmin />
+                </div>
+            ) : activeTab === 'doctor_schedule' ? (
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[650px]">
+                    <DoctorScheduleAdmin currentUser={user} />
+                </div>
             ) : activeTab === 'security' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 md:p-8">
@@ -497,7 +550,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
                     <div className="flex-1 overflow-x-auto">
                         <table className="w-full text-left">
-                            <thead className="bg-slate-50 text-[10px] text-slate-400 uppercase font-bold tracking-widest border-b">
+                            <thead className="bg-slate-200 text-[10px] text-slate-600 uppercase font-bold tracking-widest border-b border-slate-300">
                                 <tr>
                                     {activeTab === 'users' && <><th className="p-4">Nombre</th><th className="p-4">Rol</th><th className="p-4">Estado</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'patients' && <><th className="p-4">Paciente</th><th className="p-4">Código</th><th className="p-4">Estado</th><th className="p-4 text-right">Acciones</th></>}
@@ -506,6 +559,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                     {activeTab === 'external' && <><th className="p-4">Nombre Comercial</th><th className="p-4">Ingrediente Activo</th><th className="p-4">Farmacia / Dist.</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'pathologies' && <><th className="p-4">Patología</th><th className="p-4">Exámenes</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'specialties' && <><th className="p-4">Especialidad</th><th className="p-4 text-right">Acciones</th></>}
+                                    {activeTab === 'clinics' && <><th className="p-4">Clínica</th><th className="p-4">Código</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'logs' && <><th className="p-4">Fecha</th><th className="p-4">Usuario</th><th className="p-4">Acción</th><th className="p-4">Detalle</th></>}
                                 </tr>
                             </thead>
@@ -520,8 +574,44 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                         {activeTab === 'patients' && <><td className="p-4 font-bold text-slate-800">{item.fullName}</td><td className="p-4 text-slate-500 font-mono font-bold">{item.billingCode}</td><td className="p-4">{item.isActive !== false ? <span className="text-emerald-600 flex items-center gap-1.5 font-bold text-xs"><CheckCircle className="w-3 h-3"/> Activo</span> : <span className="text-red-400 flex items-center gap-1.5 font-bold text-xs"><Ban className="w-3 h-3"/> Baja</span>}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
                                         {activeTab === 'pathologies' && <><td className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4 text-slate-500 text-[10px] font-bold uppercase">{item.exams?.join(' • ') || '—'}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
                                         {activeTab === 'logs' && <><td className="p-4 text-xs font-bold text-slate-400">{new Date(item.timestamp).toLocaleString()}</td><td className="p-4 font-bold text-slate-700">{item.user}</td><td className="p-4"><span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase">{item.action}</span></td><td className="p-4 text-xs text-slate-500 italic whitespace-pre-wrap break-words">{item.details}</td></>}
-                                        {activeTab === 'external' && <><td className="p-4 font-bold text-slate-800">{item.commercialName}</td><td className="p-4 text-xs text-slate-500">{item.activeIngredient}</td><td className="p-4 text-xs text-slate-500">{item.pharmacy || item.distributorGT}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
+                                        {activeTab === 'external' && <>
+                                            <td className="p-4 font-bold text-slate-800">{item.commercialName}</td>
+                                            <td className="p-4 text-xs text-slate-500">{item.activeIngredient}</td>
+                                            <td className="p-4 text-xs text-slate-500">{item.pharmacy || item.distributorGT}</td>
+                                            <td className="p-4 text-right flex items-center justify-end gap-2">
+                                                <button
+                                                    onClick={() => handleOpenModal(item)}
+                                                    className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"
+                                                >
+                                                    <Edit2 className="w-4 h-4"/>
+                                                </button>
+                                                <button
+                                                    onClick={() => { setItemToDelete(item); setIsDeleteModalOpen(true); }}
+                                                    className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm"
+                                                >
+                                                    <Trash2 className="w-4 h-4"/>
+                                                </button>
+                                            </td>
+                                        </>}
                                         {activeTab === 'specialties' && <><td colSpan={3} className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
+                                        {activeTab === 'clinics' && <>
+                                            <td className="p-4 font-bold text-slate-800">{item.name}</td>
+                                            <td className="p-4 text-xs font-mono text-slate-500">{item.code || '—'}</td>
+                                            <td className="p-4 text-right flex items-center justify-end gap-2">
+                                                <button
+                                                    onClick={() => handleOpenModal(item)}
+                                                    className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"
+                                                >
+                                                    <Edit2 className="w-4 h-4"/>
+                                                </button>
+                                                <button
+                                                    onClick={() => { setItemToDelete(item); setIsDeleteModalOpen(true); }}
+                                                    className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm"
+                                                >
+                                                    <Trash2 className="w-4 h-4"/>
+                                                </button>
+                                            </td>
+                                        </>}
                                     </tr>
                                 )) : (
                                     <tr><td colSpan={10} className="p-24 text-center text-slate-400 italic">No hay resultados.</td></tr>
@@ -548,6 +638,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
             userToEdit={editItem}
             currentUser={user}
             specialtiesList={specialtiesList}
+            clinics={clinics}
         />
 
         <AnimatePresence>
@@ -568,10 +659,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                             {activeTab === 'patients' && <>
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2">Datos Personales</div>
                                 <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre del Paciente</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-lg font-bold" value={formValues.fullName || ''} onChange={e => setFormValues({...formValues, fullName: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI / Código Facturación</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.billingCode || ''} onChange={e => setFormValues({...formValues, billingCode: e.target.value, id: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ocupación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.occupation || ''} onChange={e => setFormValues({...formValues, occupation: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label><input required type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age || ''} onChange={e => setFormValues({...formValues, age: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.gender || 'M'} onChange={e => setFormValues({...formValues, gender: e.target.value})}><option value="M">Masculino</option><option value="F">Femenino</option></select></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI / Código Facturación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.billingCode || ''} onChange={e => setFormValues({...formValues, billingCode: e.target.value, id: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ocupación</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.occupation || ''} onChange={e => setFormValues({...formValues, occupation: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label><input required type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); const birthDate = numeric ? calculateBirthDateFromAge(numeric) : ''; setFormValues({...formValues, age: numeric, birthDate}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label><input required type="date" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.birthDate || ''} onChange={e => { const birthDate = e.target.value; const age = calculateAgeFromBirthDate(birthDate); setFormValues({...formValues, birthDate, age}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label><select required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.gender || 'M'} onChange={e => setFormValues({...formValues, gender: e.target.value})}><option value="M">Masculino</option><option value="F">Femenino</option></select></div>
                                 
                                 <div className="md:col-span-2 text-sm font-bold text-brand-600 uppercase tracking-widest border-b border-brand-100 pb-2 mb-2 mt-4">Dirección Domiciliar</div>
                                 <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -581,10 +673,99 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                     {formValues.address?.department === 'Guatemala' && hasZones(formValues.address.municipality) && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Zona</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.address?.zone} onChange={e => handleUpdateAddress('zone', e.target.value)}><option value="">-- Zona --</option>{GT_ZONES.map(z => <option key={z} value={z}>{z}</option>)}</select></div>}
                                 </div>
 
+                                <div className="md:col-span-2 text-sm font-bold text-brand-600 uppercase tracking-widest border-b border-brand-100 pb-2 mb-2 mt-4">Datos Clínicos</div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-brand-600 uppercase tracking-widest mb-2 block">Tipo de Consulta</label>
+                                    <select
+                                        required
+                                        className="w-full p-4 bg-white border border-brand-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
+                                        value={formValues.consultationType || 'Nueva'}
+                                        onChange={e => setFormValues({ ...formValues, consultationType: e.target.value })}
+                                    >
+                                        <option value="Nueva">Nueva</option>
+                                        <option value="Reconsulta">Reconsulta</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-brand-600 uppercase tracking-widest mb-2 block">Modalidad</label>
+                                    <select
+                                        required
+                                        className="w-full p-4 bg-white border border-brand-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
+                                        value={formValues.modality || 'Presencial'}
+                                        onChange={e => setFormValues({ ...formValues, modality: e.target.value })}
+                                    >
+                                        <option value="Presencial">Presencial</option>
+                                        <option value="Virtual">Virtual</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Médico Tratante Anterior</label>
+                                    <select
+                                        required
+                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
+                                        value={formValues.previousTreatment || 'No ha estado en tratamiento'}
+                                        onChange={e => {
+                                            const value = e.target.value;
+                                            setFormValues({
+                                                ...formValues,
+                                                previousTreatment: value,
+                                                previousTreatmentDetail: value === 'IGSS' ? formValues.previousTreatmentDetail : ''
+                                            });
+                                        }}
+                                    >
+                                        <option value="No ha estado en tratamiento">No ha estado en tratamiento</option>
+                                        <option value="IGSS">IGSS</option>
+                                        <option value="Medico Privado">Médico Privado</option>
+                                        <option value="Hospital Nacional">Hospital Nacional</option>
+                                    </select>
+                                </div>
+                                {formValues.previousTreatment === 'IGSS' && (
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Detalle IGSS</label>
+                                        <select
+                                            required
+                                            className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
+                                            value={formValues.previousTreatmentDetail || ''}
+                                            onChange={e => setFormValues({ ...formValues, previousTreatmentDetail: e.target.value })}
+                                        >
+                                            <option value="">-- Seleccionar --</option>
+                                            <option value="IGSS consulta privada">IGSS consulta privada</option>
+                                            <option value="IGSS examenes de diagnostico">IGSS exámenes de diagnóstico</option>
+                                            <option value="Servicio Contratado">Servicio Contratado</option>
+                                        </select>
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Canal de referencia (¿De dónde nos conoció?)</label>
+                                    <select
+                                        required
+                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
+                                        value={formValues.referralChannel || ''}
+                                        onChange={e => setFormValues({ ...formValues, referralChannel: e.target.value })}
+                                    >
+                                        <option value="">-- Seleccionar --</option>
+                                        <option value="CONOCIDO">CONOCIDO</option>
+                                        <option value="EMAIL">EMAIL</option>
+                                        <option value="FACEBOOK">FACEBOOK</option>
+                                        <option value="FAMILIA">FAMILIA</option>
+                                        <option value="GOOGLE">GOOGLE</option>
+                                        <option value="IA">IA</option>
+                                        <option value="INSTAGRAM">INSTAGRAM</option>
+                                        <option value="LINKEDIN">LINKEDIN</option>
+                                        <option value="OTROS">OTROS</option>
+                                        <option value="PAGINA WEB">PAGINA WEB</option>
+                                        <option value="RADIO">RADIO</option>
+                                        <option value="TELEVISION">TELEVISION</option>
+                                        <option value="TIKTOK">TIKTOK</option>
+                                        <option value="WHATSAPP">WHATSAPP</option>
+                                        <option value="YOUTUBE">YOUTUBE</option>
+                                    </select>
+                                </div>
+
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Datos del Responsable</div>
                                 <div className="md:col-span-2 flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200"><input type="checkbox" className="w-5 h-5" checked={isNoResponsible} onChange={e => setIsNoResponsible(e.target.checked)} /><label className="text-xs font-bold text-slate-500 uppercase">EL PACIENTE VE POR SU PROPIA SALUD</label></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label><input required={!isNoResponsible} disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleName || ''} onChange={e => setFormValues({...formValues, responsibleName: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label><input required={!isNoResponsible} disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsiblePhone || ''} onChange={e => setFormValues({...formValues, responsiblePhone: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label><input required={!isNoResponsible} disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsiblePhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({...formValues, responsiblePhone: numeric}); }} /></div>
                                 
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Historial Clínico y Archivos</div>
                                 <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Antecedentes Médicos</label><textarea className="w-full p-4 bg-white border rounded-2xl" rows={4} value={formValues.medical_history || ''} onChange={e => setFormValues({...formValues, medical_history: e.target.value})} /></div>
@@ -601,10 +782,88 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                             </>}
 
                             {activeTab === 'inventory' && <><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Medicamento</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.name || ''} onChange={e => setFormValues({...formValues, name: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código</label><input className="w-full p-4 bg-white border rounded-2xl font-mono" value={formValues.code || ''} onChange={e => setFormValues({...formValues, code: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Presentación</label><input className="w-full p-4 bg-white border rounded-2xl" value={formValues.presentation || ''} onChange={e => setFormValues({...formValues, presentation: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Costo (Q)</label><input type="number" step="0.01" className="w-full p-4 bg-white border rounded-2xl" value={formValues.cost || 0} onChange={e => setFormValues({...formValues, cost: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Precio (Q)</label><input type="number" step="0.01" required className="w-full p-4 bg-white border rounded-2xl font-bold text-emerald-700" value={formValues.price || 0} onChange={e => setFormValues({...formValues, price: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Stock</label><input type="number" required className="w-full p-4 bg-white border rounded-2xl" value={formValues.stock || 0} onChange={e => setFormValues({...formValues, stock: parseInt(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unidades por Caja</label><input type="number" className="w-full p-4 bg-white border rounded-2xl" value={formValues.units_per_box || 1} onChange={e => setFormValues({...formValues, units_per_box: parseInt(e.target.value)})} /></div></>}
+                            {activeTab === 'inventory' && (
+                                <>
+                                    <div className="md:col-span-2">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Comercial / Marca</label>
+                                        <input
+                                            className="w-full p-4 bg-white border rounded-2xl"
+                                            value={formValues.brandName || ''}
+                                            onChange={e => setFormValues({ ...formValues, brandName: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ingrediente Activo</label>
+                                        <input
+                                            className="w-full p-4 bg-white border rounded-2xl"
+                                            value={formValues.activeIngredient || ''}
+                                            onChange={e => setFormValues({ ...formValues, activeIngredient: e.target.value })}
+                                        />
+                                    </div>
+                                </>
+                            )}
                             {activeTab === 'laboratories' && <><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Examen</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.name || ''} onChange={e => setFormValues({...formValues, name: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código</label><input className="w-full p-4 bg-white border rounded-2xl font-mono" value={formValues.code || ''} onChange={e => setFormValues({...formValues, code: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Medida</label><input className="w-full p-4 bg-white border rounded-2xl" value={formValues.measure || ''} onChange={e => setFormValues({...formValues, measure: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Costo (Q)</label><input type="number" step="0.01" className="w-full p-4 bg-white border rounded-2xl" value={formValues.cost || 0} onChange={e => setFormValues({...formValues, cost: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Precio (Q)</label><input type="number" step="0.01" required className="w-full p-4 bg-white border rounded-2xl font-bold text-emerald-700" value={formValues.price || 0} onChange={e => setFormValues({...formValues, price: parseFloat(e.target.value)})} /></div></>}
                             {activeTab === 'pathologies' && <><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Patología</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.name || ''} onChange={e => setFormValues({...formValues, name: e.target.value})} /></div><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Exámenes (por comas)</label><textarea required className="w-full p-5 bg-white border rounded-[1.5rem]" rows={5} value={formValues.exams || ''} onChange={e => setFormValues({...formValues, exams: e.target.value})} /></div></>}
                             {activeTab === 'specialties' && <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Especialidad</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.name || ''} onChange={e => setFormValues({...formValues, name: e.target.value})} /></div>}
-                            {activeTab === 'external' && <><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Comercial</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.commercialName || ''} onChange={e => setFormValues({...formValues, commercialName: e.target.value, name: e.target.value})} /></div><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ingrediente Activo</label><input className="w-full p-4 bg-white border rounded-2xl" value={formValues.activeIngredient || ''} onChange={e => setFormValues({...formValues, activeIngredient: e.target.value})} /></div><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Farmacia / Distribuidor</label><input className="w-full p-4 bg-white border rounded-2xl" value={formValues.pharmacy || formValues.distributorGT || ''} onChange={e => setFormValues({...formValues, pharmacy: e.target.value})} /></div></>}
+                            {activeTab === 'clinics' && (
+                                <>
+                                    <div className="md:col-span-2">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre de la Clínica</label>
+                                        <input
+                                            required
+                                            className="w-full p-4 bg-white border rounded-2xl font-bold"
+                                            value={formValues.name || ''}
+                                            onChange={e => setFormValues({ ...formValues, name: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código</label>
+                                        <input
+                                            className="w-full p-4 bg-white border rounded-2xl font-mono"
+                                            value={formValues.code || ''}
+                                            onChange={e => setFormValues({ ...formValues, code: e.target.value })}
+                                        />
+                                    </div>
+                                </>
+                            )}
+                            {activeTab === 'external' && <>
+                                <div className="md:col-span-2">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Comercial</label>
+                                    <input
+                                        required
+                                        className="w-full p-4 bg-white border rounded-2xl font-bold"
+                                        value={formValues.commercialName || ''}
+                                        onChange={e => setFormValues({
+                                            ...formValues,
+                                            commercialName: e.target.value,
+                                            name: e.target.value,
+                                            brandName: e.target.value
+                                        })}
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ingrediente Activo</label>
+                                    <input
+                                        className="w-full p-4 bg-white border rounded-2xl"
+                                        value={formValues.activeIngredient || ''}
+                                        onChange={e => setFormValues({
+                                            ...formValues,
+                                            activeIngredient: e.target.value
+                                        })}
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Farmacia / Distribuidor</label>
+                                    <input
+                                        className="w-full p-4 bg-white border rounded-2xl"
+                                        value={formValues.pharmacy || formValues.distributorGT || ''}
+                                        onChange={e => setFormValues({
+                                            ...formValues,
+                                            pharmacy: e.target.value
+                                        })}
+                                    />
+                                </div>
+                            </>}
                         </div>
                         <div className="p-6 md:p-8 bg-slate-50 border-t flex gap-4 shrink-0 rounded-b-[2rem]">
                             <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-4 font-bold text-slate-500 hover:bg-slate-200 rounded-2xl transition-all">Descartar</button>
@@ -627,8 +886,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                             <textarea className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-red-500 text-sm" rows={3} value={deleteReason} onChange={e => setDeleteReason(e.target.value)} placeholder="Escriba el motivo..." />
                         </div>
                         <div className="flex gap-4">
-                            <button onClick={() => {setIsDeleteModalOpen(false); setDeleteReason('');}} className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-100 rounded-xl">Cancelar</button>
-                            <button onClick={confirmDelete} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-lg">Eliminar</button>
+                            <button
+                                onClick={() => { setIsDeleteModalOpen(false); setDeleteReason(''); }}
+                                className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-100 rounded-xl"
+                                disabled={isSaving}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                disabled={isSaving}
+                                className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-lg disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {isSaving ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Eliminando...
+                                    </>
+                                ) : (
+                                    'Eliminar'
+                                )}
+                            </button>
                         </div>
                     </motion.div>
                 </div>

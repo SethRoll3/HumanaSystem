@@ -14,9 +14,10 @@ interface StepFinalizeProps {
     onFinish: () => void;
     isSaving: boolean;
     currentUser: UserProfile; 
+    hasUnseenImportantNotices: boolean;
 }
 
-export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, currentUser }) => {
+export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, currentUser, hasUnseenImportantNotices }) => {
     const { register, watch, setValue } = useFormContext();
     
     // WATCH ALL FIELDS
@@ -27,6 +28,7 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
     const otherExams = watch('otherExams');
     const referralNote = watch('referralNote');
     const nursingNotes = watch('followUpText');
+    const importantNotices = watch('importantNotices');
     const currentSignature = watch('signature');
     const specialtyReferrals: SpecialtyReferral[] = watch('specialtyReferrals') || [];
     const isReadyToFinish = watch('isReadyToFinish');
@@ -76,7 +78,7 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
 
     const getMissingItems = () => {
         const items = [];
-        if (!diagnosis?.trim()) items.push({ key: 'diagnosis', label: 'Sin Diagnóstico Médico' });
+        if (!diagnosis?.trim()) items.push({ key: 'diagnosis', label: 'Sin resumen de consulta' });
         const hasPrescriptionContent = (prescription && prescription.length > 0) || (prescriptionNotes && prescriptionNotes.trim().length > 0);
         if (!hasPrescriptionContent) items.push({ key: 'prescription', label: 'Sin Receta / Tratamiento' });
         const hasLabs = (referralGroups?.length > 0) || (otherExams?.trim()) || (referralNote?.trim());
@@ -193,6 +195,19 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                 />
             </div>
 
+            <div className="bg-white rounded-xl border border-red-200 p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+                    <AlertCircle className="w-5 h-5 text-red-500" />
+                    <h4>Avisos Importantes</h4>
+                </div>
+                <textarea 
+                    {...register('importantNotices')} 
+                    rows={3} 
+                    placeholder="Registrar alertas críticas, advertencias al paciente o recordatorios importantes..."
+                    className="w-full text-sm bg-red-50/40 border border-red-200 rounded-lg p-3 focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-red-400 text-red-800 resize-none" 
+                />
+            </div>
+
             {/* SECCIÓN DE FIRMA */}
             <div className={`p-6 border-2 border-dashed rounded-xl text-center transition-colors ${currentSignature ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-200'}`}>
                 {hasStoredCert ? (
@@ -306,13 +321,18 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                 <button 
                     type="button" 
                     onClick={onFinish}
-                    disabled={!isReadyToFinish || isSaving}
+                    disabled={!isReadyToFinish || isSaving || hasUnseenImportantNotices}
                     className="w-full max-w-md py-4 bg-slate-900 text-white rounded-2xl font-bold text-xl shadow-2xl hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-3 transition-all transform active:scale-95"
                 >
                     {isSaving ? <Loader2 className="animate-spin w-6 h-6"/> : <Save className="w-6 h-6"/>}
                     Finalizar Consulta
                 </button>
                 {!isReadyToFinish && <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse">Confirmar omisiones para finalizar.</p>}
+                {hasUnseenImportantNotices && (
+                    <p className="mt-1 text-red-600 font-bold text-xs animate-pulse">
+                        Debe revisar todos los avisos importantes antes de finalizar.
+                    </p>
+                )}
             </div>
         </motion.div>
     );

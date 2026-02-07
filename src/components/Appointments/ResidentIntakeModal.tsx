@@ -4,11 +4,13 @@ import { Patient, UserProfile } from '../../types';
 import { db, storage } from '../../firebase/config.ts';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { appointmentService } from '../../services/appointmentService';
 
 interface ResidentIntakeModalProps {
   isOpen: boolean;
   onClose: () => void;
   patient: Patient;
+  appointmentId?: string;
   currentUser: UserProfile;
   onSaveComplete?: () => Promise<void> | void;
 }
@@ -17,6 +19,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
   isOpen,
   onClose,
   patient,
+  appointmentId,
   currentUser,
   onSaveComplete
 }) => {
@@ -46,7 +49,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
 
       if (newHistory.trim()) {
         const prefix = patient.medical_history ? patient.medical_history + '\n\n' : '';
-        const header = `[Residente: ${currentUser.name} - ${new Date().toLocaleString('es-GT')}]`;
+        const header = `[Enfermería: ${currentUser.name} - ${new Date().toLocaleString('es-GT')}]`;
         updates.medical_history = `${prefix}${header}\n${newHistory.trim()}`;
       }
 
@@ -62,7 +65,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
               url,
               type: file.type || 'application/octet-stream',
               uploadedAt: Date.now(),
-              uploadedBy: currentUser.name || 'Residente'
+              uploadedBy: currentUser.name || 'Enfermería'
             })
           });
         }
@@ -70,6 +73,11 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
 
       if (Object.keys(updates).length > 0) {
         await updateDoc(patientRef, updates);
+      }
+
+      // Actualizar estado de la cita a resident_intake
+      if (appointmentId) {
+        await appointmentService.completeResidentIntake(appointmentId);
       }
 
       if (onSaveComplete) {
@@ -90,15 +98,15 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="bg-slate-900 px-6 py-4 flex justify-between items-center">
+        <div className="bg-brand-900 px-6 py-4 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <History className="w-5 h-5 text-amber-400" />
-              Historial Clínico (Residente)
-            </h2>
-            <p className="text-xs text-slate-400">
-              Paciente: {patient.fullName} ({patient.billingCode})
-            </p>
+            <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+          <History className="w-6 h-6 text-brand-200" />
+          Historial Clínico (Enfermería)
+        </h2>
+        <p className="text-base text-brand-100 mt-1">
+          Paciente: {patient.fullName} ({patient.billingCode})
+        </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
             <X className="w-6 h-6" />
@@ -153,13 +161,13 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
           </div>
 
           <div className="bg-white rounded-2xl border border-amber-200 p-4 shadow-sm space-y-4">
-            <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-1">Nuevos antecedentes (Residente)</h3>
+          <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-1">Nuevos antecedentes (Enfermería)</h3>
             <textarea
               rows={6}
               value={newHistory}
               onChange={(e) => setNewHistory(e.target.value)}
               className="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 block p-3 placeholder-slate-400 shadow-sm transition-all resize-none"
-              placeholder="Escriba aquí los antecedentes que el residente documenta en esta visita..."
+              placeholder="Escriba aquí los antecedentes que enfermería documenta en esta visita..."
             />
 
             <div className="space-y-2">
@@ -197,7 +205,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
 
         <div className="px-6 py-4 border-t border-slate-200 bg-white flex justify-between items-center">
           <p className="text-[11px] text-slate-500">
-            El residente solo puede agregar información nueva. Los antecedentes previos permanecen sin cambios.
+            Enfermería solo puede agregar información nueva. Los antecedentes previos permanecen sin cambios.
           </p>
           <div className="flex gap-3">
             <button

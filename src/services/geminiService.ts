@@ -204,3 +204,72 @@ export const improveMedicalText = async (text: string): Promise<string> => {
     return text;
   }
 };
+
+export interface FollowUpAnalysisResult {
+  hasFollowUp: boolean;
+  days?: number;
+  rawText?: string;
+}
+
+export const analyzeFollowUpIntent = async (notes: string): Promise<FollowUpAnalysisResult> => {
+  const trimmed = notes.trim();
+  if (!trimmed) return { hasFollowUp: false };
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+    const promptText = `
+      Actúa como un asistente para agenda médica en Guatemala.
+      Texto escrito por el doctor:
+      "${trimmed}"
+
+      Tu tarea es detectar si el doctor desea volver a ver al paciente en una RECONSULTA.
+      
+      Debes reconocer frases como:
+      - "quiero verlo en 15 días"
+      - "reconsulta en 1 mes"
+      - "control en 3 semanas"
+      - "cita de seguimiento en 10 dias"
+
+      Instrucciones:
+      1. Si NO encuentras intención clara de reconsulta futura, responde:
+         { "hasFollowUp": false, "days": null }
+      2. Si SÍ hay intención de reconsulta:
+         - hasFollowUp = true
+         - days = número de días exactos desde hoy hasta la reconsulta.
+           Convierte semanas o meses a días aproximados:
+             - 1 semana = 7 días
+             - 1 mes = 30 días
+
+      Responde ÚNICAMENTE este JSON:
+      {
+        "hasFollowUp": boolean,
+        "days": number | null
+      }
+    `;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+
+    if (!response.ok) throw new Error("Error API");
+    const data = await response.json();
+    const jsonStr = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!jsonStr) return { hasFollowUp: false, rawText: trimmed };
+
+    const parsed = JSON.parse(jsonStr);
+    const hasFollowUp = !!parsed.hasFollowUp;
+    const days = typeof parsed.days === 'number' && parsed.days > 0 ? parsed.days : undefined;
+
+    if (!hasFollowUp) return { hasFollowUp: false, rawText: trimmed };
+
+    return { hasFollowUp: true, days, rawText: trimmed };
+  } catch (e) {
+    console.error("Follow-up AI error", e);
+    return { hasFollowUp: false, rawText: trimmed };
+  }
+};

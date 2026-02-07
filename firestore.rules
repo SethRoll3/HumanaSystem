@@ -19,6 +19,10 @@ service cloud.firestore {
       return estaAutenticado() && obtenerUsuario().role == rol;
     }
     
+    function esDoctor() {
+      return tieneRol('doctor');
+    }
+    
     // Verifica si el usuario es Admin
     function esAdmin() {
       return tieneRol('admin');
@@ -87,6 +91,11 @@ service cloud.firestore {
       allow write: if esPersonal();
     }
 
+    match /clinics/{itemId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
+    }
+
     // 6. NOTIFICACIONES
     match /notifications/{notifId} {
       allow read, write: if esPersonal();
@@ -102,6 +111,44 @@ service cloud.firestore {
     // 8. CONFIGURACIÓN DEL SISTEMA (system_settings)
     match /system_settings/{docId} {
       allow read, write: if esAdmin();
+    }
+
+    // 9. CONFIGURACIÓN GLOBAL DE HORARIOS DE DOCTOR
+    match /doctor_schedule_settings/{docId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
+    }
+
+    // 10. HORARIOS POR DÍA DE DOCTOR
+    function autogestionHorarioActiva() {
+      return get(/databases/$(database)/documents/doctor_schedule_settings/global).data.allowDoctorSelfManage == true;
+    }
+
+    match /doctor_day_schedules/{scheduleId} {
+      // Lectura: admin todo, no-doctores todo (para dropdown), doctor solo sus propios horarios
+      allow read: if esAdmin()
+                  || (esPersonal() && !esDoctor())
+                  || (esPersonal() && esDoctor() && resource.data.doctorId == request.auth.uid);
+
+      // Creación: admin cualquiera, doctor solo el suyo y si autogestión está activa
+      allow create: if esAdmin()
+                    || (esPersonal()
+                        && esDoctor()
+                        && autogestionHorarioActiva()
+                        && request.resource.data.doctorId == request.auth.uid);
+
+      // Actualizar / eliminar: admin cualquiera, doctor solo el suyo y si autogestión está activa
+      allow update, delete: if esAdmin()
+                            || (esPersonal()
+                                && esDoctor()
+                                && autogestionHorarioActiva()
+                                && resource.data.doctorId == request.auth.uid);
+    }
+
+    // 11. FORMULARIOS DE ESPECIALIDAD (specialty_forms)
+    match /specialty_forms/{formId} {
+      allow read: if esPersonal();
+      allow write: if esAdmin();
     }
   }
 }

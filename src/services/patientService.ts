@@ -47,17 +47,47 @@ export const searchPatients = async (searchTerm: string): Promise<Patient[]> => 
 };
 
 export const getPatientByDPI = async (id: string): Promise<Patient | null> => {
+    // 1. Intentar buscar por Document ID (Lo más común)
     const docRef = doc(db, COLLECTION_NAME, id);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-        return { id: snap.id, ...(snap.data() as any) } as Patient;
+    try {
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+            const data = snap.data() as any;
+            // Asegurar que el ID del objeto sea el ID del documento, no el campo 'id' interno si existe
+            return { ...data, id: snap.id } as Patient;
+        }
+    } catch (e) {
+        console.log("Error fetching by Doc ID, trying query...", e);
     }
+
+    // 2. Fallback: Buscar por campo 'id' (ID interno/legacy)
+    // Esto soluciona el caso donde la cita guardó el ID interno en lugar del Doc ID
+    try {
+        const q = query(collection(db, COLLECTION_NAME), where('id', '==', id));
+        const querySnap = await getDocs(q);
+        if (!querySnap.empty) {
+            const d = querySnap.docs[0];
+            const data = d.data() as any;
+            return { ...data, id: d.id } as Patient;
+        }
+        
+        // 3. Fallback: Buscar por 'billingCode'
+        const q2 = query(collection(db, COLLECTION_NAME), where('billingCode', '==', id));
+        const querySnap2 = await getDocs(q2);
+        if (!querySnap2.empty) {
+            const d = querySnap2.docs[0];
+            const data = d.data() as any;
+            return { ...data, id: d.id } as Patient;
+        }
+    } catch (e) {
+        console.error("Error searching patient fallback", e);
+    }
+
     return null;
 };
 
 export const createPatient = async (data: any): Promise<string> => {
-    // Generar código de facturación si no existe
-    const billingCode = data.billingCode || `P-${Date.now().toString().slice(-6)}`;
+    const billingCode = data.billingCode ?? '';
     
     const docRef = await addDoc(collection(db, COLLECTION_NAME), {
         ...data,
@@ -76,6 +106,46 @@ export const checkAndSwitchToReconsultation = async (patientId: string) => {
 
 export const deleteWaitingConsultation = async (consultationId: string) => {
     await deleteDoc(doc(db, 'consultations', consultationId));
+};
+
+export const getPatientConsultations = async (patientId: string): Promise<Consultation[]> => {
+    try {
+        const q = query(
+            collection(db, 'consultations'),
+            where('patientId', '==', patientId)
+        );
+        const snap = await getDocs(q);
+        return snap.docs
+            .map(doc => ({ id: doc.id, ...(doc.data() as any) } as Consultation))
+            .filter(c => {
+                const hasStatus = c.status === 'finished' || c.status === 'delivered';
+                // La "ficha" se define por tener specialtyData (datos de especialidad)
+                const hasFicha = c.specialtyData && Object.keys(c.specialtyData).length > 0;
+                return hasStatus && hasFicha;
+            })
+            .sort((a, b) => a.date - b.date); // ASC para que la primera sea la primera llenada
+    } catch (error) {
+        console.error("Error fetching patient consultations:", error);
+        return [];
+    }
+};
+
+export const getPatientImportantNotices = async (patientId: string): Promise<Consultation[]> => {
+    try {
+        const q = query(
+            collection(db, 'consultations'),
+            where('patientId', '==', patientId),
+            where('status', 'in', ['finished', 'delivered'])
+        );
+        const snap = await getDocs(q);
+        return snap.docs
+            .map(doc => ({ id: doc.id, ...(doc.data() as any) } as Consultation))
+            .filter(c => c.importantNotices && c.importantNotices.trim().length > 0)
+            .sort((a, b) => a.date - b.date);
+    } catch (error) {
+        console.error("Error fetching patient important notices:", error);
+        return [];
+    }
 };
 
 import { logAuditAction } from './auditService';
@@ -116,5 +186,49 @@ export const patientService = {
 
   async search(term: string) {
       return searchPatients(term);
+  },
+
+  async getHistory(patientId: string) {
+      return getPatientConsultations(patientId);
+  },
+
+  async getImportantNotices(patientId: string) {
+      return getPatientImportantNotices(patientId);
+  },
+
+  async updateBillingCode(patientId: string, billingCode: string) {
+      // Resolver correctamente el ID del documento en Firestore,
+      // ya que en algunas citas se guarda el ID interno en el campo 'id'
+      // y NO el ID del documento.
+      const tryDocRef = doc(db, COLLECTION_NAME, patientId);
+      try {
+          const snap = await getDoc(tryDocRef);
+          if (snap.exists()) {
+              await updateDoc(tryDocRef, { billingCode });
+              return;
+          }
+      } catch {}
+
+      // Fallback: buscar por campo 'id' (ID interno/legacy)
+      const q = query(collection(db, COLLECTION_NAME), where('id', '==', patientId));
+      const qs = await getDocs(q);
+      if (!qs.empty) {
+          const d = qs.docs[0];
+          const ref = doc(db, COLLECTION_NAME, d.id);
+          await updateDoc(ref, { billingCode });
+          return;
+      }
+
+      // Último intento: buscar por billingCode si el input coincide (poco probable aquí)
+      const q2 = query(collection(db, COLLECTION_NAME), where('billingCode', '==', patientId));
+      const qs2 = await getDocs(q2);
+      if (!qs2.empty) {
+          const d = qs2.docs[0];
+          const ref = doc(db, COLLECTION_NAME, d.id);
+          await updateDoc(ref, { billingCode });
+          return;
+      }
+
+      throw new Error('Paciente no encontrado para actualizar código de facturación');
   }
 };
