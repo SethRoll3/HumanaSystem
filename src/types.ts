@@ -2,9 +2,10 @@
 export interface UserProfile {
   uid: string;
   email: string;
-  role: 'doctor' | 'admin' | 'receptionist' | 'nurse' | 'resident';
+  role: 'doctor' | 'licenciado' | 'admin' | 'receptionist' | 'nurse' | 'resident';
   name: string; 
-  specialty: string;
+  specialty?: string;
+  specialties?: string[];
   isActive?: boolean; // New field for soft delete
   signatureUrl?: string; // URL of the uploaded signature image
   digitalCertData?: {
@@ -14,8 +15,6 @@ export interface UserProfile {
       serialNumber: string; // Serial único
       expiryDate: string; // Fecha vencimiento
   }; 
-  clinicId?: string;
-  clinicName?: string;
 }
 
 export enum PatientOrigin {
@@ -32,11 +31,13 @@ export interface PatientFile {
 }
 
 export interface Patient {
-  id: string; // Firebase ID (Can be same as billingCode or auto-generated)
-  billingCode: string; // "Código del sistema de facturación" (Unique)
+  id: string; // Firebase ID
+  dpi?: string;
+  billingCode?: string; // "Código del sistema de facturación"
   
   fullName: string;
   occupation?: string; // New Occupation Field
+  photoUrl?: string;
   
   // New Contact Fields
   phone?: string;
@@ -54,11 +55,10 @@ export interface Patient {
   };
 
   // Context Fields
-  consultationType?: 'Nueva' | 'Reconsulta';
-  modality?: 'Virtual' | 'Presencial';
   previousTreatment?: 'IGSS' | 'Medico Privado' | 'Hospital Nacional' | 'No ha estado en tratamiento';
   previousTreatmentDetail?: string;
   referralChannel?: string;
+  careCenter?: 'Hospital' | 'Humana';
 
   // Legacy fields made optional for the new "Quick Create" flow
   age?: number;
@@ -145,6 +145,35 @@ export interface SpecialtyReferral {
     note?: string;
 }
 
+export interface ResonanceOrder {
+  examName?: string;
+  probableDiagnosis?: string;
+  attentionNotes?: string;
+  sendResultsTo?: string;
+}
+
+export interface EegOrder {
+  examName?: string;
+  duration?: string;
+  probableDiagnosis?: string;
+  cctcg?: boolean;
+  cpc?: boolean;
+  cpcSecGeneralizadas?: boolean;
+  ausencias?: boolean;
+  crisisMioclonicas?: boolean;
+  crisisEstaticas?: boolean;
+  specialIndications?: string;
+  medicatedWith?: string;
+  videoMonitoringHours?: string;
+  videoMonitoringSleepDeprivation?: 'Si' | 'No';
+  ictalVideoHours?: string;
+  ictalSleepDeprivation?: 'Si' | 'No';
+  spikeDetection64?: boolean;
+  spikeDetection128?: boolean;
+  spikeDetectionHours?: string;
+  p300?: boolean;
+}
+
 export interface Consultation {
   id?: string; 
   status: 'waiting' | 'in_progress' | 'finished' | 'delivered'; // Workflow Status Updated
@@ -194,12 +223,18 @@ export interface Consultation {
   
   followUpRequired?: boolean;
   followUpText?: string;
+  followUpRequestText?: string;
+  followUpDays?: number;
+  followUpEstimatedDate?: number;
   importantNotices?: string;
   importantNoticesSeenBy?: string[];
+  emotionalEvaluationSelections?: string[];
 
   // NUEVO: Datos de especialidad (Fichas dinámicas)
   specialtyData?: Record<string, any>;
   specialtyFormId?: string;
+  resonanceOrders?: ResonanceOrder[];
+  eegOrders?: EegOrder[];
 
   // Track printing status for each doc
   printedDocs?: {
@@ -207,6 +242,8 @@ export interface Consultation {
     labs?: boolean;
     report?: boolean;
     fullFicha?: boolean;
+    resonanceOrders?: boolean;
+    eegOrders?: boolean;
   };
 
   deliveredAt?: number;
@@ -223,7 +260,7 @@ export interface AppNotification {
   message: string;
   timestamp: any; // Firestore Timestamp
   read: boolean;
-  targetRole?: 'nurse' | 'admin' | 'all' | 'doctor'; // Made optional to support specific user targeting
+  targetRole?: 'nurse' | 'admin' | 'all' | 'doctor' | 'licenciado'; // Made optional to support specific user targeting
   targetUserId?: string; // NEW: Target specific user (e.g. specific doctor)
   type: 'info' | 'success' | 'alert';
 }
@@ -248,6 +285,10 @@ export interface Appointment {
   doctorName: string; // Desnormalizado
   consultationType: 'Nueva' | 'Reconsulta';
   goToNurse?: boolean;
+  residentClinicalCompleted?: boolean;
+  residentSpecialtyFormId?: string | null;
+  residentSpecialtyFormName?: string | null;
+  residentSpecialtyData?: Record<string, any>;
   
   // Timeframe
   date: any; // Timestamp (Fecha y hora de inicio)
@@ -257,6 +298,8 @@ export interface Appointment {
   reason?: string; // Motivo / observaciones de la cita (campo legacy, se mantiene por compatibilidad)
   reasonForConsultation?: string; // NUEVO: Razón de consulta (Especialidad)
   modality?: 'Virtual' | 'Presencial'; // NUEVO: Modalidad de la cita
+  isIGSS?: boolean;
+  igssType?: 'Consulta normal' | 'Evaluación básica' | 'Evaluación avanzada' | 'Evaluación prequirúrgica';
   
   // CRM Tracking
   createdAt: any;

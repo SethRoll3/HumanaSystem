@@ -74,8 +74,9 @@ export const Cuaderno: React.FC<CuadernoProps> = ({ patient, currentUser, showHe
         </div>
     );
 
-    const firstFicha = history[0];
-    const otherFichas = history.slice(1);
+    const orderedHistory = [...history].sort((a, b) => a.date - b.date);
+    const firstFicha = orderedHistory[0];
+    const otherFichas = orderedHistory.slice(1);
 
     const formatDateTimeGT = (ts: number) => {
         if (!ts) return 'N/A';

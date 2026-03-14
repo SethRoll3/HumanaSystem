@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool } from 'lucide-react';
-import { Consultation, Patient, UserProfile } from '../../../types.ts';
+import { Consultation, Patient, UserProfile } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EditConsultationModal } from './EditConsultationModal';
 import { SpecialtyFormDefinition } from '../Wizard/SpecialtyForms/types';
@@ -15,7 +15,7 @@ interface ConsultationDetailProps {
     receptionistName: string;
   user: UserProfile;
   onBack: () => void;
-  onPrint: (type: 'prescription' | 'labs' | 'report' | 'full_ficha') => void;
+  onPrint: (type: 'prescription' | 'labs' | 'report' | 'full_ficha' | 'resonance_orders' | 'eeg_orders') => void;
     onDeliver: () => void;
     isSaving: boolean;
     onUpdate?: (updated: Consultation) => void;
@@ -43,14 +43,22 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
     onUpdate
 }) => {
     const isNurseOrAdmin = user.role === 'nurse' || user.role === 'admin';
-  const isDoctor = user.role === 'doctor';
-  const canEdit = user.role === 'admin' || (user.role === 'doctor' && consultation.doctorId === user.uid);
+    const isReceptionist = user.role === 'receptionist';
+  const isDoctor = user.role === 'doctor' || user.role === 'licenciado';
+  const canEdit = user.role === 'admin' || ((user.role === 'doctor' || user.role === 'licenciado') && consultation.doctorId === user.uid);
+  const canDeliver = isNurseOrAdmin || isReceptionist;
     
-  const showDocsPanel = isNurseOrAdmin || isDoctor;
+  const showDocsPanel = isNurseOrAdmin || isReceptionist || isDoctor;
 
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [specialtyForms, setSpecialtyForms] = useState<SpecialtyFormDefinition[]>([]);
+
+  const formatFileDate = (value: any) => {
+    if (!value) return 'Sin fecha';
+    const date = value?.toDate ? value.toDate() : new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleDateString('es-GT');
+  };
 
   const specialtyData = (consultation as any).specialtyData as Record<string, any> | undefined;
   const rawSpecialtyEntries = specialtyData ? Object.entries(specialtyData) : [];
@@ -131,6 +139,51 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
         const formId = (consultation as any).specialtyFormId as string | undefined;
         return translateSpecialtyLabel(fieldKey, specialtyForms, formId).toUpperCase();
     };
+
+  const encodeOptionKey = (value: string) => encodeURIComponent(value.trim());
+
+  const decodeOptionKey = (value: string) => {
+      try {
+          return decodeURIComponent(value);
+      } catch {
+          return value;
+      }
+  };
+
+  const getFieldDefinition = (fieldId: string) => {
+      if (!activeSpecialtyForm) return undefined;
+      return activeSpecialtyForm.sections.flatMap(section => section.fields).find(field => field.id === fieldId);
+  };
+
+  const formatSpecialtyValue = (fieldId: string, value: any) => {
+      if (value === undefined || value === null || value === '') return 'Sin dato';
+      if (Array.isArray(value)) return value.join(', ');
+
+      const fieldDef = getFieldDefinition(fieldId);
+      if (fieldDef?.type === 'multiText' && value && typeof value === 'object') {
+          const opts = fieldDef.options && fieldDef.options.length > 0
+              ? fieldDef.options
+              : Object.keys(value).map(decodeOptionKey);
+          const lines = opts.map(opt => {
+              const key = encodeOptionKey(opt);
+              const rawVal = value[key] ?? value[opt];
+              const displayVal = rawVal === undefined || rawVal === null || rawVal === '' ? 'Sin dato' : String(rawVal);
+              return `${opt}: ${displayVal}`;
+          });
+          return lines.join('\n');
+      }
+
+      if (value && typeof value === 'object') {
+          const lines = Object.entries(value).map(([k, v]) => {
+              const label = decodeOptionKey(k);
+              const displayVal = v === undefined || v === null || v === '' ? 'Sin dato' : String(v);
+              return `${label}: ${displayVal}`;
+          });
+          return lines.join('\n');
+      }
+
+      return String(value);
+  };
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="max-w-7xl mx-auto space-y-6 pb-12">
@@ -221,7 +274,6 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
 
                             <hr className="border-slate-100 my-2" />
 
-                            <div><label className="block text-[10px] text-slate-400 uppercase font-bold">Tipo Consulta</label><p className="font-medium text-brand-600">{patient?.consultationType || 'Nueva'}</p></div>
                             <div><label className="block text-[10px] text-slate-400 uppercase font-bold">Tratamiento Previo</label><p className="font-medium text-slate-700">{patient?.previousTreatment || 'Ninguno'}</p></div>
 
                             <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 mt-2">
@@ -287,15 +339,26 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             </h3>
                             {(consultation.referralGroups?.length || 0) > 0 || (consultation.exams && consultation.exams.length > 0) ? (
                                 <div className="space-y-3">
-                                    {consultation.referralGroups?.map((g, idx) => (
+                                    {consultation.referralGroups?.map((g, idx) => {
+                                        const filteredExams = g.exams.filter(exam => {
+                                            const normalized = exam.toLowerCase();
+                                            const isLabToggle = normalized.includes('laboratorios') && !exam.startsWith('Laboratorios:');
+                                            return !isLabToggle;
+                                        });
+                                        return (
                                         <div key={idx} className="bg-blue-50/50 p-3 rounded-xl border border-blue-100">
                                             <p className="text-xs font-bold text-blue-800">{g.pathology}</p>
-                                            <p className="text-xs text-blue-600 mt-1">{g.exams.join(', ')}</p>
+                                            <p className="text-xs text-blue-600 mt-1">{filteredExams.join(', ')}</p>
                                         </div>
-                                    ))}
+                                    )})}
                                     {consultation.exams?.filter(e => !consultation.referralGroups?.some(g => g.exams.includes(e))).map(e => (
                                         <div key={e} className="text-xs bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 inline-block mr-2 mb-2">{e}</div>
                                     ))}
+                                    {consultation.emotionalEvaluationSelections && consultation.emotionalEvaluationSelections.length > 0 && (
+                                        <div className="text-xs bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 inline-block mr-2 mb-2">
+                                            Evaluación emocional: {consultation.emotionalEvaluationSelections.join(', ')}
+                                        </div>
+                                    )}
                                     {consultation.referralNote && <p className="text-xs text-slate-500 italic mt-2 bg-slate-50 p-2 rounded">Nota: {consultation.referralNote}</p>}
                                 </div>
                             ) : <p className="text-sm text-slate-400 italic">Sin laboratorios.</p>}
@@ -342,10 +405,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                                 {specialtyEntries.map(([key, value]) => {
                                     const label = resolveSpecialtyLabel(key);
-                                    const displayValue =
-                                        value === undefined || value === null || value === ''
-                                            ? 'Sin dato'
-                                            : String(value);
+                                    const displayValue = formatSpecialtyValue(key, value);
                                     return (
                                         <div
                                             key={key}
@@ -354,7 +414,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                                                 {label}
                                             </span>
-                                            <span className="text-sm text-slate-800">{displayValue}</span>
+                                            <span className="text-sm text-slate-800 whitespace-pre-wrap">{displayValue}</span>
                                         </div>
                                     );
                                 })}
@@ -373,6 +433,31 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         </div>
                     </div>
 
+                    {(consultation.followUpRequestText || consultation.followUpEstimatedDate) && (
+                        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                            <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
+                                <Clock className="w-5 h-5 text-brand-600" /> Reconsulta sugerida
+                            </h3>
+                            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-700 text-sm leading-relaxed">
+                                {consultation.followUpRequestText && (
+                                    <div className="mb-2">
+                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Indicaciones del doctor</span>
+                                        <p>{consultation.followUpRequestText}</p>
+                                    </div>
+                                )}
+                                {consultation.followUpEstimatedDate && (
+                                    <div>
+                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Fecha aproximada</span>
+                                        <p>
+                                            {new Date(consultation.followUpEstimatedDate).toLocaleDateString('es-GT')}
+                                            {consultation.followUpDays ? ` (aprox. ${consultation.followUpDays} días)` : ''}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* AUDITORÍA DE ENTREGA Y PAPELES */}
                     <div className="bg-slate-50 rounded-3xl border border-slate-200 p-6">
                         <h3 className="font-bold text-slate-600 text-xs uppercase tracking-widest mb-4">Auditoría de Entrega y Documentación</h3>
@@ -384,6 +469,16 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                                     {consultation.printedDocs?.labs ? <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Labs</span> : <span className="px-2 py-1 bg-slate-100 text-slate-400 rounded-lg flex items-center gap-1"><CircleSlash className="w-3.5 h-3.5" /> Labs</span>}
                                     {consultation.printedDocs?.report ? <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Rep. Enfermería</span> : <span className="px-2 py-1 bg-slate-100 text-slate-400 rounded-lg flex items-center gap-1"><CircleSlash className="w-3.5 h-3.5" /> Rep. Enfermería</span>}
                                     {consultation.printedDocs?.fullFicha ? <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Ficha completa</span> : <span className="px-2 py-1 bg-slate-100 text-slate-400 rounded-lg flex items-center gap-1"><CircleSlash className="w-3.5 h-3.5" /> Ficha completa</span>}
+                                    {(consultation.resonanceOrders?.length || 0) > 0 && (consultation.printedDocs?.resonanceOrders ? (
+                                        <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Órdenes RM</span>
+                                    ) : (
+                                        <span className="px-2 py-1 bg-slate-100 text-slate-400 rounded-lg flex items-center gap-1"><CircleSlash className="w-3.5 h-3.5" /> Órdenes RM</span>
+                                    ))}
+                                    {(consultation.eegOrders?.length || 0) > 0 && (consultation.printedDocs?.eegOrders ? (
+                                        <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Órdenes EEG</span>
+                                    ) : (
+                                        <span className="px-2 py-1 bg-slate-100 text-slate-400 rounded-lg flex items-center gap-1"><CircleSlash className="w-3.5 h-3.5" /> Órdenes EEG</span>
+                                    ))}
                                 </div>
                             </div>
                             
@@ -444,6 +539,32 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             {consultation.printedDocs?.labs && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                         </button>
 
+                        {(consultation.resonanceOrders?.length || 0) > 0 && (
+                            <button 
+                                onClick={() => onPrint('resonance_orders')} 
+                                className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all group ${consultation.printedDocs?.resonanceOrders ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:border-brand-300 hover:shadow-lg'}`}
+                            >
+                                <FileCheck className={`w-8 h-8 mb-3 ${consultation.printedDocs?.resonanceOrders ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
+                                <span className="font-bold text-sm">
+                                    {isDoctor && !isNurseOrAdmin ? 'Descargar Órdenes RM' : 'Imprimir Órdenes RM'}
+                                </span>
+                                {consultation.printedDocs?.resonanceOrders && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
+                            </button>
+                        )}
+
+                        {(consultation.eegOrders?.length || 0) > 0 && (
+                            <button 
+                                onClick={() => onPrint('eeg_orders')} 
+                                className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all group ${consultation.printedDocs?.eegOrders ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:border-brand-300 hover:shadow-lg'}`}
+                            >
+                                <FileCheck className={`w-8 h-8 mb-3 ${consultation.printedDocs?.eegOrders ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
+                                <span className="font-bold text-sm">
+                                    {isDoctor && !isNurseOrAdmin ? 'Descargar Órdenes EEG' : 'Imprimir Órdenes EEG'}
+                                </span>
+                                {consultation.printedDocs?.eegOrders && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
+                            </button>
+                        )}
+
                         <button 
                             onClick={() => onPrint('report')} 
                             className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all group ${consultation.printedDocs?.report ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:border-brand-300 hover:shadow-lg'}`}
@@ -466,8 +587,8 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             {consultation.printedDocs?.fullFicha && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                         </button>
 
-                        {/* Botón de Entrega (SOLO ENFERMERÍA/ADMIN) */}
-                        {isNurseOrAdmin && consultation.status === 'finished' && (
+                        {/* Botón de Entrega (SOLO ENFERMERÍA/ADMIN/RECEPCIÓN) */}
+                        {canDeliver && consultation.status === 'finished' && (
                             <button 
                                 onClick={onDeliver}
                                 disabled={isSaving}
@@ -479,7 +600,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             </button>
                         )}
                         
-                        {isNurseOrAdmin && consultation.status === 'delivered' && (
+                        {canDeliver && consultation.status === 'delivered' && (
                              <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-100 border border-slate-200 text-slate-400 cursor-default">
                                 <CheckCircle className="w-8 h-8 mb-3 text-slate-300" />
                                 <span className="font-bold text-sm">Expediente Finalizado</span>
@@ -514,19 +635,34 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                                 
                                 {patient?.historyFiles && patient.historyFiles.length > 0 ? (
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                        {patient.historyFiles.map((file, idx) => (
+                                        {patient.historyFiles
+                                          .slice()
+                                          .sort((a, b) => {
+                                              const ak = (a.name || '').toLowerCase();
+                                              const bk = (b.name || '').toLowerCase();
+                                              const aIsFicha = /ficha|presoft|presoftware|historia/i.test(ak);
+                                              const bIsFicha = /ficha|presoft|presoftware|historia/i.test(bk);
+                                              if (aIsFicha && !bIsFicha) return -1;
+                                              if (!aIsFicha && bIsFicha) return 1;
+                                              return (b.uploadedAt || 0) - (a.uploadedAt || 0);
+                                          })
+                                          .map((file, idx) => (
                                             <a 
                                             key={idx} 
                                             href={file.url} 
                                             target="_blank" 
                                             rel="noopener noreferrer"
-                                            className="group border border-slate-200 rounded-xl p-4 flex flex-col items-center justify-center bg-white hover:bg-slate-50 transition hover:shadow-md cursor-pointer relative"
+                                            className={`group border rounded-xl p-4 flex flex-col items-center justify-center bg-white transition hover:shadow-md cursor-pointer relative ${
+                                                /ficha|presoft|presoftware|historia/i.test((file.name || '')) 
+                                                ? 'border-amber-300 bg-amber-50' 
+                                                : 'border-slate-200 hover:bg-slate-50'
+                                            }`}
                                             >
                                                 <div className="w-10 h-10 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mb-2 group-hover:scale-110 transition">
                                                     {file.type.includes('image') ? <Image className="w-5 h-5"/> : <FileText className="w-5 h-5"/>}
                                                 </div>
                                                 <p className="text-xs font-bold text-slate-700 text-center line-clamp-2 w-full break-words">{file.name}</p>
-                                                <span className="text-[9px] text-slate-400 mt-1">{new Date(file.uploadedAt).toLocaleDateString()}</span>
+                                                <span className="text-[9px] text-slate-400 mt-1">{formatFileDate(file.uploadedAt)}</span>
                                                 <ExternalLink className="absolute top-2 right-2 w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition"/>
                                             </a>
                                         ))}

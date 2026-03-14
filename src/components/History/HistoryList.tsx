@@ -23,13 +23,15 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
     const [toDate, setToDate] = useState('');
     const [specificDate, setSpecificDate] = useState('');
 
-    const isDoctor = user.role === 'doctor';
+    const isDoctor = user.role === 'doctor' || user.role === 'licenciado';
     const isAdmin = user.role === 'admin';
     const isNurse = user.role === 'nurse';
-    // Recepción no debería tener acceso, definimos flag para UI
-    const hasAccess = isAdmin || isNurse || isDoctor;
+    const isReceptionist = user.role === 'receptionist';
+    const hasAccess = isAdmin || isNurse || isDoctor || isReceptionist;
 
     useEffect(() => {
+
+        
         const fetchHistory = async () => {
             if (!hasAccess) {
                 setLoading(false);
@@ -42,7 +44,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
                 // LOGIC CORRECTION: 
                 // Admin OR Nurse -> See ALL finished consultations.
                 // Doctor -> See ONLY their own finished consultations.
-                if (isAdmin || isNurse) {
+                if (isAdmin || isNurse || isReceptionist) {
                     q = query(
                         collection(db, 'consultations'), 
                         where('status', 'in', ['finished', 'delivered']), 
@@ -73,7 +75,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
         };
 
         fetchHistory();
-    }, [user.uid, isDoctor, isAdmin, isNurse, hasAccess]);
+    }, [user.uid, isDoctor, isAdmin, isNurse, isReceptionist, hasAccess]);
 
     // Helper para fecha GT
     const formatDateGT = (ts: number) => {

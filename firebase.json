@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "source": "functions"
+  },
   "hosting": {
     "target": "clinica-asociacion-humana-sys",
     "public": "dist",

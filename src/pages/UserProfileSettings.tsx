@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { UserProfile, Specialty } from '../types.ts';
+import { UserProfile } from '../types.ts';
 import { motion } from 'framer-motion';
 // Fixed import to include UploadCloud, Eye, EyeOff
 import { User, Shield, Key, Mail, Save, Loader2, Lock, BadgeCheck, FileKey, Trash2, CheckCircle, UploadCloud, Eye, EyeOff } from 'lucide-react';
@@ -10,7 +10,6 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase/config.ts';
 import { toast } from 'sonner';
-import { getSpecialties } from '../services/inventoryService.ts';
 import { logAuditAction } from '../services/auditService.ts';
 // @ts-ignore
 import forge from 'node-forge';
@@ -26,9 +25,9 @@ export const UserProfileSettings: React.FC<UserProfileSettingsProps> = ({ user }
     
     // Profile State
     const [name, setName] = useState(user.name);
-    // Inicializamos con el valor del usuario para que aparezca seleccionado
-    const [specialty, setSpecialty] = useState(user.specialty || '');
-    const [availableSpecialties, setAvailableSpecialties] = useState<Specialty[]>([]);
+    const userSpecialties = Array.isArray(user.specialties) && user.specialties.length > 0
+        ? user.specialties
+        : (user.specialty ? [user.specialty] : []);
     
     // Digital Cert State (Initialized from user prop)
     const [certData, setCertData] = useState(user.digitalCertData || null);
@@ -49,25 +48,6 @@ export const UserProfileSettings: React.FC<UserProfileSettingsProps> = ({ user }
         setCertData(user.digitalCertData || null);
     }, [user.digitalCertData]);
 
-    useEffect(() => {
-        if (user.role === 'doctor') {
-            getSpecialties().then((specs) => {
-                const exists = specs.some(s => s.name === user.specialty);
-                if (user.specialty && !exists) {
-                    setAvailableSpecialties([...specs, { id: 'legacy-val', name: user.specialty }]);
-                } else {
-                    setAvailableSpecialties(specs);
-                }
-            });
-        }
-    }, [user.role, user.specialty]);
-
-    // Efecto para asegurar que si la especialidad cambia en las props, se actualice el estado local
-    useEffect(() => {
-        if (user.specialty) {
-            setSpecialty(user.specialty);
-        }
-    }, [user.specialty]);
 
     const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -75,11 +55,10 @@ export const UserProfileSettings: React.FC<UserProfileSettingsProps> = ({ user }
         try {
             const userRef = doc(db, 'users', user.uid);
             await updateDoc(userRef, {
-                name: name,
-                specialty: user.role === 'doctor' ? specialty : user.specialty,
+                name: name
             });
             
-            await logAuditAction(user.email, "ACTUALIZACION_PERFIL", `Datos públicos actualizados. Nombre: ${name}, Especialidad: ${specialty}`);
+            await logAuditAction(user.email, "ACTUALIZACION_PERFIL", `Datos públicos actualizados. Nombre: ${name}`);
 
             toast.success("Perfil público actualizado correctamente.");
         } catch (error) {
@@ -267,19 +246,29 @@ export const UserProfileSettings: React.FC<UserProfileSettingsProps> = ({ user }
                                 <input required type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 font-medium outline-none focus:ring-2 focus:ring-brand-500 transition-all text-sm md:text-base" />
                             </div>
 
-                            {user.role === 'doctor' && (
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Especialidad Médica</label>
-                                    <select 
-                                        value={specialty} 
-                                        onChange={(e) => setSpecialty(e.target.value)}
-                                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 font-medium outline-none focus:ring-2 focus:ring-brand-500 transition-all text-sm md:text-base"
-                                    >
-                                        <option value="">-- Seleccionar Especialidad --</option>
-                                        {availableSpecialties.map(spec => (
-                                            <option key={spec.id || spec.name} value={spec.name}>{spec.name}</option>
-                                        ))}
-                                    </select>
+                            {(user.role === 'doctor' || user.role === 'licenciado') && (
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Especialidades Médicas</label>
+                                        <span className="text-[10px] text-slate-400 font-semibold">{userSpecialties.length} asignadas</span>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                        <div className="flex flex-wrap gap-2">
+                                            {userSpecialties.length === 0 && (
+                                                <span className="text-xs text-slate-400 bg-white border border-slate-200 rounded-full px-3 py-1">
+                                                    Sin especialidades asignadas
+                                                </span>
+                                            )}
+                                            {userSpecialties.map(spec => (
+                                                <span
+                                                    key={spec}
+                                                    className="inline-flex items-center rounded-full bg-white text-slate-700 border border-slate-200 px-3 py-1 text-xs font-semibold"
+                                                >
+                                                    {spec}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                             
@@ -289,7 +278,7 @@ export const UserProfileSettings: React.FC<UserProfileSettingsProps> = ({ user }
                         </form>
 
                         {/* --- SECCIÓN FIRMA DIGITAL .P12 --- */}
-                        {user.role === 'doctor' && (
+                        {(user.role === 'doctor' || user.role === 'licenciado') && (
                             <div className="border-t border-slate-100 pt-6 mt-6">
                                 <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
                                     <FileKey className="w-4 h-4 text-emerald-600"/> Firma Digital (.p12 / .pfx)

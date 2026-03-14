@@ -6,7 +6,7 @@ import { X, Save, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 
-import { Consultation, Patient, UserProfile, SpecialtyReferral, Specialty } from '../../../types';
+import { Consultation, Patient, UserProfile, SpecialtyReferral, Specialty } from '../../types.ts';
 import { StepDiagnosis } from '../Wizard/StepDiagnosis';
 import { StepExams } from '../Wizard/StepExams';
 import { StepPrescription } from '../Wizard/StepPrescription';
@@ -200,11 +200,10 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
                                 <StepDiagnosis 
                                     patient={patient} 
                                     currentUser={currentUser} 
-                                    appointmentType={consultation.consultationType} 
                                 />
                             </div>
                             <div className={activeTab === 'exams' ? 'block' : 'hidden'}>
-                                <StepExams userSpecialty={currentUser.specialty} />
+                                <StepExams userSpecialties={currentUser.specialties || (currentUser.specialty ? [currentUser.specialty] : [])} />
                             </div>
                             <div className={activeTab === 'prescription' ? 'block' : 'hidden'}>
                                 <StepPrescription currentUser={currentUser} />

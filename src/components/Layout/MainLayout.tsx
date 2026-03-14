@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check, Calendar } from 'lucide-react';
+import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check, Calendar, Users } from 'lucide-react';
 import { UserProfile, AppNotification } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, onSnapshot, orderBy, doc, updateDoc } from 'firebase/firestore';
@@ -16,8 +16,8 @@ interface MainLayoutProps {
   children: React.ReactNode;
   currentTitle?: string;
   onBack?: () => void;
-  activeView: 'dashboard' | 'history' | 'admin' | 'settings' | 'my_schedule';
-  onViewChange: (view: 'dashboard' | 'history' | 'admin' | 'settings' | 'my_schedule') => void;
+  activeView: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule';
+  onViewChange: (view: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule') => void;
   allowDoctorSelfManage?: boolean;
 }
 
@@ -32,6 +32,10 @@ const THEMES = {
     500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a', 950: '#172554'
   },
   doctor: { // SLATE / GRAY (Elegant & Minimalist)
+    50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8',
+    500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a', 950: '#020617'
+  },
+  licenciado: {
     50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8',
     500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a', 950: '#020617'
   },
@@ -51,9 +55,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   
   const isReceptionist = user.role === 'receptionist';
   const isAdmin = user.role === 'admin';
-  const isDoctor = user.role === 'doctor';
+  const isDoctor = user.role === 'doctor' || user.role === 'licenciado';
   
-  const canSeeNotifications = ['doctor', 'nurse', 'admin', 'receptionist'].includes(user.role);
+  const canSeeNotifications = ['doctor', 'licenciado', 'nurse', 'admin', 'receptionist'].includes(user.role);
 
   // --- THEME INJECTION ---
   useEffect(() => {
@@ -147,11 +151,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const navItems = [
     { id: 'dashboard', label: 'Gestión / Check-In', icon: Ticket, show: true, onClick: () => onViewChange('dashboard') },
-    { id: 'history', label: 'Historiales', icon: ClipboardList, show: !isReceptionist, onClick: () => onViewChange('history') },
+    { id: 'history', label: 'Historiales', icon: ClipboardList, show: true, onClick: () => onViewChange('history') },
+    { id: 'patients', label: 'Pacientes', icon: Users, show: true, onClick: () => onViewChange('patients') },
     { id: 'admin', label: 'Panel Administrativo', icon: ShieldCheck, show: isAdmin, onClick: () => onViewChange('admin') },
     { id: 'my_schedule', label: 'Mi Horario', icon: Calendar, show: isDoctor && allowDoctorSelfManage, onClick: () => onViewChange('my_schedule') },
     { id: 'settings', label: 'Configuración', icon: Settings, show: true, onClick: () => onViewChange('settings') }
   ];
+  const userSpecialtiesList = Array.isArray(user.specialties) && user.specialties.length > 0
+    ? user.specialties
+    : (user.specialty ? [user.specialty] : []);
+  const userSpecialtiesTitle = userSpecialtiesList.length > 1 ? 'Especialidades' : 'Especialidad';
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-slate-900 text-slate-100">
@@ -168,14 +177,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         ))}
       </nav>
       <div className="p-4 border-t border-slate-800 shrink-0 space-y-3">
-        {user.role === 'doctor' && (
+        {(user.role === 'doctor' || user.role === 'licenciado') && (
           <div className="px-3 py-2 rounded-xl bg-slate-800/60 border border-slate-700">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Especialidad
+              {userSpecialtiesTitle}
             </p>
-            <p className="text-sm font-semibold text-slate-100 mt-1 truncate">
-              {user.specialty || 'No definida'}
-            </p>
+            <div className="mt-2 max-h-20 overflow-y-auto pr-1 flex flex-wrap gap-1">
+              {userSpecialtiesList.length === 0 && (
+                <span className="text-[11px] text-slate-300 bg-slate-800 border border-slate-700 rounded-full px-2 py-0.5">
+                  No definida
+                </span>
+              )}
+              {userSpecialtiesList.map((spec) => (
+                <span
+                  key={spec}
+                  className="text-[11px] text-slate-100 bg-slate-800 border border-slate-700 rounded-full px-2 py-0.5"
+                >
+                  {spec}
+                </span>
+              ))}
+            </div>
           </div>
         )}
         <button

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, History, Paperclip, Image, FileText, ExternalLink, UploadCloud, Loader2 } from 'lucide-react';
+import { X, History, Paperclip, Image, FileText, ExternalLink, UploadCloud, Loader2, Scale, Activity, Wind, HeartPulse, Droplets, Thermometer } from 'lucide-react';
 import { Patient, UserProfile } from '../../types';
 import { db, storage } from '../../firebase/config.ts';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -23,7 +23,13 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
   currentUser,
   onSaveComplete
 }) => {
-  const [newHistory, setNewHistory] = useState('');
+  const [observations, setObservations] = useState('');
+  const [weight, setWeight] = useState('');
+  const [bloodPressure, setBloodPressure] = useState('');
+  const [respiratoryRate, setRespiratoryRate] = useState('');
+  const [heartRate, setHeartRate] = useState('');
+  const [oxygenSaturation, setOxygenSaturation] = useState('');
+  const [temperature, setTemperature] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -37,7 +43,16 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
 
   const handleSave = async () => {
     if (!patient.id) return;
-    if (!newHistory.trim() && selectedFiles.length === 0) {
+    const hasVitals = [
+      weight,
+      bloodPressure,
+      respiratoryRate,
+      heartRate,
+      oxygenSaturation,
+      temperature
+    ].some(value => value.trim());
+
+    if (!observations.trim() && selectedFiles.length === 0 && !hasVitals) {
       onClose();
       return;
     }
@@ -47,10 +62,20 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
       const patientRef = doc(db, 'patients', patient.id);
       const updates: any = {};
 
-      if (newHistory.trim()) {
+      const vitalsParts = [];
+      if (weight.trim()) vitalsParts.push(`Peso: ${weight.trim()}`);
+      if (bloodPressure.trim()) vitalsParts.push(`P/A: ${bloodPressure.trim()}`);
+      if (respiratoryRate.trim()) vitalsParts.push(`FR: ${respiratoryRate.trim()}`);
+      if (heartRate.trim()) vitalsParts.push(`FC: ${heartRate.trim()}`);
+      if (oxygenSaturation.trim()) vitalsParts.push(`SAT: ${oxygenSaturation.trim()}`);
+      if (temperature.trim()) vitalsParts.push(`Temp: ${temperature.trim()}`);
+
+      if (observations.trim() || vitalsParts.length > 0) {
         const prefix = patient.medical_history ? patient.medical_history + '\n\n' : '';
         const header = `[Enfermería: ${currentUser.name} - ${new Date().toLocaleString('es-GT')}]`;
-        updates.medical_history = `${prefix}${header}\n${newHistory.trim()}`;
+        const vitalsLine = vitalsParts.length > 0 ? `\n${vitalsParts.join(' | ')}` : '';
+        const obsLine = observations.trim() ? `\nObservaciones: ${observations.trim()}` : '';
+        updates.medical_history = `${prefix}${header}${vitalsLine}${obsLine}`;
       }
 
       if (selectedFiles.length > 0) {
@@ -84,7 +109,13 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
         await onSaveComplete();
       }
 
-      setNewHistory('');
+      setObservations('');
+      setWeight('');
+      setBloodPressure('');
+      setRespiratoryRate('');
+      setHeartRate('');
+      setOxygenSaturation('');
+      setTemperature('');
       setSelectedFiles([]);
       onClose();
     } catch (e) {
@@ -161,13 +192,69 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
           </div>
 
           <div className="bg-white rounded-2xl border border-amber-200 p-4 shadow-sm space-y-4">
-          <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-1">Nuevos antecedentes (Enfermería)</h3>
+            <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-1">Observaciones y signos vitales</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <Scale className="w-4 h-4 text-amber-600" />
+                <input
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  placeholder="Peso (ej. 110 lb)"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <Activity className="w-4 h-4 text-amber-600" />
+                <input
+                  value={bloodPressure}
+                  onChange={(e) => setBloodPressure(e.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  placeholder="P/A (ej. 120/60)"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <Wind className="w-4 h-4 text-amber-600" />
+                <input
+                  value={respiratoryRate}
+                  onChange={(e) => setRespiratoryRate(e.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  placeholder="FR (ej. 18)"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <HeartPulse className="w-4 h-4 text-amber-600" />
+                <input
+                  value={heartRate}
+                  onChange={(e) => setHeartRate(e.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  placeholder="FC (ej. 72)"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <Droplets className="w-4 h-4 text-amber-600" />
+                <input
+                  value={oxygenSaturation}
+                  onChange={(e) => setOxygenSaturation(e.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  placeholder="SAT (ej. 98)"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <Thermometer className="w-4 h-4 text-amber-600" />
+                <input
+                  value={temperature}
+                  onChange={(e) => setTemperature(e.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none"
+                  placeholder="Temp (ej. 36.5)"
+                />
+              </div>
+            </div>
             <textarea
               rows={6}
-              value={newHistory}
-              onChange={(e) => setNewHistory(e.target.value)}
+              value={observations}
+              onChange={(e) => setObservations(e.target.value)}
               className="w-full bg-white border border-slate-300 text-slate-900 text-sm rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 block p-3 placeholder-slate-400 shadow-sm transition-all resize-none"
-              placeholder="Escriba aquí los antecedentes que enfermería documenta en esta visita..."
+              placeholder="Observaciones de enfermería..."
             />
 
             <div className="space-y-2">
@@ -205,7 +292,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
 
         <div className="px-6 py-4 border-t border-slate-200 bg-white flex justify-between items-center">
           <p className="text-[11px] text-slate-500">
-            Enfermería solo puede agregar información nueva. Los antecedentes previos permanecen sin cambios.
+            Enfermería solo agrega observaciones y signos vitales de esta visita.
           </p>
           <div className="flex gap-3">
             <button
@@ -222,7 +309,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
               className="px-6 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-lg shadow-amber-500/30 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {(isSaving || uploading) && <Loader2 className="w-4 h-4 animate-spin" />}
-              Guardar Aportes
+              Guardar
             </button>
           </div>
         </div>

@@ -1,16 +1,16 @@
 
 import * as React from 'react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, deleteDoc, Timestamp, getDocs, where } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase/config.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserProfile, Patient, PatientFile, Specialty, Clinic } from '../types.ts';
-import { Users, ClipboardList, Package, FlaskConical, Stethoscope, History, Edit2, Trash2, Ban, Plus, X, Save, Loader2, AlertTriangle, CheckCircle, Search, UserMinus, ShieldAlert, ChevronLeft, ChevronRight, Globe, Building2, UploadCloud, FileText, Database, Download, Upload, Clock, FileSpreadsheet, Cloud, Wallet } from 'lucide-react';
+import { Users, ClipboardList, Package, FlaskConical, Stethoscope, History, Edit2, Trash2, Ban, Plus, X, Save, Loader2, AlertTriangle, CheckCircle, Search, UserMinus, ShieldAlert, ChevronLeft, ChevronRight, Globe, Building2, UploadCloud, FileText, Database, Download, Upload, Clock, FileSpreadsheet, Cloud, Wallet, Camera, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { logAuditAction } from '../services/auditService.ts';
 import { createSystemUser, updateSystemUser } from '../services/userService.ts';
-import { createPatient } from '../services/patientService.ts';
+import { checkPatientDuplicates, createPatient } from '../services/patientService.ts';
 import { getSpecialties } from '../services/inventoryService.ts';
 import { generateSystemBackup, restoreSystemBackup, getBackupSettings, saveBackupSettings, generateReadableExcelReport } from '../services/backupService.ts';
 import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES } from '../data/geography.ts';
@@ -57,9 +57,106 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const [patientFiles, setPatientFiles] = useState<File[]>([]);
   const [existingFiles, setExistingFiles] = useState<PatientFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState<Blob | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
+  const [existingPhotoUrl, setExistingPhotoUrl] = useState('');
+  const [photoRemoved, setPhotoRemoved] = useState(false);
+  const [photoMimeType, setPhotoMimeType] = useState('image/jpeg');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const [specialtiesList, setSpecialtiesList] = useState<Specialty[]>([]);
   const [clinics, setClinics] = useState<Clinic[]>([]);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+  }, [isModalOpen]);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isCameraOpen) {
+      stopCamera();
+      return;
+    }
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+      } catch {
+        setIsCameraOpen(false);
+        toast.error('No se pudo acceder a la cámara');
+      }
+    };
+    startCamera();
+    return () => stopCamera();
+  }, [isCameraOpen, stopCamera]);
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      stopCamera();
+      if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+      setPhotoPreviewUrl('');
+      setCapturedPhoto(null);
+      setPhotoRemoved(false);
+      setExistingPhotoUrl('');
+      setIsCameraOpen(false);
+      setPhotoMimeType('image/jpeg');
+    }
+  }, [isModalOpen, photoPreviewUrl, stopCamera]);
+
+  const handleCapturePhoto = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, width, height);
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+      const url = URL.createObjectURL(blob);
+      setCapturedPhoto(blob);
+      setPhotoPreviewUrl(url);
+      setExistingPhotoUrl('');
+      setPhotoRemoved(false);
+      setIsCameraOpen(false);
+      setPhotoMimeType('image/jpeg');
+    }, 'image/jpeg', 0.9);
+  }, [photoPreviewUrl]);
+
+  const handleUploadPhoto = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    const url = URL.createObjectURL(file);
+    setCapturedPhoto(file);
+    setPhotoPreviewUrl(url);
+    setExistingPhotoUrl('');
+    setPhotoRemoved(false);
+    setIsCameraOpen(false);
+    setPhotoMimeType(file.type || 'image/jpeg');
+    event.target.value = '';
+  }, [photoPreviewUrl]);
 
   useEffect(() => {
     setLoading(true);
@@ -101,7 +198,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
     }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), uid: d.id }));
+        const docs = snapshot.docs.map(d => ({ ...d.data(), id: d.id, uid: d.id }));
         
         if (activeTab !== 'logs') {
             docs.sort((a: any, b: any) => {
@@ -180,6 +277,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
               const toastId = toast.loading(`Procesando ${data.length} registros...`);
               let count = 0;
+              let lastPrincipioActivo = '';
 
               for (const row of data as any[]) {
                   const upperRow: any = {};
@@ -191,6 +289,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
                   const codigo = upperRow['CODIGO'] || upperRow['CÓDIGO'] || '';
                   const nombre = upperRow['DESCRIPCION'] || upperRow['DESCRIPCIÓN'] || upperRow['NOMBRE'] || upperRow['PRODUCTO'] || '';
+                  const rawPrincipio = upperRow['PRINCIPIO ACTIVO'] || upperRow['PRINCIPIOACTIVO'] || upperRow['PRINCIPIO'] || '';
+                  const principioActivo = String(rawPrincipio || lastPrincipioActivo || '').trim();
+                  if (String(rawPrincipio || '').trim()) {
+                      lastPrincipioActivo = String(rawPrincipio).trim();
+                  }
                   const medida = upperRow['MEDIDA'] || upperRow['PRESENTACION'] || upperRow['PRESENTACIÓN'] || upperRow['UNIDAD'] || '';
                   
                   const cleanCurrency = (val: any) => {
@@ -217,6 +320,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                       if (activeTab === 'inventory') {
                           payload.stock = 100; 
                           payload.units_per_box = 1;
+                          payload.activeIngredient = principioActivo;
                       }
 
                       await addDoc(collection(db, collectionName), payload);
@@ -288,6 +392,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
       setPatientFiles([]); 
       setExistingFiles([]); 
+      if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+      setPhotoPreviewUrl('');
+      setCapturedPhoto(null);
+      setPhotoRemoved(false);
+      setIsCameraOpen(false);
+      setPhotoMimeType('image/jpeg');
 
       if (activeTab === 'pathologies' && item?.exams) {
           setFormValues({ ...item, exams: item.exams.join(', ') });
@@ -297,17 +407,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
           if (item.historyFiles) {
               setExistingFiles(item.historyFiles);
           }
+          setExistingPhotoUrl(item.photoUrl || '');
       } else {
           const defaults: any = {};
           if (activeTab === 'patients') { 
-              defaults.consultationType = 'Nueva'; 
               defaults.previousTreatment = 'No ha estado en tratamiento'; 
               defaults.previousTreatmentDetail = ''; 
               defaults.referralChannel = ''; 
+              defaults.careCenter = 'Humana';
               defaults.address = { country: 'Guatemala' }; 
           }
           setFormValues(item || defaults);
           setIsNoResponsible(false);
+          setExistingPhotoUrl('');
       }
       setIsModalOpen(true);
   };
@@ -325,25 +437,67 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
               case 'pathologies': collectionName = 'pathologies'; break;
               case 'specialties': collectionName = 'specialties'; break;
               case 'clinics': collectionName = 'clinics'; break;
+              default: 
+                  throw new Error("Colección no definida para esta pestaña");
           }
           
           let finalPayload = { ...formValues };
-          if (activeTab === 'patients') {
+          // Limpiar campos de metadatos para evitar sobrescribir con IDs incorrectos
+          delete finalPayload.id;
+          delete finalPayload.uid;
+
+        if (activeTab === 'patients') {
+            delete finalPayload.consultationType;
+            delete finalPayload.modality;
               if (isNoResponsible) { finalPayload.responsibleName = 'No hay'; finalPayload.responsiblePhone = 'No hay'; finalPayload.responsibleEmail = 'No hay'; }
-              if (!editItem) {
-                  const id = finalPayload.billingCode;
-                  const codeCheck = await getDocs(query(collection(db, 'patients'), where('billingCode', '==', id)));
-                  if (!codeCheck.empty) throw new Error("Código ya registrado");
-                  finalPayload.id = id;
+              const duplicateCheck = await checkPatientDuplicates({
+                  fullName: finalPayload.fullName,
+                  billingCode: finalPayload.billingCode,
+                  dpi: finalPayload.dpi,
+                  excludeId: editItem?.id
+              });
+              if (duplicateCheck.billingCodeMatch) {
+                  throw new Error(`El código de facturación ya está registrado para ${duplicateCheck.billingCodeMatch.fullName}.`);
+              }
+              if (duplicateCheck.dpiMatch) {
+                  throw new Error(`El DPI ya está registrado para ${duplicateCheck.dpiMatch.fullName}.`);
+              }
+              if (duplicateCheck.nameMatch) {
+                  throw new Error(`Ya existe un paciente con nombre igual o muy similar: ${duplicateCheck.nameMatch.fullName}.`);
+              }
+              if (!finalPayload.billingCode) delete finalPayload.billingCode;
+              if (!finalPayload.dpi) delete finalPayload.dpi;
+              let photoUrlToSave: string | null | undefined;
+              if (photoRemoved && !capturedPhoto) {
+                  photoUrlToSave = null;
+              }
+              if (capturedPhoto && editItem?.id) {
+                  const ext = photoMimeType.includes('png')
+                      ? 'png'
+                      : photoMimeType.includes('webp')
+                      ? 'webp'
+                      : photoMimeType.includes('gif')
+                      ? 'gif'
+                      : 'jpg';
+                  const photoRef = ref(storage, `patients/${editItem.id}/photo_${Date.now()}.${ext}`);
+                  await uploadBytes(photoRef, capturedPhoto, { contentType: photoMimeType || 'image/jpeg' });
+                  photoUrlToSave = await getDownloadURL(photoRef);
+              }
+              if (!capturedPhoto && existingPhotoUrl) {
+                  photoUrlToSave = existingPhotoUrl;
+              }
+              if (photoUrlToSave !== undefined) {
+                  finalPayload.photoUrl = photoUrlToSave;
               }
               const uploadedFiles: PatientFile[] = [...existingFiles];
               if (patientFiles.length > 0) {
-                  const patientId = editItem ? editItem.id : finalPayload.billingCode;
+                  const patientIdForStorage = editItem ? editItem.id : (finalPayload.billingCode || finalPayload.dpi || 'new_patient');
                   for (const file of patientFiles) {
-                      const storageRef = ref(storage, `patients/${patientId}/files/${Date.now()}_${file.name}`);
+                      const relativeName = (file as any).webkitRelativePath || file.name;
+                      const storageRef = ref(storage, `patients/${patientIdForStorage}/files/${Date.now()}_${relativeName}`);
                       await uploadBytes(storageRef, file);
                       const url = await getDownloadURL(storageRef);
-                      uploadedFiles.push({ name: file.name, url: url, type: file.type, uploadedAt: Date.now() });
+                      uploadedFiles.push({ name: relativeName, url: url, type: file.type, uploadedAt: Date.now() });
                   }
               }
               finalPayload.historyFiles = uploadedFiles;
@@ -354,14 +508,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
           }
 
           const itemName = finalPayload.name || finalPayload.fullName || finalPayload.commercialName || 'Registro';
-          const itemIdRef = finalPayload.billingCode || finalPayload.id || editItem?.id || 'Nuevo';
+          const itemIdRef = finalPayload.billingCode || finalPayload.dpi || finalPayload.id || editItem?.id || 'Nuevo';
 
           if (editItem) {
+              if (!editItem.id) throw new Error("ID de documento faltante para la edición");
               await updateDoc(doc(db, collectionName, editItem.id), { ...finalPayload, updatedAt: Timestamp.now() });
               await logAuditAction(user.email, `EDICION_${activeTab.toUpperCase()}`, `Se editó: "${itemName}". ID/Ref: [${itemIdRef}]`);
               toast.success("Actualizado con éxito");
           } else {
-              if (activeTab === 'patients') { await createPatient(finalPayload); } 
+              if (activeTab === 'patients') { 
+                  const newId = await createPatient(finalPayload);
+                  if (capturedPhoto) {
+                      const ext = photoMimeType.includes('png')
+                          ? 'png'
+                          : photoMimeType.includes('webp')
+                          ? 'webp'
+                          : photoMimeType.includes('gif')
+                          ? 'gif'
+                          : 'jpg';
+                      const photoRef = ref(storage, `patients/${newId}/photo_${Date.now()}.${ext}`);
+                      await uploadBytes(photoRef, capturedPhoto, { contentType: photoMimeType || 'image/jpeg' });
+                      const photoUrl = await getDownloadURL(photoRef);
+                      await updateDoc(doc(db, collectionName, newId), { photoUrl });
+                  }
+              } 
               else { await addDoc(collection(db, collectionName), { ...finalPayload, createdAt: Timestamp.now() }); }
               await logAuditAction(user.email, `CREACION_${activeTab.toUpperCase()}`, `Se creó: "${itemName}". ID/Ref: [${itemIdRef}]`);
               toast.success("Creado con éxito");
@@ -399,8 +569,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const filteredData = data.filter(item => {
       const search = searchTerm.toLowerCase();
       const name = (item.name || item.fullName || item.commercialName || '').toLowerCase();
-      const code = (item.billingCode || item.id || item.code || '').toLowerCase();
-      return name.includes(search) || code.includes(search);
+      const code = (item.billingCode || item.dpi || item.id || item.code || '').toLowerCase();
+      const activeIngredient = (item.activeIngredient || '').toLowerCase();
+      return name.includes(search) || code.includes(search) || activeIngredient.includes(search);
   });
 
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -449,6 +620,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
     const day = today.getDate();
     const date = new Date(year, month, day);
     return date.toISOString().slice(0, 10);
+  };
+
+  const formatLogDate = (value: any) => {
+    if (!value) return 'Sin fecha';
+    const date = value?.toDate ? value.toDate() : new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleString();
   };
 
   return (
@@ -553,8 +730,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                             <thead className="bg-slate-200 text-[10px] text-slate-600 uppercase font-bold tracking-widest border-b border-slate-300">
                                 <tr>
                                     {activeTab === 'users' && <><th className="p-4">Nombre</th><th className="p-4">Rol</th><th className="p-4">Estado</th><th className="p-4 text-right">Acciones</th></>}
-                                    {activeTab === 'patients' && <><th className="p-4">Paciente</th><th className="p-4">Código</th><th className="p-4">Estado</th><th className="p-4 text-right">Acciones</th></>}
-                                    {activeTab === 'inventory' && <><th className="p-4">Código</th><th className="p-4">Producto</th><th className="p-4">Costo</th><th className="p-4">Precio</th><th className="p-4 text-right">Acciones</th></>}
+                                    {activeTab === 'patients' && <><th className="p-4">Paciente</th><th className="p-4">DPI</th><th className="p-4">Código</th><th className="p-4">Estado</th><th className="p-4 text-right">Acciones</th></>}
+                                    {activeTab === 'inventory' && <><th className="p-4">No.</th><th className="p-4">Código</th><th className="p-4">Descripción</th><th className="p-4">Principio activo</th><th className="p-4">Medida</th><th className="p-4">Costo</th><th className="p-4">Precio</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'laboratories' && <><th className="p-4">Código</th><th className="p-4">Examen</th><th className="p-4">Medida</th><th className="p-4">Costo</th><th className="p-4">Precio</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'external' && <><th className="p-4">Nombre Comercial</th><th className="p-4">Ingrediente Activo</th><th className="p-4">Farmacia / Dist.</th><th className="p-4 text-right">Acciones</th></>}
                                     {activeTab === 'pathologies' && <><th className="p-4">Patología</th><th className="p-4">Exámenes</th><th className="p-4 text-right">Acciones</th></>}
@@ -566,14 +743,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                             <tbody className="divide-y divide-slate-100 bg-white">
                                 {loading ? (
                                     <tr><td colSpan={10} className="p-24 text-center animate-pulse text-slate-300 font-bold uppercase text-xs tracking-widest">Cargando...</td></tr>
-                                ) : currentItems.length > 0 ? currentItems.map(item => (
+                                ) : currentItems.length > 0 ? currentItems.map((item, idx) => (
                                     <tr key={item.id} className="hover:bg-slate-50/80 transition-colors text-sm">
                                         {activeTab === 'users' && <><td className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4"><span className="px-3 py-1 bg-brand-50 text-brand-600 rounded-full text-[10px] font-bold uppercase border border-brand-100">{item.role}</span></td><td className="p-4">{item.isActive !== false ? <span className="text-emerald-600 flex items-center gap-1.5 font-bold text-xs"><CheckCircle className="w-3 h-3"/> Activo</span> : <span className="text-red-400 flex items-center gap-1.5 font-bold text-xs"><ShieldAlert className="w-3 h-3"/> Inactivo</span>}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
-                                        {activeTab === 'inventory' && <><td className="p-4 text-xs font-mono text-slate-500">{item.code || '—'}</td><td className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4 text-sm font-mono font-bold text-slate-700">Q {item.cost?.toFixed(2) || '0.00'}</td><td className="p-4 text-sm font-bold text-emerald-800">Q {item.price?.toFixed(2) || '0.00'}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button><button onClick={() => { setItemToDelete(item); setIsDeleteModalOpen(true); }} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm"><Trash2 className="w-4 h-4"/></button></td></>}
+                                        {activeTab === 'inventory' && <><td className="p-4 text-xs font-mono text-slate-500">{indexOfFirstItem + idx + 1}</td><td className="p-4 text-xs font-mono text-slate-500">{item.code || '—'}</td><td className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4 text-xs text-slate-500">{item.activeIngredient || '—'}</td><td className="p-4 text-xs text-slate-500">{item.presentation || item.measure || '—'}</td><td className="p-4 text-sm font-mono font-bold text-slate-700">Q {item.cost?.toFixed(2) || '0.00'}</td><td className="p-4 text-sm font-bold text-emerald-800">Q {item.price?.toFixed(2) || '0.00'}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button><button onClick={() => { setItemToDelete(item); setIsDeleteModalOpen(true); }} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm"><Trash2 className="w-4 h-4"/></button></td></>}
                                         {activeTab === 'laboratories' && <><td className="p-4 text-xs font-mono text-slate-500">{item.code || '—'}</td><td className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4 text-sm font-medium text-slate-700">{item.measure || 'U'}</td><td className="p-4 text-sm font-mono font-bold text-slate-700">Q {item.cost?.toFixed(2) || '0.00'}</td><td className="p-4 text-sm font-bold text-emerald-800">Q {item.price?.toFixed(2) || '0.00'}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button><button onClick={() => { setItemToDelete(item); setIsDeleteModalOpen(true); }} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm"><Trash2 className="w-4 h-4"/></button></td></>}
-                                        {activeTab === 'patients' && <><td className="p-4 font-bold text-slate-800">{item.fullName}</td><td className="p-4 text-slate-500 font-mono font-bold">{item.billingCode}</td><td className="p-4">{item.isActive !== false ? <span className="text-emerald-600 flex items-center gap-1.5 font-bold text-xs"><CheckCircle className="w-3 h-3"/> Activo</span> : <span className="text-red-400 flex items-center gap-1.5 font-bold text-xs"><Ban className="w-3 h-3"/> Baja</span>}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
+                                        {activeTab === 'patients' && <><td className="p-4 font-bold text-slate-800">{item.fullName}</td><td className="p-4 text-slate-500 font-mono font-bold">{item.dpi || '—'}</td><td className="p-4 text-slate-500 font-mono font-bold">{item.billingCode || '—'}</td><td className="p-4">{item.isActive !== false ? <span className="text-emerald-600 flex items-center gap-1.5 font-bold text-xs"><CheckCircle className="w-3 h-3"/> Activo</span> : <span className="text-red-400 flex items-center gap-1.5 font-bold text-xs"><Ban className="w-3 h-3"/> Baja</span>}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
                                         {activeTab === 'pathologies' && <><td className="p-4 font-bold text-slate-800">{item.name}</td><td className="p-4 text-slate-500 text-[10px] font-bold uppercase">{item.exams?.join(' • ') || '—'}</td><td className="p-4 text-right flex items-center justify-end gap-2"><button onClick={() => handleOpenModal(item)} className="p-2.5 bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-xl transition shadow-sm"><Edit2 className="w-4 h-4"/></button></td></>}
-                                        {activeTab === 'logs' && <><td className="p-4 text-xs font-bold text-slate-400">{new Date(item.timestamp).toLocaleString()}</td><td className="p-4 font-bold text-slate-700">{item.user}</td><td className="p-4"><span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase">{item.action}</span></td><td className="p-4 text-xs text-slate-500 italic whitespace-pre-wrap break-words">{item.details}</td></>}
+                                        {activeTab === 'logs' && <><td className="p-4 text-xs font-bold text-slate-400">{formatLogDate(item.timestamp)}</td><td className="p-4 font-bold text-slate-700">{item.user}</td><td className="p-4"><span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase">{item.action}</span></td><td className="p-4 text-xs text-slate-500 italic whitespace-pre-wrap break-words">{item.details}</td></>}
                                         {activeTab === 'external' && <>
                                             <td className="p-4 font-bold text-slate-800">{item.commercialName}</td>
                                             <td className="p-4 text-xs text-slate-500">{item.activeIngredient}</td>
@@ -638,7 +815,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
             userToEdit={editItem}
             currentUser={user}
             specialtiesList={specialtiesList}
-            clinics={clinics}
         />
 
         <AnimatePresence>
@@ -659,11 +835,97 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                             {activeTab === 'patients' && <>
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2">Datos Personales</div>
                                 <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre del Paciente</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-lg font-bold" value={formValues.fullName || ''} onChange={e => setFormValues({...formValues, fullName: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI / Código Facturación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.billingCode || ''} onChange={e => setFormValues({...formValues, billingCode: e.target.value, id: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ocupación</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.occupation || ''} onChange={e => setFormValues({...formValues, occupation: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label><input required type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); const birthDate = numeric ? calculateBirthDateFromAge(numeric) : ''; setFormValues({...formValues, age: numeric, birthDate}); }} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label><input required type="date" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.birthDate || ''} onChange={e => { const birthDate = e.target.value; const age = calculateAgeFromBirthDate(birthDate); setFormValues({...formValues, birthDate, age}); }} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label><select required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.gender || 'M'} onChange={e => setFormValues({...formValues, gender: e.target.value})}><option value="M">Masculino</option><option value="F">Femenino</option></select></div>
+                                <div className="md:col-span-2">
+                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Foto del Paciente</div>
+                                    <div className="p-4 border border-slate-200 rounded-2xl bg-slate-50">
+                                        <div className="flex flex-col md:flex-row gap-4 items-center">
+                                            <div className="w-28 h-28 rounded-full overflow-hidden bg-white border border-slate-200 flex items-center justify-center">
+                                                {(photoPreviewUrl || existingPhotoUrl) ? (
+                                                    <img src={photoPreviewUrl || existingPhotoUrl} alt="Foto del paciente" className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center text-slate-300">
+                                                        <Camera className="w-8 h-8" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setIsCameraOpen(true)}
+                                                    className="px-4 py-2 text-xs font-bold text-brand-600 bg-white border border-brand-200 rounded-xl flex items-center gap-2"
+                                                >
+                                                    <Camera className="w-4 h-4" />
+                                                    {photoPreviewUrl || existingPhotoUrl ? 'Tomar nueva' : 'Abrir cámara'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => photoInputRef.current?.click()}
+                                                    className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl flex items-center gap-2"
+                                                >
+                                                    <UploadCloud className="w-4 h-4" />
+                                                    Subir foto
+                                                </button>
+                                                {(photoPreviewUrl || existingPhotoUrl) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+                                                            setCapturedPhoto(null);
+                                                            setPhotoPreviewUrl('');
+                                                            setExistingPhotoUrl('');
+                                                            setPhotoRemoved(true);
+                                                        }}
+                                                        className="px-4 py-2 text-xs font-bold text-red-600 bg-white border border-red-200 rounded-xl flex items-center gap-2"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                        Quitar foto
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {isCameraOpen && (
+                                            <div className="mt-4 space-y-3">
+                                                <div className="w-full overflow-hidden rounded-2xl border border-slate-200">
+                                                    <video ref={videoRef} className="w-full h-auto" playsInline />
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleCapturePhoto}
+                                                        className="px-4 py-2 text-xs font-bold text-white bg-brand-600 rounded-xl flex items-center gap-2"
+                                                    >
+                                                        <Camera className="w-4 h-4" />
+                                                        Tomar foto
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsCameraOpen(false)}
+                                                        className="px-4 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl flex items-center gap-2"
+                                                    >
+                                                        <RefreshCw className="w-4 h-4" />
+                                                        Cancelar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        <canvas ref={canvasRef} className="hidden" />
+                                        <input
+                                            ref={photoInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleUploadPhoto}
+                                            className="hidden"
+                                        />
+                                    </div>
+                                </div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.dpi || ''} onChange={e => setFormValues({...formValues, dpi: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código Facturación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.billingCode || ''} onChange={e => setFormValues({...formValues, billingCode: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ocupación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.occupation || ''} onChange={e => setFormValues({...formValues, occupation: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono del Paciente</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.phone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({...formValues, phone: numeric}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email del Paciente</label><input type="email" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.email || ''} onChange={e => setFormValues({...formValues, email: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label><input type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); const birthDate = numeric ? calculateBirthDateFromAge(numeric) : ''; setFormValues({...formValues, age: numeric, birthDate}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label><input type="date" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.birthDate || ''} onChange={e => { const birthDate = e.target.value; const age = calculateAgeFromBirthDate(birthDate); setFormValues({...formValues, birthDate, age}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.gender || 'M'} onChange={e => setFormValues({...formValues, gender: e.target.value})}><option value="M">Masculino</option><option value="F">Femenino</option></select></div>
                                 
                                 <div className="md:col-span-2 text-sm font-bold text-brand-600 uppercase tracking-widest border-b border-brand-100 pb-2 mb-2 mt-4">Dirección Domiciliar</div>
                                 <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -675,33 +937,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
                                 <div className="md:col-span-2 text-sm font-bold text-brand-600 uppercase tracking-widest border-b border-brand-100 pb-2 mb-2 mt-4">Datos Clínicos</div>
                                 <div>
-                                    <label className="text-[10px] font-bold text-brand-600 uppercase tracking-widest mb-2 block">Tipo de Consulta</label>
+                                    <label className="text-[10px] font-bold text-brand-600 uppercase tracking-widest mb-2 block">Centro</label>
                                     <select
-                                        required
                                         className="w-full p-4 bg-white border border-brand-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
-                                        value={formValues.consultationType || 'Nueva'}
-                                        onChange={e => setFormValues({ ...formValues, consultationType: e.target.value })}
+                                        value={formValues.careCenter || 'Humana'}
+                                        onChange={e => setFormValues({ ...formValues, careCenter: e.target.value })}
                                     >
-                                        <option value="Nueva">Nueva</option>
-                                        <option value="Reconsulta">Reconsulta</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-brand-600 uppercase tracking-widest mb-2 block">Modalidad</label>
-                                    <select
-                                        required
-                                        className="w-full p-4 bg-white border border-brand-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
-                                        value={formValues.modality || 'Presencial'}
-                                        onChange={e => setFormValues({ ...formValues, modality: e.target.value })}
-                                    >
-                                        <option value="Presencial">Presencial</option>
-                                        <option value="Virtual">Virtual</option>
+                                        <option value="Humana">Humana</option>
+                                        <option value="Hospital">Hospital</option>
                                     </select>
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Médico Tratante Anterior</label>
                                     <select
-                                        required
                                         className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
                                         value={formValues.previousTreatment || 'No ha estado en tratamiento'}
                                         onChange={e => {
@@ -723,7 +971,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                     <div>
                                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Detalle IGSS</label>
                                         <select
-                                            required
                                             className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
                                             value={formValues.previousTreatmentDetail || ''}
                                             onChange={e => setFormValues({ ...formValues, previousTreatmentDetail: e.target.value })}
@@ -738,7 +985,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Canal de referencia (¿De dónde nos conoció?)</label>
                                     <select
-                                        required
                                         className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900"
                                         value={formValues.referralChannel || ''}
                                         onChange={e => setFormValues({ ...formValues, referralChannel: e.target.value })}
@@ -764,24 +1010,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Datos del Responsable</div>
                                 <div className="md:col-span-2 flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200"><input type="checkbox" className="w-5 h-5" checked={isNoResponsible} onChange={e => setIsNoResponsible(e.target.checked)} /><label className="text-xs font-bold text-slate-500 uppercase">EL PACIENTE VE POR SU PROPIA SALUD</label></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label><input required={!isNoResponsible} disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleName || ''} onChange={e => setFormValues({...formValues, responsibleName: e.target.value})} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label><input required={!isNoResponsible} disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsiblePhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({...formValues, responsiblePhone: numeric}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label><input disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleName || ''} onChange={e => setFormValues({...formValues, responsibleName: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label><input disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsiblePhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({...formValues, responsiblePhone: numeric}); }} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label><input type="email" disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleEmail || ''} onChange={e => setFormValues({...formValues, responsibleEmail: e.target.value})} /></div>
                                 
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Historial Clínico y Archivos</div>
                                 <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Antecedentes Médicos</label><textarea className="w-full p-4 bg-white border rounded-2xl" rows={4} value={formValues.medical_history || ''} onChange={e => setFormValues({...formValues, medical_history: e.target.value})} /></div>
                                 <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Archivos Adjuntos</label>
                                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
                                         <div className="flex flex-wrap gap-2">
-                                            {existingFiles.map((f, i) => <div key={i} className="flex items-center gap-2 bg-white border rounded-lg px-2 py-1 text-xs">{f.name}</div>)}
-                                            {patientFiles.map((f, i) => <div key={i} className="flex items-center gap-2 bg-blue-50 border-blue-200 rounded-lg px-2 py-1 text-xs">{f.name}</div>)}
+                                            {existingFiles.map((f, i) => (
+                                                <div key={i} className="flex items-center gap-2 bg-white border rounded-lg px-2 py-1 text-xs">
+                                                    {f.name}{f.type ? ` (${f.type})` : ''}
+                                                    <button type="button" onClick={() => setExistingFiles(prev => prev.filter((_, idx) => idx !== i))} className="text-slate-400 hover:text-red-500">
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            {patientFiles.map((f, i) => (
+                                                <div key={i} className="flex items-center gap-2 bg-blue-50 border-blue-200 rounded-lg px-2 py-1 text-xs">
+                                                    {f.webkitRelativePath || f.name}{f.type ? ` (${f.type})` : ''}
+                                                    <button type="button" onClick={() => setPatientFiles(prev => prev.filter((_, idx) => idx !== i))} className="text-slate-400 hover:text-red-500">
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            ))}
                                         </div>
-                                        <input type="file" ref={fileInputRef} onChange={(e) => setPatientFiles(Array.from(e.target.files || []))} multiple className="hidden"/>
+                                        <input type="file" ref={fileInputRef} onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length > 0) setPatientFiles(prev => [...prev, ...files]); }} multiple className="hidden"/>
                                         <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs font-bold text-brand-600 bg-white border border-brand-200 px-4 py-2 rounded-lg">Seleccionar Archivos</button>
                                     </div>
                                 </div>
                             </>}
 
-                            {activeTab === 'inventory' && <><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Medicamento</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.name || ''} onChange={e => setFormValues({...formValues, name: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código</label><input className="w-full p-4 bg-white border rounded-2xl font-mono" value={formValues.code || ''} onChange={e => setFormValues({...formValues, code: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Presentación</label><input className="w-full p-4 bg-white border rounded-2xl" value={formValues.presentation || ''} onChange={e => setFormValues({...formValues, presentation: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Costo (Q)</label><input type="number" step="0.01" className="w-full p-4 bg-white border rounded-2xl" value={formValues.cost || 0} onChange={e => setFormValues({...formValues, cost: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Precio (Q)</label><input type="number" step="0.01" required className="w-full p-4 bg-white border rounded-2xl font-bold text-emerald-700" value={formValues.price || 0} onChange={e => setFormValues({...formValues, price: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Stock</label><input type="number" required className="w-full p-4 bg-white border rounded-2xl" value={formValues.stock || 0} onChange={e => setFormValues({...formValues, stock: parseInt(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unidades por Caja</label><input type="number" className="w-full p-4 bg-white border rounded-2xl" value={formValues.units_per_box || 1} onChange={e => setFormValues({...formValues, units_per_box: parseInt(e.target.value)})} /></div></>}
+                            {activeTab === 'inventory' && <><div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Descripción</label><input required className="w-full p-4 bg-white border rounded-2xl font-bold" value={formValues.name || ''} onChange={e => setFormValues({...formValues, name: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código</label><input className="w-full p-4 bg-white border rounded-2xl font-mono" value={formValues.code || ''} onChange={e => setFormValues({...formValues, code: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Medida</label><input className="w-full p-4 bg-white border rounded-2xl" value={formValues.presentation || ''} onChange={e => setFormValues({...formValues, presentation: e.target.value})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Costo (Q)</label><input type="number" step="0.01" className="w-full p-4 bg-white border rounded-2xl" value={formValues.cost || 0} onChange={e => setFormValues({...formValues, cost: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Precio (Q)</label><input type="number" step="0.01" required className="w-full p-4 bg-white border rounded-2xl font-bold text-emerald-700" value={formValues.price || 0} onChange={e => setFormValues({...formValues, price: parseFloat(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Stock</label><input type="number" required className="w-full p-4 bg-white border rounded-2xl" value={formValues.stock || 0} onChange={e => setFormValues({...formValues, stock: parseInt(e.target.value)})} /></div><div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unidades por Caja</label><input type="number" className="w-full p-4 bg-white border rounded-2xl" value={formValues.units_per_box || 1} onChange={e => setFormValues({...formValues, units_per_box: parseInt(e.target.value)})} /></div></>}
                             {activeTab === 'inventory' && (
                                 <>
                                     <div className="md:col-span-2">
@@ -793,7 +1054,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                         />
                                     </div>
                                     <div className="md:col-span-2">
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ingrediente Activo</label>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Principio activo</label>
                                         <input
                                             className="w-full p-4 bg-white border rounded-2xl"
                                             value={formValues.activeIngredient || ''}

@@ -28,6 +28,9 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
     const otherExams = watch('otherExams');
     const referralNote = watch('referralNote');
     const nursingNotes = watch('followUpText');
+    const followUpRequestText = watch('followUpRequestText');
+    const resonanceOrders = watch('resonanceOrders') || [];
+    const eegOrders = watch('eegOrders') || [];
     const importantNotices = watch('importantNotices');
     const currentSignature = watch('signature');
     const specialtyReferrals: SpecialtyReferral[] = watch('specialtyReferrals') || [];
@@ -36,6 +39,24 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
     const [specialties, setSpecialties] = useState<Specialty[]>([]);
     const [selectedSpecialty, setSelectedSpecialty] = useState<string>('');
     const [confirmedKeys, setConfirmedKeys] = useState<Set<string>>(new Set());
+    const isFilled = (value?: string) => typeof value === 'string' && value.trim().length > 0;
+    const areResonanceOrdersComplete = resonanceOrders.every((order: any) =>
+        isFilled(order.examName) && isFilled(order.probableDiagnosis) && isFilled(order.attentionNotes)
+    );
+    const areEegOrdersComplete = eegOrders.every((order: any) =>
+        isFilled(order.examName) &&
+        isFilled(order.duration) &&
+        isFilled(order.probableDiagnosis) &&
+        isFilled(order.specialIndications) &&
+        isFilled(order.medicatedWith) &&
+        isFilled(order.videoMonitoringHours) &&
+        isFilled(order.videoMonitoringSleepDeprivation) &&
+        isFilled(order.ictalVideoHours) &&
+        isFilled(order.ictalSleepDeprivation) &&
+        isFilled(order.spikeDetectionHours)
+    );
+    const hasIncompleteOrders = (resonanceOrders.length > 0 && !areResonanceOrdersComplete) || (eegOrders.length > 0 && !areEegOrdersComplete);
+    const isFollowUpMissing = !isFilled(followUpRequestText);
 
     // STATE PARA FIRMA P12
     const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -321,13 +342,15 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                 <button 
                     type="button" 
                     onClick={onFinish}
-                    disabled={!isReadyToFinish || isSaving || hasUnseenImportantNotices}
+                    disabled={!isReadyToFinish || isSaving || hasUnseenImportantNotices || isFollowUpMissing || hasIncompleteOrders}
                     className="w-full max-w-md py-4 bg-slate-900 text-white rounded-2xl font-bold text-xl shadow-2xl hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-3 transition-all transform active:scale-95"
                 >
                     {isSaving ? <Loader2 className="animate-spin w-6 h-6"/> : <Save className="w-6 h-6"/>}
                     Finalizar Consulta
                 </button>
                 {!isReadyToFinish && <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse">Confirmar omisiones para finalizar.</p>}
+                {isFollowUpMissing && <p className="mt-1 text-red-600 font-bold text-xs animate-pulse">Debe completar la reconsulta para finalizar.</p>}
+                {hasIncompleteOrders && <p className="mt-1 text-red-600 font-bold text-xs animate-pulse">Complete todos los campos de las órdenes para finalizar.</p>}
                 {hasUnseenImportantNotices && (
                     <p className="mt-1 text-red-600 font-bold text-xs animate-pulse">
                         Debe revisar todos los avisos importantes antes de finalizar.

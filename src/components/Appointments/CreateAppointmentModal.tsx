@@ -7,6 +7,7 @@ import { UserProfile, Patient, Appointment, Specialty } from '../../types';
 import { toast } from 'sonner';
 import { doctorScheduleService } from '../../services/doctorScheduleService';
 import { getSpecialties } from '../../services/inventoryService';
+import { patientService } from '../../services/patientService';
 
 const formatDateInput = (date: Date) => {
   const year = date.getFullYear();
@@ -15,7 +16,8 @@ const formatDateInput = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-// Schema para validación rápida del formulario
+const igssTypeOptions = ['Consulta normal', 'Evaluación básica', 'Evaluación avanzada', 'Evaluación prequirúrgica'] as const;
+
 const appointmentFormSchema = z.object({
   patientId: z.string().min(1, "Seleccione un paciente"),
   doctorId: z.string().min(1, "Seleccione un médico"),
@@ -25,6 +27,11 @@ const appointmentFormSchema = z.object({
   reasonForConsultation: z.string().min(1, "Seleccione una razón de consulta"),
   consultationType: z.enum(['Nueva', 'Reconsulta']),
   modality: z.enum(['Virtual', 'Presencial']),
+  isIGSS: z.boolean().default(false),
+  igssType: z.preprocess(
+    (val) => (val === '' ? undefined : val),
+    z.enum(igssTypeOptions).optional()
+  ),
   duration: z.string().optional(),
 }).refine(
   (data) => {
@@ -37,7 +44,15 @@ const appointmentFormSchema = z.object({
     path: ['duration'],
     message: "Duración debe estar entre 10 y 240 minutos",
   }
-);
+).superRefine((data, ctx) => {
+  if (data.isIGSS && !data.igssType) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['igssType'],
+      message: 'Seleccione el tipo de IGSS',
+    });
+  }
+});
 
 type FormData = z.infer<typeof appointmentFormSchema>;
 
@@ -69,13 +84,32 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
     defaultValues: {
       consultationType: 'Nueva',
       modality: 'Presencial',
+      isIGSS: false,
       date: initialDate ? formatDateInput(initialDate) : '',
     }
   });
 
   const [goToNurse, setGoToNurse] = useState(true);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const [patientSearchTerm, setPatientSearchTerm] = useState('');
+  const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
+  const [patientSearchResults, setPatientSearchResults] = useState<Patient[] | null>(null);
   const consultationType = watch('consultationType');
+  const isIGSS = watch('isIGSS');
+  const selectedPatientId = watch('patientId');
+  const formatDoctorSpecialties = (doctor: UserProfile) => {
+    const list = Array.isArray(doctor.specialties) && doctor.specialties.length > 0
+      ? doctor.specialties
+      : (doctor.specialty ? [doctor.specialty] : []);
+    return list.join(', ');
+  };
+  const formatPatientLabel = (patient: Patient) => {
+    const parts = [];
+    if (patient.dpi) parts.push(`DPI ${patient.dpi}`);
+    if (patient.billingCode) parts.push(`FAC ${patient.billingCode}`);
+    const suffix = parts.length > 0 ? ` (${parts.join(' • ')})` : '';
+    return `${patient.fullName}${suffix}`;
+  };
 
   // Load Specialties
   useEffect(() => {
@@ -105,19 +139,51 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
   useEffect(() => {
       if (preSelectedPatientId) {
           setValue('patientId', preSelectedPatientId);
+          const selected = patients.find(p => p.id === preSelectedPatientId);
+          if (selected) {
+            setPatientSearchTerm(formatPatientLabel(selected));
+          }
       }
-  }, [preSelectedPatientId, setValue]);
+  }, [preSelectedPatientId, setValue, patients]);
+
+  useEffect(() => {
+    const term = patientSearchTerm.trim();
+    if (!term) {
+      setPatientSearchResults(null);
+      return;
+    }
+    let active = true;
+    const timeout = setTimeout(async () => {
+      try {
+        const results = await patientService.search(term);
+        if (active) {
+          setPatientSearchResults(results);
+        }
+      } catch {
+        if (active) {
+          setPatientSearchResults([]);
+        }
+      }
+    }, 200);
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [patientSearchTerm]);
 
   if (!isOpen) return null;
 
   const handleClose = () => {
     reset();
+    setPatientSearchTerm('');
+    setIsPatientDropdownOpen(false);
     onClose();
   };
 
   const handleFormSubmit = async (data: FormData) => {
     const startDateTime = new Date(`${data.date}T${data.time}`);
-    const baseDurationMinutes = data.consultationType === 'Nueva' ? 60 : 45;
+    startDateTime.setSeconds(0, 0);
+    const baseDurationMinutes = data.consultationType === 'Nueva' ? 60 : 30;
     let durationMinutes = baseDurationMinutes;
 
     if (data.consultationType === 'Reconsulta' && data.duration && data.duration.trim() !== "") {
@@ -127,23 +193,51 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
       }
     }
     const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60000);
+    endDateTime.setSeconds(0, 0);
     const now = new Date();
+    const ensureDate = (value: any) => {
+      if (!value) return new Date();
+      if (value instanceof Date) return value;
+      if (value?.toDate) return value.toDate();
+      if (typeof value === 'number') return new Date(value);
+      if (value?.seconds) return new Date(value.seconds * 1000);
+      return new Date(value);
+    };
 
     if (startDateTime < now) {
         toast.error("No se pueden crear citas en el pasado.");
         return;
     }
 
-    const hasConflict = existingAppointments.some(appt => {
+    const exactDoctorSameTime = existingAppointments.find(appt => {
         if (appt.doctorId !== data.doctorId || appt.status === 'cancelled') return false;
+        const apptStart = ensureDate(appt.date);
+        return apptStart.getTime() === startDateTime.getTime();
+    });
 
-        const apptStart = appt.date instanceof Date ? appt.date : appt.date.toDate();
-        const apptEnd = appt.endDate instanceof Date ? appt.endDate : appt.endDate.toDate();
+    if (exactDoctorSameTime) {
+        if (exactDoctorSameTime.patientId === data.patientId) {
+            toast.error("El paciente ya tiene una cita con este médico en esa hora.");
+            return;
+        }
+        toast.error("El médico ya tiene una cita asignada en esa hora.");
+        return;
+    }
 
+    const overlappingAppointments = existingAppointments.filter(appt => {
+        if (appt.doctorId !== data.doctorId || appt.status === 'cancelled') return false;
+        const apptStart = ensureDate(appt.date);
+        const apptEnd = ensureDate(appt.endDate);
         return startDateTime < apptEnd && endDateTime > apptStart;
     });
 
-    if (hasConflict) {
+    const patientConflict = overlappingAppointments.find(appt => appt.patientId === data.patientId);
+    if (patientConflict) {
+        toast.error("El paciente ya tiene una cita con este médico en ese horario.");
+        return;
+    }
+
+    if (overlappingAppointments.length > 0) {
         toast.error("El médico ya tiene una cita asignada en ese horario.");
         return;
     }
@@ -163,7 +257,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
     const patient = patients.find(p => p.id === data.patientId);
     const doctor = doctors.find(d => d.uid === data.doctorId);
 
-    const payload = {
+    const payload: any = {
       patientId: data.patientId,
       patientName: patient?.fullName || 'Desconocido',
       doctorId: data.doctorId,
@@ -175,12 +269,29 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
       duration: durationMinutes,
       consultationType: data.consultationType,
       modality: data.modality,
-      goToNurse: data.consultationType === 'Reconsulta' ? goToNurse : true
+      goToNurse: data.consultationType === 'Reconsulta' ? goToNurse : true,
+      isIGSS: data.isIGSS
     };
+    if (data.isIGSS && data.igssType) {
+      payload.igssType = data.igssType;
+    }
 
     onSubmit(payload);
     reset();
   };
+  const filteredPatients = patientSearchTerm.trim()
+    ? patients.filter(p => {
+        const term = patientSearchTerm.trim().toLowerCase();
+        const label = formatPatientLabel(p).toLowerCase();
+        return label.includes(term)
+          || (p.dpi ? String(p.dpi).toLowerCase().includes(term) : false)
+          || (p.billingCode ? String(p.billingCode).toLowerCase().includes(term) : false)
+          || (p.id ? String(p.id).toLowerCase().includes(term) : false);
+      })
+    : patients;
+  const displayPatients = patientSearchTerm.trim()
+    ? (patientSearchResults ?? filteredPatients)
+    : patients;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -207,15 +318,46 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
               <div className="flex gap-2">
                   <div className="relative flex-1">
                     <User className="absolute left-3 top-2.5 w-5 h-5 text-slate-400" />
-                    <select 
-                      {...register('patientId')}
+                    <input
+                      type="text"
+                      value={patientSearchTerm}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setPatientSearchTerm(value);
+                        const selected = patients.find(p => p.id === selectedPatientId);
+                        if (!value.trim() || (selected && formatPatientLabel(selected).toLowerCase() !== value.trim().toLowerCase())) {
+                          setValue('patientId', '');
+                        }
+                      }}
+                      onFocus={() => setIsPatientDropdownOpen(true)}
+                      onBlur={() => setTimeout(() => setIsPatientDropdownOpen(false), 120)}
+                      placeholder="Buscar paciente..."
                       className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-slate-50"
-                    >
-                      <option value="">Seleccione...</option>
-                      {patients.map(p => (
-                        <option key={p.id} value={p.id}>{p.fullName} ({p.billingCode})</option>
-                      ))}
-                    </select>
+                    />
+                    <input type="hidden" {...register('patientId')} />
+                    {isPatientDropdownOpen && (
+                      <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-xl max-h-72 overflow-y-auto custom-scrollbar">
+                        {displayPatients.length > 0 ? (
+                          displayPatients.map(p => (
+                            <div
+                              key={p.id}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setValue('patientId', p.id, { shouldValidate: true });
+                                setPatientSearchTerm(formatPatientLabel(p));
+                                setPatientSearchResults(null);
+                                setIsPatientDropdownOpen(false);
+                              }}
+                              className="px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0"
+                            >
+                              {formatPatientLabel(p)}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-sm text-slate-500">Sin coincidencias</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {/* BOTÓN NUEVO PACIENTE */}
                   <button 
@@ -239,9 +381,14 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
                   className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-slate-50"
                 >
                   <option value="">Seleccione...</option>
-                  {doctors.map(d => (
-                    <option key={d.uid} value={d.uid}>Dr. {d.name} - {d.specialty}</option>
-                  ))}
+                  {doctors.map(d => {
+                    const label = formatDoctorSpecialties(d);
+                    return (
+                      <option key={d.uid} value={d.uid}>
+                        Dr. {d.name}{label ? ` - ${label}` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
               {errors.doctorId && <p className="text-sm text-red-500">{errors.doctorId.message}</p>}
@@ -292,7 +439,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
               </div>
               {errors.consultationType && <p className="text-sm text-red-500">{errors.consultationType.message}</p>}
               <p className="text-sm text-slate-500 mt-1">
-                Nueva: 60 min. Reconsulta: 45 min.
+                Nueva: 60 min. Reconsulta: 30 min.
               </p>
             </div>
 
@@ -316,6 +463,33 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
             </div>
           </div>
 
+          <div className="space-y-2">
+            <label className="block text-base font-medium text-slate-700">IGSS</label>
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-600">
+              <input
+                type="checkbox"
+                {...register('isIGSS')}
+                className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+              />
+              Cita IGSS
+            </label>
+            {isIGSS && (
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-slate-700">Tipo de IGSS</label>
+                <select
+                  {...register('igssType')}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-slate-50"
+                >
+                  <option value="">Seleccione...</option>
+                  {igssTypeOptions.map(option => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+                {errors.igssType && <p className="text-xs text-red-500">{errors.igssType.message}</p>}
+              </div>
+            )}
+          </div>
+
           {consultationType === 'Reconsulta' && (
             <div className="space-y-1">
               <label className="block text-base font-medium text-slate-700">Duración de la cita (minutos)</label>
@@ -323,12 +497,12 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
                 type="number"
                 min={10}
                 max={240}
-                placeholder="45"
+                placeholder="30"
                 {...register('duration')}
                 className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
               />
               <p className="text-[11px] text-slate-500">
-                Si lo dejas vacío se usará la duración predeterminada de 45 minutos.
+                Si lo dejas vacío se usará la duración predeterminada de 30 minutos.
               </p>
               {errors.duration && <p className="text-xs text-red-500">{errors.duration.message}</p>}
             </div>

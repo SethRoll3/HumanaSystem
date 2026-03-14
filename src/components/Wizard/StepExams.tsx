@@ -2,59 +2,70 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useFormContext } from 'react-hook-form';
-import { Share2, FileText, CheckSquare, Square, Stethoscope, X, FlaskConical, StickyNote, Trash2, ArrowDownCircle, Microscope, Clock, PenTool, Search } from 'lucide-react';
-import { getPathologies, getLaboratories } from '../../services/inventoryService.ts';
-import { Pathology, ReferralGroup, LaboratoryItem, Patient } from '../../../types.ts';
+import { Share2, FileText, CheckSquare, Square, Stethoscope, X, FlaskConical, StickyNote, Trash2, ArrowDownCircle, Microscope, PenTool, BadgeCheck } from 'lucide-react';
+import { getPathologies } from '../../services/inventoryService.ts';
+import { Pathology, ReferralGroup, Patient } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface StepExamsProps {
-    userSpecialty?: string;
+    userSpecialties?: string[];
     patient?: Patient | null;
     appointmentType?: 'Nueva' | 'Reconsulta';
 }
 
-const OPTIONAL_EXAMS_TYPES = ['EEG', 'SuperEEG', 'Resonancia', 'Laboratorios', 'Otros'];
+const OPTIONAL_EXAMS_TYPES = ['EEG', 'SuperEEG', 'Resonancia', 'Otros'];
 const EG_DURATIONS = ['1/2 hora', '1 hora', '3 horas', '5 horas', '8 horas'];
+
+const LAB_PROTOCOLS: Record<string, { title: string; items: string[] }[]> = {
+  epilepsia: [
+    { title: 'Prueba', items: ['Hematología Completa + VS'] },
+    { title: 'Pruebas de Función Hepática', items: ['TGO/ASAT', 'TGP/ALAT', 'GGT', 'Amonio', 'Fosfatasa alcalina', 'Albumina', 'Bilirrubina directa', 'Bilirrubina indirecta', 'Bilirrubina total', 'Coagulación (TP, TTP, INR)'] },
+    { title: 'Química Sanguínea', items: ['Glucosa pre', 'Creatinina', 'BUN', 'Na+/K+ CL (Sodio, Potasio, Cloruro)', 'Ácido úrico'] },
+    { title: 'Niveles séricos de medicamentos', items: ['Ácido valproico', 'Fenitoína', 'Carbamazepina', 'Carbonato de litio'] },
+    { title: 'Perfil Lipídico', items: ['Triglicéridos', 'Colesterol', 'HDL', 'VLDL'] },
+    { title: 'Otros exámenes', items: ['Grupo Sanguíneo', 'Orina completa', 'Heces simples', 'Hemoglobina glicosilada', 'Electrocardiograma', 'T3', 'T4', 'TSH', 'Otros'] }
+  ],
+  parkinson: [
+    { title: 'Glucosa y Metabolismo', items: ['Glucosa pre', 'Glucosa post', 'Hemoglobina glicosilada'] },
+    { title: 'Función Hepática', items: ['TGO/ASAT', 'TGP/ALAT', 'GGT'] },
+    { title: 'Tiroides', items: ['TSH', 'T4 libre'] },
+    { title: 'Vitaminas', items: ['Vitamina D', 'Vitamina B12'] },
+    { title: 'Orina', items: ['Orina completa'] }
+  ]
+};
 
 // Helper para normalizar texto (quitar tildes y minúsculas)
 const normalizeText = (text: string) => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 };
 
-export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, appointmentType }) => {
+export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, appointmentType }) => {
   const { register, watch, setValue, getValues } = useFormContext();
   
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [selectedPathology, setSelectedPathology] = useState<Pathology | null>(null);
   const [loadingPaths, setLoadingPaths] = useState(false);
 
-  // REAL DATA FROM DB
-  const [availableLabs, setAvailableLabs] = useState<LaboratoryItem[]>([]);
-  const [loadingLabs, setLoadingLabs] = useState(false);
-
   // State for Optional Exams Categories
-  const [selectedOptionals, setSelectedOptionals] = useState<{ type: string; duration?: string }[]>([]);
+  const [selectedOptionals, setSelectedOptionals] = useState<{
+      type: string 
+}[]>([]);
   
   // State for "Otros" text area
   const [otherExamsText, setOtherExamsText] = useState('');
 
-  // State for "Laboratorios" specific selection
-  const [selectedSpecificLabs, setSelectedSpecificLabs] = useState<Set<string>>(new Set());
-  const [labSearchTerm, setLabSearchTerm] = useState('');
-
   // Watchers
   const referralGroups: ReferralGroup[] = watch('referralGroups') || [];
+  const resonanceOrders = watch('resonanceOrders') || [];
+  const eegOrders = watch('eegOrders') || [];
+  const emotionalEvaluationSelections = watch('emotionalEvaluationSelections') || [];
   
   // Load Pathologies & Labs
   useEffect(() => {
     const load = async () => {
         setLoadingPaths(true);
-        const [paths, labs] = await Promise.all([
-            getPathologies(),
-            getLaboratories()
-        ]);
+        const paths = await getPathologies();
         setPathologies(paths);
-        setAvailableLabs(labs);
         setLoadingPaths(false);
     };
     load();
@@ -69,12 +80,12 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
       // Restore Categories
       if (savedOtherExams && selectedOptionals.length === 0) {
           const items = savedOtherExams.split(', ');
-          const restored: { type: string; duration?: string }[] = [];
+          const restored: { type: string }[] = [];
           
           items.forEach((item: string) => {
               if (item.includes('(') && item.includes(')')) {
                    const match = item.match(/(.*?) \((.*?)\)/);
-                   if (match) restored.push({ type: match[1], duration: match[2] });
+                   if (match) restored.push({ type: match[1] });
                    else restored.push({ type: item });
               } else {
                    if (OPTIONAL_EXAMS_TYPES.includes(item)) restored.push({ type: item });
@@ -86,27 +97,12 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
       // Restore "Otros" text
       if (savedCustomText) setOtherExamsText(savedCustomText);
 
-      // Restore Specific Labs
-      const restoredLabs = new Set<string>();
-      if (currentExams.length > 0) {
-          currentExams.forEach((exam: string) => {
-              // We restore it if it's in our loaded list from DB OR known list
-              restoredLabs.add(exam);
-          });
-          if (restoredLabs.size > 0) setSelectedSpecificLabs(restoredLabs);
-      }
-
   }, []); 
 
   // SYNC FORM STATE (The Master Effect)
   useEffect(() => {
       const optionalExamsList = new Set<string>();
       
-      // 1. Add "Laboratorios" specific content
-      if (selectedOptionals.find(o => o.type === 'Laboratorios')) {
-          selectedSpecificLabs.forEach(lab => optionalExamsList.add(lab));
-      }
-
       // 2. Add "Otros" text content
       if (selectedOptionals.find(o => o.type === 'Otros') && otherExamsText.trim()) {
           const manualExams = otherExamsText.split(',').map(s => s.trim()).filter(s => s.length > 0);
@@ -114,30 +110,101 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
       }
 
       // 3. Add Categories (EG, Resonancia, etc) if they are standalone
-          selectedOptionals.forEach(opt => {
+      selectedOptionals.forEach(opt => {
           if (opt.type !== 'Otros' && opt.type !== 'Laboratorios') {
-             if (opt.type === 'EEG' || opt.type === 'SuperEEG') {
-                 optionalExamsList.add(`${opt.type} (${opt.duration || '1 hora'})`);
-             } else {
-                 optionalExamsList.add(opt.type); // e.g. "Resonancia"
-             }
+             optionalExamsList.add(opt.type);
           }
       });
 
       // 4. Formatted string for UI chips/summary
-      const formattedOptionals = selectedOptionals.map(opt => {
-          if (opt.type === 'EEG' || opt.type === 'SuperEEG') {
-              return `${opt.type} (${opt.duration || 'Sin duración'})`;
-          }
-          return opt.type;
-      });
+      const formattedOptionals = selectedOptionals.map(opt => opt.type);
 
       // UPDATE FORM
       setValue('exams', Array.from(optionalExamsList)); // Now cleaner
       setValue('otherExams', formattedOptionals.join(', '));
       setValue('customOtherExams', otherExamsText);
 
-  }, [referralGroups, selectedOptionals, otherExamsText, selectedSpecificLabs, setValue]);
+  }, [referralGroups, selectedOptionals, otherExamsText, setValue]);
+
+  useEffect(() => {
+      const allExams: string[] = [];
+      referralGroups.forEach(group => group.exams.forEach(exam => allExams.push(exam)));
+      const optionalExams = getValues('exams') || [];
+      optionalExams.forEach((exam: string) => allExams.push(exam));
+      const unique = Array.from(new Set(allExams));
+      const resonanceExams = unique.filter(exam => normalizeText(exam).includes('resonancia'));
+
+      if (resonanceExams.length === 0) {
+          if (resonanceOrders.length > 0) setValue('resonanceOrders', undefined);
+          return;
+      }
+
+      const currentOrders = (getValues('resonanceOrders') || []) as any[];
+      const validOrders = currentOrders.filter(order => order.examName && resonanceExams.includes(order.examName));
+      const missingOrders = resonanceExams.filter(exam => !validOrders.some(order => order.examName === exam));
+      const nextOrders = [
+          ...validOrders,
+          ...missingOrders.map(exam => ({
+              examName: exam,
+              probableDiagnosis: '',
+              attentionNotes: '',
+              sendResultsTo: 'Oficinas Zona 10'
+          }))
+      ];
+
+      setValue('resonanceOrders', nextOrders, { shouldDirty: false });
+  }, [referralGroups, selectedOptionals, otherExamsText]);
+
+  useEffect(() => {
+      const allExams: string[] = [];
+      referralGroups.forEach(group => group.exams.forEach(exam => allExams.push(exam)));
+      const optionalExams = getValues('exams') || [];
+      optionalExams.forEach((exam: string) => allExams.push(exam));
+      const unique = Array.from(new Set(allExams));
+      const eegExams = unique.filter(exam => {
+          const normalized = normalizeText(exam).replace(/[^a-z0-9]/g, '');
+          return normalized.includes('eeg')
+            || normalized.includes('electroencefalograma')
+            || normalized.includes('videoelectroencefalograma')
+            || normalized.includes('videoencefalograma')
+            || normalized.includes('videoeeg');
+      });
+
+      if (eegExams.length === 0) {
+          if (eegOrders.length > 0) setValue('eegOrders', undefined);
+          return;
+      }
+
+      const currentOrders = (getValues('eegOrders') || []) as any[];
+      const validOrders = currentOrders.filter(order => order.examName && eegExams.includes(order.examName));
+      const missingOrders = eegExams.filter(exam => !validOrders.some(order => order.examName === exam));
+      const nextOrders = [
+          ...validOrders,
+          ...missingOrders.map(exam => ({
+              examName: exam,
+              probableDiagnosis: '',
+              duration: EG_DURATIONS[1],
+              cctcg: false,
+              cpc: false,
+              cpcSecGeneralizadas: false,
+              ausencias: false,
+              crisisMioclonicas: false,
+              crisisEstaticas: false,
+              specialIndications: '',
+              medicatedWith: '',
+              videoMonitoringHours: '',
+              videoMonitoringSleepDeprivation: 'No',
+              ictalVideoHours: '',
+              ictalSleepDeprivation: 'No',
+              spikeDetection64: false,
+              spikeDetection128: false,
+              spikeDetectionHours: '',
+              p300: false
+          }))
+      ];
+
+      setValue('eegOrders', nextOrders, { shouldDirty: false });
+  }, [referralGroups, selectedOptionals, otherExamsText]);
 
   // --- PATHOLOGY & GROUPS LOGIC ---
   useEffect(() => {
@@ -148,7 +215,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
 
           if (existingGroupIndex === -1) {
               // Si es reconsulta, NO seleccionamos exámenes automáticamente
-              const isReconsulta = appointmentType === 'Reconsulta' || patient?.consultationType === 'Reconsulta' || (patient?.consultationType as string) === 'Reeconsulta';
+              const isReconsulta = appointmentType === 'Reconsulta';
 
               const newGroup: ReferralGroup = {
                   id: groupId,
@@ -220,39 +287,99 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
       return group ? group.exams.includes(examName) : false;
   };
 
+  const labProtocolExam = selectedPathology?.exams.find(exam => normalizeText(exam).includes('laboratorios'));
+  const isLabProtocolActive = labProtocolExam ? isExamCheckedInGroup(labProtocolExam) : false;
+  const emotionalEvaluationExam = selectedPathology?.exams.find(exam => normalizeText(exam).includes('evaluacion emocional'));
+  const isEmotionalEvaluationActive = emotionalEvaluationExam ? isExamCheckedInGroup(emotionalEvaluationExam) : false;
+
+  const labProtocolKey = selectedPathology?.name ? normalizeText(selectedPathology.name) : '';
+  const labProtocolGroups =
+    labProtocolKey.includes('parkinson') ? LAB_PROTOCOLS.parkinson : LAB_PROTOCOLS.epilepsia;
+
+  const toggleProtocolLab = (labName: string) => {
+      if (!selectedPathology) return;
+      const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
+      const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
+      const group = currentGroups.find(g => g.id === groupId);
+      if (!group) {
+          currentGroups.push({ id: groupId, pathology: selectedPathology.name, exams: [`Laboratorios: ${labName}`], note: '' });
+          setValue('referralGroups', currentGroups);
+          return;
+      }
+      const tag = `Laboratorios: ${labName}`;
+      if (group.exams.includes(tag)) {
+          group.exams = group.exams.filter(e => e !== tag);
+      } else {
+          group.exams.push(tag);
+      }
+      setValue('referralGroups', currentGroups);
+  };
+
+  const isProtocolLabSelected = (labName: string) => {
+      if (!selectedPathology) return false;
+      const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
+      const group = referralGroups.find(g => g.id === groupId);
+      return group ? group.exams.includes(`Laboratorios: ${labName}`) : false;
+  };
+
+  const toggleEmotionalSelection = (value: string) => {
+      const current = new Set<string>(emotionalEvaluationSelections);
+      if (current.has(value)) current.delete(value);
+      else current.add(value);
+      setValue('emotionalEvaluationSelections', Array.from(current));
+  };
+
+  useEffect(() => {
+      if (!isEmotionalEvaluationActive && emotionalEvaluationSelections.length > 0) {
+          setValue('emotionalEvaluationSelections', []);
+      }
+  }, [isEmotionalEvaluationActive, emotionalEvaluationSelections, setValue]);
+
+  useEffect(() => {
+      if (isLabProtocolActive) return;
+      if (!selectedPathology) return;
+      const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
+      const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
+      const group = currentGroups.find(g => g.id === groupId);
+      if (!group) return;
+      const before = group.exams.length;
+      group.exams = group.exams.filter(exam => !exam.startsWith('Laboratorios:'));
+      if (group.exams.length === 0 && !group.note) {
+          setValue('referralGroups', currentGroups.filter(g => g.id !== groupId));
+          return;
+      }
+      if (group.exams.length !== before) setValue('referralGroups', currentGroups);
+  }, [isLabProtocolActive, selectedPathology, getValues, setValue]);
+
   // --- OPTIONAL CATEGORIES LOGIC ---
   const toggleOptionalCategory = (type: string) => {
       const exists = selectedOptionals.find(o => o.type === type);
       if (exists) {
           setSelectedOptionals(prev => prev.filter(o => o.type !== type));
           if (type === 'Otros') setOtherExamsText('');
-          if (type === 'Laboratorios') {
-              setLabSearchTerm(''); // Clear search
-          }
       } else {
-          const defaultDuration = (type === 'EEG' || type === 'SuperEEG') ? '1 hora' : undefined;
-          setSelectedOptionals(prev => [...prev, { type, duration: defaultDuration }]);
+          setSelectedOptionals(prev => [...prev, { type }]);
       }
   };
 
-  const updateOptionalDuration = (type: string, duration: string) => {
-      setSelectedOptionals(prev => prev.map(o => o.type === type ? { ...o, duration } : o));
-  };
-
   const isCategoryChecked = (type: string) => !!selectedOptionals.find(o => o.type === type);
-  const getOptionalDuration = (type: string) => selectedOptionals.find(o => o.type === type)?.duration || '';
 
-  // --- SPECIFIC LABS LOGIC ---
-  const toggleSpecificLab = (labName: string) => {
-      setSelectedSpecificLabs(prev => {
-          const next = new Set(prev);
-          if (next.has(labName)) next.delete(labName);
-          else next.add(labName);
-          return next;
-      });
-  };
-
-  const filteredLabs = availableLabs.filter(lab => normalizeText(lab.name).includes(normalizeText(labSearchTerm)));
+  const allExams = (() => {
+      const list: string[] = [];
+      referralGroups.forEach(group => group.exams.forEach(exam => list.push(exam)));
+      const optionalExams = getValues('exams') || [];
+      optionalExams.forEach((exam: string) => list.push(exam));
+      return Array.from(new Set(list));
+  })();
+  const resonanceExams = allExams.filter(exam => normalizeText(exam).includes('resonancia'));
+      const eegExams = allExams.filter(exam => {
+      const normalized = normalizeText(exam).replace(/[^a-z0-9]/g, '');
+      return normalized.includes('eeg')
+        || normalized.includes('electroencefalograma')
+        || normalized.includes('videoelectroencefalograma')
+        || normalized.includes('videoencefalograma')
+        || normalized.includes('videoeeg');
+  });
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8 pb-10">
@@ -271,10 +398,10 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
                     <Microscope className="w-5 h-5" />
                     <h4>1. Seleccionar Diagnóstico Genérico</h4>
                 </div>
-                {userSpecialty && (
+                {userSpecialties && userSpecialties.length > 0 && (
                     <div className="text-xs text-brand-700 flex items-center gap-1 bg-white px-3 py-1.5 rounded-full border border-brand-200 shadow-sm">
                         <Stethoscope className="w-3 h-3" />
-                        <span className="hidden sm:inline">Tu Especialidad:</span> <strong>{userSpecialty}</strong>
+                        <span className="hidden sm:inline">Tus Especialidades:</span> <strong>{userSpecialties.join(', ')}</strong>
                     </div>
                 )}
            </div>
@@ -321,6 +448,65 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
                      );
                  })}
              </div>
+
+            {isEmotionalEvaluationActive && (
+                <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 block">
+                        Evaluación emocional (seleccione especialidades)
+                    </label>
+                    <div className="flex flex-wrap gap-3">
+                        {['Psiquiatría', 'Psicología', 'Neuropsicología'].map(option => (
+                            <button
+                                key={option}
+                                type="button"
+                                onClick={() => toggleEmotionalSelection(option)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                                    emotionalEvaluationSelections.includes(option)
+                                        ? 'bg-brand-600 text-white border-brand-600'
+                                        : 'bg-white text-slate-600 border-slate-200 hover:border-brand-200'
+                                }`}
+                            >
+                                {option}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {isLabProtocolActive && (
+                <div className="bg-white border border-slate-200 rounded-xl p-4">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 block">
+                        Laboratorios del protocolo
+                    </label>
+                    <div className="space-y-4">
+                        {labProtocolGroups.map(group => (
+                            <div key={group.title} className="border border-slate-100 rounded-xl p-3">
+                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2">{group.title}</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                    {group.items.map(item => {
+                                        const active = isProtocolLabSelected(item);
+                                        return (
+                                            <button
+                                                key={item}
+                                                type="button"
+                                                onClick={() => toggleProtocolLab(item)}
+                                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border transition ${
+                                                    active
+                                                        ? 'bg-emerald-600 text-white border-emerald-600'
+                                                        : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-200'
+                                                }`}
+                                            >
+                                                {active ? <CheckSquare className="w-4 h-4 text-white" /> : <Square className="w-4 h-4 text-slate-300" />}
+                                                {item}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
          </motion.div>
        )}
 
@@ -352,20 +538,32 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
                             </div>
 
                             <div className="p-4">
-                                {group.exams.length > 0 ? (
-                                    <div className="flex flex-wrap gap-2 mb-4">
-                                        {group.exams.map(exam => (
-                                            <span key={exam} className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm bg-brand-100 text-brand-800 border border-brand-200">
-                                                {exam}
-                                                <button type="button" onClick={() => removeExamFromGroup(group.id, exam)} className="hover:bg-brand-200 rounded-full p-0.5">
-                                                    <X className="w-3 h-3" />
-                                                </button>
-                                            </span>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-slate-400 italic mb-4">Sin exámenes seleccionados.</p>
-                                )}
+                                {(() => {
+                                    const visibleExams = group.exams.filter(exam => {
+                                        const normalized = normalizeText(exam);
+                                        const isLabToggle = normalized.includes('laboratorios') && !exam.startsWith('Laboratorios:');
+                                        return !isLabToggle;
+                                    });
+                                    return visibleExams.length > 0 ? (
+                                        <div className="flex flex-wrap gap-2 mb-4">
+                                            {visibleExams.map(exam => (
+                                                <span key={exam} className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm bg-brand-100 text-brand-800 border border-brand-200">
+                                                    {exam}
+                                                    <button type="button" onClick={() => removeExamFromGroup(group.id, exam)} className="hover:bg-brand-200 rounded-full p-0.5">
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </span>
+                                            ))}
+                                            {emotionalEvaluationExam && group.exams.includes(emotionalEvaluationExam) && emotionalEvaluationSelections.length > 0 && (
+                                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm bg-slate-100 text-slate-600 border border-slate-200">
+                                                    Evaluación emocional: {emotionalEvaluationSelections.join(', ')}
+                                                </span>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-slate-400 italic mb-4">Sin exámenes seleccionados.</p>
+                                    );
+                                })()}
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1 flex items-center gap-1">
                                         <StickyNote className="w-3 h-3"/> Nota para {group.pathology} (Opcional)
@@ -388,14 +586,363 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
 
        {/* 4. EXÁMENES OPCIONALES & LABORATORIOS & NOTA GENERAL */}
        <div className="grid grid-cols-1 gap-6 pt-6 border-t border-slate-100">
+            {(resonanceExams.length > 0 || eegExams.length > 0) && (
+                <div className="grid grid-cols-1 gap-6">
+                    {resonanceExams.length > 0 && (
+                        <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-slate-50 to-white p-5 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2 text-indigo-700 font-bold">
+                                    <BadgeCheck className="w-5 h-5" />
+                                    <h4>Órdenes de Resonancia Magnética</h4>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (resonanceExams.length === 0) return;
+                                        setValue('resonanceOrders', [
+                                            ...(resonanceOrders || []),
+                                            { examName: resonanceExams[0], probableDiagnosis: '', attentionNotes: '', sendResultsTo: 'Oficinas Zona 10' }
+                                        ]);
+                                    }}
+                                    className="text-xs font-bold text-indigo-600 hover:text-indigo-700"
+                                >
+                                    Agregar orden
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                {resonanceOrders.map((order: any, index: number) => (
+                                    <div key={`res-${index}`} className="bg-white border border-indigo-100 rounded-xl p-4 space-y-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <p className="text-xs font-bold text-indigo-500 uppercase">Orden #{index + 1}</p>
+                                            <button
+                                                type="button"
+                                                onClick={() => setValue('resonanceOrders', resonanceOrders.filter((_: any, i: number) => i !== index))}
+                                                className="text-[11px] font-bold text-red-500 hover:text-red-600"
+                                            >
+                                                Eliminar
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Tipo de Resonancia</label>
+                                                <input
+                                                    list={`resonance-options-${index}`}
+                                                    {...register(`resonanceOrders.${index}.examName`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 bg-white ${
+                                                        !order.examName?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
+                                                    }`}
+                                                    placeholder="Seleccione o escriba"
+                                                />
+                                                <datalist id={`resonance-options-${index}`}>
+                                                    {resonanceExams.map(exam => (
+                                                        <option key={exam} value={exam} />
+                                                    ))}
+                                                </datalist>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Diagnóstico probable</label>
+                                                <input
+                                                    {...register(`resonanceOrders.${index}.probableDiagnosis`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.probableDiagnosis?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
+                                                    }`}
+                                                    placeholder="Diagnóstico probable"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Poner especial atención en</label>
+                                            <textarea
+                                                rows={2}
+                                                {...register(`resonanceOrders.${index}.attentionNotes`)}
+                                                className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                    !order.attentionNotes?.trim()
+                                                        ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                        : 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
+                                                }`}
+                                                placeholder="Ej: lesiones temporales, foco epileptogénico..."
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Enviar resultados a</label>
+                                            <div className="px-3 py-2 rounded-lg border border-indigo-200 text-sm text-slate-600 bg-indigo-50">
+                                                Oficinas Zona 10
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {eegExams.length > 0 && (
+                        <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-slate-50 to-white p-5 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2 text-emerald-700 font-bold">
+                                    <BadgeCheck className="w-5 h-5" />
+                                    <h4>Órdenes EEG / Video EEG</h4>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (eegExams.length === 0) return;
+                                        setValue('eegOrders', [
+                                            ...(eegOrders || []),
+                                            {
+                                                examName: eegExams[0],
+                                                probableDiagnosis: '',
+                                                duration: EG_DURATIONS[1],
+                                                cctcg: false,
+                                                cpc: false,
+                                                cpcSecGeneralizadas: false,
+                                                ausencias: false,
+                                                crisisMioclonicas: false,
+                                                crisisEstaticas: false,
+                                                specialIndications: '',
+                                                medicatedWith: '',
+                                                videoMonitoringHours: '',
+                                                videoMonitoringSleepDeprivation: 'No',
+                                                ictalVideoHours: '',
+                                                ictalSleepDeprivation: 'No',
+                                                spikeDetection64: false,
+                                                spikeDetection128: false,
+                                                spikeDetectionHours: '',
+                                                p300: false
+                                            }
+                                        ]);
+                                    }}
+                                    className="text-xs font-bold text-emerald-600 hover:text-emerald-700"
+                                >
+                                    Agregar orden
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                {eegOrders.map((order: any, index: number) => (
+                                    <div key={`eeg-${index}`} className="bg-white border border-emerald-100 rounded-xl p-4 space-y-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <p className="text-xs font-bold text-emerald-500 uppercase">Orden #{index + 1}</p>
+                                            <button
+                                                type="button"
+                                                onClick={() => setValue('eegOrders', eegOrders.filter((_: any, i: number) => i !== index))}
+                                                className="text-[11px] font-bold text-red-500 hover:text-red-600"
+                                            >
+                                                Eliminar
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Tipo de estudio</label>
+                                                <input
+                                                    list={`eeg-options-${index}`}
+                                                    {...register(`eegOrders.${index}.examName`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 bg-white ${
+                                                        !order.examName?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                    placeholder="Seleccione o escriba"
+                                                />
+                                                <datalist id={`eeg-options-${index}`}>
+                                                    {eegExams.map(exam => (
+                                                        <option key={exam} value={exam} />
+                                                    ))}
+                                                </datalist>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Horas del estudio</label>
+                                                <select
+                                                    {...register(`eegOrders.${index}.duration`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 bg-white ${
+                                                        !order.duration?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                >
+                                                    {EG_DURATIONS.map(duration => (
+                                                        <option key={duration} value={duration}>
+                                                            {duration}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Diagnóstico probable</label>
+                                                <input
+                                                    {...register(`eegOrders.${index}.probableDiagnosis`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.probableDiagnosis?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                    placeholder="Diagnóstico probable"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                <input type="checkbox" {...register(`eegOrders.${index}.cctcg`)} className="w-4 h-4" />
+                                                CCTCG
+                                            </label>
+                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                <input type="checkbox" {...register(`eegOrders.${index}.cpc`)} className="w-4 h-4" />
+                                                CPC
+                                            </label>
+                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                <input type="checkbox" {...register(`eegOrders.${index}.cpcSecGeneralizadas`)} className="w-4 h-4" />
+                                                CPC Sec. Generalizadas
+                                            </label>
+                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                <input type="checkbox" {...register(`eegOrders.${index}.ausencias`)} className="w-4 h-4" />
+                                                Ausencias
+                                            </label>
+                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                <input type="checkbox" {...register(`eegOrders.${index}.crisisMioclonicas`)} className="w-4 h-4" />
+                                                Crisis Mioclónicas
+                                            </label>
+                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                <input type="checkbox" {...register(`eegOrders.${index}.crisisEstaticas`)} className="w-4 h-4" />
+                                                Crisis Estáticas
+                                            </label>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Indicaciones especiales</label>
+                                                <textarea
+                                                    rows={2}
+                                                    {...register(`eegOrders.${index}.specialIndications`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.specialIndications?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Medicado(a) con</label>
+                                                <input
+                                                    {...register(`eegOrders.${index}.medicatedWith`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.medicatedWith?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Video Monitoreo (horas)</label>
+                                                <input
+                                                    {...register(`eegOrders.${index}.videoMonitoringHours`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.videoMonitoringHours?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                    placeholder="Horas"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Supresión de Sueño</label>
+                                                <select
+                                                    {...register(`eegOrders.${index}.videoMonitoringSleepDeprivation`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.videoMonitoringSleepDeprivation?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                >
+                                                    <option value="Si">Si</option>
+                                                    <option value="No">No</option>
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Video Monitoreo Ictal (horas)</label>
+                                                <input
+                                                    {...register(`eegOrders.${index}.ictalVideoHours`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.ictalVideoHours?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                    placeholder="Horas"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Supresión de Sueño Ictal</label>
+                                                <select
+                                                    {...register(`eegOrders.${index}.ictalSleepDeprivation`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.ictalSleepDeprivation?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                >
+                                                    <option value="Si">Si</option>
+                                                    <option value="No">No</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Detección de Puntas (Curry)</label>
+                                                <label className="flex items-center gap-2 text-xs text-slate-600">
+                                                    <input type="checkbox" {...register(`eegOrders.${index}.spikeDetection64`)} className="w-4 h-4" />
+                                                    64 Canales
+                                                </label>
+                                                <label className="flex items-center gap-2 text-xs text-slate-600">
+                                                    <input type="checkbox" {...register(`eegOrders.${index}.spikeDetection128`)} className="w-4 h-4" />
+                                                    128 Canales
+                                                </label>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Horas</label>
+                                                <input
+                                                    {...register(`eegOrders.${index}.spikeDetectionHours`)}
+                                                    className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
+                                                        !order.spikeDetectionHours?.trim()
+                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
+                                                    }`}
+                                                    placeholder="Horas"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">P300</label>
+                                                <label className="flex items-center gap-2 text-xs text-slate-600 mt-2">
+                                                    <input type="checkbox" {...register(`eegOrders.${index}.p300`)} className="w-4 h-4" />
+                                                    Requerido
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* PANEL DE OPCIONALES */}
             <div>
-               <label className="block text-sm font-bold text-slate-700 mb-3">Exámenes Opcionales / Laboratorios Individuales</label>
+               <label className="block text-sm font-bold text-slate-700 mb-3">Exámenes Opcionales</label>
                <div className="space-y-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                    {OPTIONAL_EXAMS_TYPES.map(type => {
                        const isChecked = isCategoryChecked(type);
-                       const showHours = isChecked && (type === 'EEG' || type === 'SuperEEG');
-                       const showLabsPanel = isChecked && type === 'Laboratorios';
                        const showOthersInput = isChecked && type === 'Otros';
 
                        return (
@@ -409,75 +956,6 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialty, patient, ap
                                         <span className={`text-sm ${isChecked ? 'font-bold text-brand-800' : 'font-medium text-slate-600'}`}>{type}</span>
                                    </div>
                                </div>
-
-                               {/* DROPDOWN DE HORAS */}
-                               {showHours && (
-                                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-2 ml-8 flex items-center gap-2">
-                                       <Clock className="w-4 h-4 text-brand-400" />
-                                       <select 
-                                          value={getOptionalDuration(type)}
-                                          onChange={(e) => updateOptionalDuration(type, e.target.value)}
-                                          className="text-xs p-1.5 rounded border border-brand-300 bg-white text-brand-700 focus:ring-1 focus:ring-brand-500 outline-none"
-                                       >
-                                           {EG_DURATIONS.map(d => (
-                                               <option key={d} value={d}>{d}</option>
-                                           ))}
-                                       </select>
-                                   </motion.div>
-                               )}
-
-                               {/* PANEL DE LABORATORIOS (REAL DATA FROM DB) */}
-                               {showLabsPanel && (
-                                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 ml-2 mr-2">
-                                       <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-inner">
-                                           {/* Search Bar */}
-                                           <div className="relative mb-3">
-                                               <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
-                                               <input 
-                                                  type="text"
-                                                  placeholder="Buscar laboratorio por nombre..." 
-                                                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-200 bg-white text-slate-900 placeholder-slate-400"
-                                                  value={labSearchTerm}
-                                                  onChange={(e) => setLabSearchTerm(e.target.value)}
-                                               />
-                                           </div>
-                                           
-                                           {/* Scrollable Grid List */}
-                                           <div className="max-h-60 overflow-y-auto custom-scrollbar border-t border-slate-100 pt-2">
-                                               {availableLabs.length === 0 ? (
-                                                   <div className="text-center py-4 text-xs text-slate-400 italic">Cargando catálogo...</div>
-                                               ) : (
-                                                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                                       {filteredLabs.map(lab => {
-                                                           const isLabChecked = selectedSpecificLabs.has(lab.name);
-                                                           return (
-                                                               <div 
-                                                                  key={lab.id} 
-                                                                  onClick={() => toggleSpecificLab(lab.name)}
-                                                                  className={`flex items-start gap-2 p-2 rounded cursor-pointer transition-colors text-xs ${isLabChecked ? 'bg-brand-100 text-brand-800 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}
-                                                               >
-                                                                   <div className={`mt-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${isLabChecked ? 'border-brand-500 bg-brand-500' : 'border-slate-300 bg-white'}`}>
-                                                                       {isLabChecked && <CheckSquare className="w-3 h-3 text-white" />}
-                                                                   </div>
-                                                                   <div>
-                                                                       <span className="leading-tight block">{lab.name}</span>
-                                                                       {lab.code && <span className="text-[9px] text-slate-400 font-mono block">{lab.code}</span>}
-                                                                   </div>
-                                                               </div>
-                                                           );
-                                                       })}
-                                                       {filteredLabs.length === 0 && (
-                                                           <div className="col-span-full text-center py-4 text-xs text-slate-400 italic">No se encontraron resultados. Pruebe en "Otros".</div>
-                                                       )}
-                                                   </div>
-                                               )}
-                                           </div>
-                                           <div className="mt-2 text-[10px] text-slate-400 text-right">
-                                               {selectedSpecificLabs.size} seleccionados
-                                           </div>
-                                       </div>
-                                   </motion.div>
-                               )}
 
                                {/* INPUT PARA OTROS */}
                                {showOthersInput && (

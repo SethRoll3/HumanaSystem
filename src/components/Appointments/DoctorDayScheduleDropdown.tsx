@@ -132,21 +132,27 @@ export const DoctorDayScheduleDropdown: React.FC<DoctorDayScheduleDropdownProps>
                       Todos los doctores tienen disponibilidad o no tienen reglas para hoy.
                     </p>
                   )}
-                  {notAttending.map(item => (
-                    <div
-                      key={item.doctor.uid}
-                      className="px-3 py-2 rounded-xl bg-red-50 border border-red-100 text-[11px] text-red-700 flex flex-col gap-0.5"
-                    >
-                      <span className="font-semibold">
-                        Dr. {item.doctor.name}
-                      </span>
-                      {item.doctor.specialty && (
-                        <span className="text-[10px] text-red-600/80">
-                          {item.doctor.specialty}
+                  {notAttending.map(item => {
+                    const list = Array.isArray(item.doctor.specialties) && item.doctor.specialties.length > 0
+                      ? item.doctor.specialties
+                      : (item.doctor.specialty ? [item.doctor.specialty] : []);
+                    const label = list.join(', ');
+                    return (
+                      <div
+                        key={item.doctor.uid}
+                        className="px-3 py-2 rounded-xl bg-red-50 border border-red-100 text-[11px] text-red-700 flex flex-col gap-0.5"
+                      >
+                        <span className="font-semibold">
+                          Dr. {item.doctor.name}
                         </span>
-                      )}
-                    </div>
-                  ))}
+                        {label && (
+                          <span className="text-[10px] text-red-600/80">
+                            {label}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -175,6 +181,10 @@ export const DoctorDayScheduleDropdown: React.FC<DoctorDayScheduleDropdownProps>
                     const hasHours = schedule && schedule.startTime && schedule.endTime;
                     const hasMaxPatients =
                       schedule && typeof schedule.maxPatients === 'number' && schedule.maxPatients > 0;
+                    const list = Array.isArray(item.doctor.specialties) && item.doctor.specialties.length > 0
+                      ? item.doctor.specialties
+                      : (item.doctor.specialty ? [item.doctor.specialty] : []);
+                    const label = list.join(', ');
 
                     return (
                       <div
@@ -185,9 +195,9 @@ export const DoctorDayScheduleDropdown: React.FC<DoctorDayScheduleDropdownProps>
                           <span className="font-semibold">
                             Dr. {item.doctor.name}
                           </span>
-                          {item.doctor.specialty && (
+                          {label && (
                             <span className="text-[10px] text-emerald-700/80">
-                              {item.doctor.specialty}
+                              {label}
                             </span>
                           )}
                         </div>
@@ -227,4 +237,3 @@ export const DoctorDayScheduleDropdown: React.FC<DoctorDayScheduleDropdownProps>
     </div>
   );
 };
-

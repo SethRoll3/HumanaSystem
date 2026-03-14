@@ -1,5 +1,7 @@
 
-const API_KEY = process.env.API_KEY;
+import { addDays, addWeeks, addMonths, differenceInCalendarDays } from 'date-fns';
+
+const API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || (import.meta as any).env?.VITE_API_KEY || (process as any).env?.API_KEY;
 
 // --- FALLBACK: CÁLCULO LOCAL (REGEX) ---
 const calculateLocalFallback = (text: string, unitsPerBox: number = 0): { quantity: number; duration: string } => {
@@ -129,6 +131,7 @@ export const parsePrescriptionWithAI = async (
 // --- NUEVA FUNCIÓN: ANALIZAR MEDICAMENTO EXTERNO ---
 export const analyzeExternalMedicine = async (medName: string) => {
     try {
+        if (!API_KEY) throw new Error("Missing API key");
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
         
         const promptText = `
@@ -159,10 +162,11 @@ export const analyzeExternalMedicine = async (medName: string) => {
             })
         });
 
-        if (!response.ok) return null;
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
         
         const data = await response.json();
         const jsonStr = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonStr) throw new Error("Sin respuesta de texto");
         return JSON.parse(jsonStr);
 
     } catch (e) {
@@ -180,6 +184,7 @@ export const analyzeExternalMedicine = async (medName: string) => {
 export const improveMedicalText = async (text: string): Promise<string> => {
   if (!text.trim()) return "";
   try {
+    if (!API_KEY) throw new Error("Missing API key");
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
     const promptText = `
       Actúa como un médico especialista redactor de informes clínicos.
@@ -211,11 +216,96 @@ export interface FollowUpAnalysisResult {
   rawText?: string;
 }
 
+const normalizeFollowUpText = (text: string) => {
+  return text
+    .toLowerCase()
+    .replace(/[áàä]/g, 'a')
+    .replace(/[éèë]/g, 'e')
+    .replace(/[íìï]/g, 'i')
+    .replace(/[óòö]/g, 'o')
+    .replace(/[úùü]/g, 'u')
+    .replace(/[^\w\s]/g, ' ');
+};
+
+const numberWords: Record<string, number> = {
+  un: 1,
+  una: 1,
+  uno: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+  trece: 13,
+  catorce: 14,
+  quince: 15,
+  dieciseis: 16,
+  diecisiete: 17,
+  dieciocho: 18,
+  diecinueve: 19,
+  veinte: 20,
+  veintiuno: 21,
+  veintidos: 22,
+  veintitres: 23,
+  veinticuatro: 24,
+  veinticinco: 25,
+  veintiseis: 26,
+  veintisiete: 27,
+  veintiocho: 28,
+  veintinueve: 29,
+  treinta: 30,
+  treintaiuno: 31
+};
+
+const parseFollowUpDays = (text: string) => {
+  const normalized = normalizeFollowUpText(text);
+  const unitRegex = '(dia|dias|semana|semanas|mes|meses)';
+  const digitMatch = normalized.match(new RegExp(`(\\d+)\\s*${unitRegex}`));
+  const wordMatch = normalized.match(new RegExp(`(${Object.keys(numberWords).join('|')})\\s*${unitRegex}`));
+
+  let count: number | undefined;
+  let unit: string | undefined;
+
+  if (digitMatch) {
+    count = parseInt(digitMatch[1], 10);
+    unit = digitMatch[2];
+  } else if (wordMatch) {
+    count = numberWords[wordMatch[1]];
+    unit = wordMatch[2];
+  }
+
+  if (!count || !unit) return null;
+
+  const baseDate = new Date();
+  let targetDate = baseDate;
+  if (unit.startsWith('mes')) {
+    targetDate = addMonths(baseDate, count);
+  } else if (unit.startsWith('semana')) {
+    targetDate = addWeeks(baseDate, count);
+  } else {
+    targetDate = addDays(baseDate, count);
+  }
+
+  const days = differenceInCalendarDays(targetDate, baseDate);
+  return days > 0 ? days : null;
+};
+
 export const analyzeFollowUpIntent = async (notes: string): Promise<FollowUpAnalysisResult> => {
   const trimmed = notes.trim();
   if (!trimmed) return { hasFollowUp: false };
 
   try {
+    const localDays = parseFollowUpDays(trimmed);
+    if (localDays) {
+      return { hasFollowUp: true, days: localDays };
+    }
+    if (!API_KEY) throw new Error("Missing API key");
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
     const promptText = `
       Actúa como un asistente para agenda médica en Guatemala.
@@ -226,6 +316,7 @@ export const analyzeFollowUpIntent = async (notes: string): Promise<FollowUpAnal
       
       Debes reconocer frases como:
       - "quiero verlo en 15 días"
+      - "en dos semanas"
       - "reconsulta en 1 mes"
       - "control en 3 semanas"
       - "cita de seguimiento en 10 dias"

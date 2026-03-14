@@ -1,15 +1,20 @@
 
 import { initializeApp, getApp, getApps, deleteApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut, updateEmail } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signOut, updateEmail, updatePassword } from 'firebase/auth';
 import { collection, doc, getDocs, setDoc, updateDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
-import { db, firebaseConfig } from '../firebase/config';
+import { db, firebaseConfig, functions } from '../firebase/config';
 import { UserProfile } from '../types';
 import { logAuditAction } from './auditService';
+import { httpsCallable } from 'firebase/functions';
+
+const normalizeDoctorName = (value: string) => {
+    return value.replace(/^\s*(dr\.?|dra\.?|doctor|doctora)\s+/i, '').trim();
+};
 
 export const userService = {
   getDoctors: async (): Promise<UserProfile[]> => {
     const usersRef = collection(db, 'users');
-    const snapshot = await getDocs(query(usersRef, where('role', '==', 'doctor')));
+    const snapshot = await getDocs(query(usersRef, where('role', 'in', ['doctor', 'licenciado'])));
     return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile)).filter(d => d.isActive !== false);
   },
   getAllUsers: async (): Promise<UserProfile[]> => {
@@ -27,7 +32,7 @@ export const getAllUsers = async (): Promise<UserProfile[]> => {
 
 export const getActiveDoctors = async (): Promise<UserProfile[]> => {
     const usersRef = collection(db, 'users');
-    const snapshot = await getDocs(query(usersRef, where('role', '==', 'doctor')));
+    const snapshot = await getDocs(query(usersRef, where('role', 'in', ['doctor', 'licenciado'])));
     return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile)).filter(d => d.isActive !== false);
 };
 
@@ -41,46 +46,88 @@ export const createSystemUser = async (userData: any, password: string): Promise
     const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, password);
     const uid = userCredential.user.uid;
 
-    const clinic = userData.clinicId ? {
-        clinicId: userData.clinicId,
-        clinicName: userData.clinicName || ''
-    } : {};
-
+    const rawSpecialties = Array.isArray(userData.specialties)
+      ? userData.specialties
+      : (userData.specialty ? [userData.specialty] : []);
+    const specialties = rawSpecialties.map((s: any) => String(s)).filter((s: string) => s.trim() !== '');
+    const rawName = String(userData.name || '').trim();
+    const isDoctorRole = userData.role === 'doctor' || userData.role === 'licenciado';
+    const normalizedName = isDoctorRole ? normalizeDoctorName(rawName) : rawName;
     await setDoc(doc(db, 'users', uid), {
         email: userData.email,
-        name: userData.name,
+        name: normalizedName,
         role: userData.role,
-        specialty: userData.specialty || '',
+        specialty: specialties[0] || '',
+        specialties,
         isActive: true,
-        createdAt: Timestamp.now(),
-        ...clinic
+        createdAt: Timestamp.now()
     });
 
     await signOut(secondaryAuth);
 };
 
-export const updateSystemUser = async (uid: string, data: Partial<UserProfile>, adminEmail: string) => {
+type AuthUpdates = {
+    email?: string;
+    password?: string;
+};
+
+const updateUserAuth = async (payload: { uid: string } & AuthUpdates) => {
+    const callable = httpsCallable(functions, 'updateUserAuth');
+    try {
+        await callable(payload);
+    } catch (error: any) {
+        const code = error?.code || '';
+        if (code === 'functions/not-found' || code === 'unavailable') {
+            throw new Error("La función updateUserAuth no está desplegada o no responde en us-central1.");
+        }
+        throw error;
+    }
+};
+
+export const updateSystemUser = async (uid: string, data: Partial<UserProfile>, adminEmail: string, authUpdates?: AuthUpdates) => {
     try {
         const userRef = doc(db, 'users', uid);
         const auth = getAuth();
         const currentUser = auth.currentUser;
+        const nextData: any = { ...data };
+        if (typeof nextData.name === 'string') {
+            const rawName = nextData.name.trim();
+            const isDoctorRole = nextData.role === 'doctor' || nextData.role === 'licenciado';
+            nextData.name = isDoctorRole ? normalizeDoctorName(rawName) : rawName;
+        }
 
         // SI ES EL USUARIO ACTUAL, ACTUALIZAR AUTH TAMBIÉN
-        if (currentUser && currentUser.uid === uid && data.email && data.email !== currentUser.email) {
+        if (authUpdates?.email || authUpdates?.password) {
+            await updateUserAuth({
+                uid,
+                email: authUpdates.email,
+                password: authUpdates.password
+            });
+            await logAuditAction(adminEmail, "SYNC_AUTH_CREDENTIALS", `Actualización Auth solicitada para UID ${uid}.`);
+        }
+
+        if (currentUser && currentUser.uid === uid && authUpdates?.email && authUpdates.email !== currentUser.email) {
             try {
-                await updateEmail(currentUser, data.email);
+                await updateEmail(currentUser, authUpdates.email);
                 await logAuditAction(adminEmail, "SYNC_AUTH_EMAIL", `Se sincronizó el correo de Auth para: ${data.name}`);
             } catch (e: any) {
                 console.warn("Auth Email update requires re-authentication", e);
                 await logAuditAction(adminEmail, "SYNC_AUTH_EMAIL_PENDING", `Sincronización de correo Auth pendiente para ${data.name} (Requiere login reciente).`);
             }
-        } else if (data.email) {
-             // LOG PARA SEGUIMIENTO DE OTROS USUARIOS (Requiere Admin SDK en Cloud Functions)
-             await logAuditAction(adminEmail, "REQUEST_EMAIL_SYNC", `Cambio de correo solicitado para UID ${uid}. De Firestore a Auth.`);
+        }
+
+        if (currentUser && currentUser.uid === uid && authUpdates?.password) {
+            try {
+                await updatePassword(currentUser, authUpdates.password);
+                await logAuditAction(adminEmail, "SYNC_AUTH_PASSWORD", `Contraseña Auth actualizada para: ${data.name}`);
+            } catch (e: any) {
+                console.warn("Auth Password update requires re-authentication", e);
+                await logAuditAction(adminEmail, "SYNC_AUTH_PASSWORD_PENDING", `Sincronización de contraseña Auth pendiente para ${data.name} (Requiere login reciente).`);
+            }
         }
 
         await updateDoc(userRef, {
-            ...data,
+            ...nextData,
             updatedAt: Timestamp.now()
         });
     } catch (error) {

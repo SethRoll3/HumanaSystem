@@ -10,24 +10,25 @@ import { es } from 'date-fns/locale';
 
 interface ReferralNotesAlertProps {
     patientId: string;
-    doctorSpecialty: string;
+    doctorSpecialties: string[];
 }
 
 interface ReferralNote {
     id: string;
     date: Date;
     doctorName: string;
+    specialty: string;
     note: string;
 }
 
-export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientId, doctorSpecialty }) => {
+export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientId, doctorSpecialties }) => {
     const [notes, setNotes] = useState<ReferralNote[]>([]);
     const [loading, setLoading] = useState(true);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
 
     useEffect(() => {
         const loadReferrals = async () => {
-            if (!patientId || !doctorSpecialty) {
+            if (!patientId || !doctorSpecialties?.length) {
                 setLoading(false);
                 return;
             }
@@ -48,7 +49,7 @@ export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientI
                     if (data.specialtyReferrals && Array.isArray(data.specialtyReferrals)) {
                         // Buscar referencias a ESTA especialidad
                         const relevantRef = data.specialtyReferrals.find(
-                            ref => ref.specialty === doctorSpecialty
+                            ref => doctorSpecialties.includes(ref.specialty)
                         );
 
                         if (relevantRef && relevantRef.note && relevantRef.note.trim().length > 0) {
@@ -56,6 +57,7 @@ export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientI
                                 id: doc.id,
                                 date: typeof data.date === 'number' ? new Date(data.date) : new Date(),
                                 doctorName: data.doctorName || 'Desconocido',
+                                specialty: relevantRef.specialty,
                                 note: relevantRef.note
                             });
                         }
@@ -71,7 +73,7 @@ export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientI
         };
 
         loadReferrals();
-    }, [patientId, doctorSpecialty]);
+    }, [patientId, doctorSpecialties]);
 
     if (loading || notes.length === 0) return null;
 
@@ -88,7 +90,7 @@ export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientI
                     <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
                     <div className="flex-1">
                         <h4 className="text-sm font-bold text-amber-800 mb-1 flex items-center justify-between">
-                            <span>Nota de Referencia ({doctorSpecialty})</span>
+                            <span>Nota de Referencia ({latestNote.specialty})</span>
                             <span className="text-[10px] font-normal text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
                                 {format(latestNote.date, "d 'de' MMMM, yyyy", { locale: es })}
                             </span>
@@ -145,7 +147,11 @@ export const ReferralNotesAlert: React.FC<ReferralNotesAlertProps> = ({ patientI
                                         </div>
                                         <p className="text-sm text-slate-700 mb-3 italic">"{note.note}"</p>
                                         <div className="flex justify-end border-t pt-2">
-                                            <span className="text-xs text-slate-500">Ref: Dr. {note.doctorName}</span>
+                                            <span className="text-xs text-slate-500">
+                                                <span className="font-semibold text-slate-600">{note.specialty}</span>
+                                                <span className="mx-2">•</span>
+                                                Ref: Dr. {note.doctorName}
+                                            </span>
                                         </div>
                                     </div>
                                 ))}

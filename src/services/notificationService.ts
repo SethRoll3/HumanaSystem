@@ -8,7 +8,7 @@ const createNotification = async (
     title: string, 
     message: string, 
     type: 'info' | 'success' | 'alert', 
-    targetRole?: 'nurse' | 'admin' | 'doctor' | 'receptionist', 
+    targetRole?: 'nurse' | 'admin' | 'doctor' | 'licenciado' | 'receptionist', 
     targetUserId?: string
 ) => {
     try {

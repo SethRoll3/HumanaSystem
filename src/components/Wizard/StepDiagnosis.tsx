@@ -5,20 +5,18 @@ import { useFormContext } from 'react-hook-form';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { History, Activity, Calendar, FileText, Stethoscope, Lock, User, Eye, X, Pill, Thermometer, EyeOff, Paperclip, Image, File, FlaskConical, Download, ExternalLink, Share2, ShieldCheck, StickyNote, Fuel, AlertTriangle } from 'lucide-react';
 import { db } from '../../firebase/config.ts';
-import { Patient, UserProfile, Consultation, Specialty } from '../../../types.ts';
+import { Patient, UserProfile, Consultation, Specialty } from '../../types.ts';
 import { motion } from 'framer-motion';
 import { ReferralNotesAlert } from './ReferralNotesAlert';
-import { SpecialtyFormContainer } from './SpecialtyForms/SpecialtyFormContainer';
 import { getSpecialties } from '../../services/inventoryService.ts';
 import { getActiveDoctors } from '../../services/userService.ts';
 
 interface StepDiagnosisProps {
   patient: Patient;
   currentUser: UserProfile;
-  appointmentType?: 'Nueva' | 'Reconsulta';
 }
 
-export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUser, appointmentType }) => {
+export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUser }) => {
   const { register, formState: { errors } } = useFormContext();
   const [history, setHistory] = useState<Consultation[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -31,8 +29,11 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
   const [toDateFilter, setToDateFilter] = useState<string>('');
   const [expandedMedicalRecords, setExpandedMedicalRecords] = useState<Record<string, boolean>>({});
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const isReconsulta = appointmentType === 'Reconsulta';
-
+  const formatFileDate = (value: any) => {
+    if (!value) return 'Sin fecha';
+    const date = value?.toDate ? value.toDate() : new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleDateString('es-GT');
+  };
   const OMISSION_LABELS: Record<string, string> = {
     diagnosis: 'Diagnóstico médico',
     prescription: 'Receta / tratamiento',
@@ -111,17 +112,38 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
     [specialties]
   );
 
+  const medicalHistoryEntries = useMemo(() => {
+    const text = (patient?.medical_history || '').trim();
+    if (!text) return [];
+    return text.split(/\n{2,}/).map((block, idx) => {
+      const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
+      const headerLine = lines.find(line => line.startsWith('[Enfermería:')) || '';
+      const vitalsLine = lines.find(line =>
+        /Peso:|P\/A:|FR:|FC:|SAT:|Temp:/i.test(line)
+      ) || '';
+      const obsLine = lines.find(line => line.toLowerCase().startsWith('observaciones:')) || '';
+      const otherLines = lines.filter(line => line !== headerLine && line !== vitalsLine && line !== obsLine);
+      return {
+        id: `${idx}-${lines.length}`,
+        headerLine,
+        vitalsLine,
+        obsLine,
+        otherLines,
+        raw: block.trim()
+      };
+    });
+  }, [patient?.medical_history]);
+
   const filteredHistory = useMemo(() => {
     return history.filter(cons => {
       if (doctorFilter !== 'all' && cons.doctorName !== doctorFilter) return false;
 
-      let consSpecialty = (cons as any).doctorSpecialty as string | undefined;
-      if (!consSpecialty && cons.doctorId) {
-        const docProfile = doctors.find(d => d.uid === cons.doctorId);
-        consSpecialty = docProfile?.specialty;
-      }
-      if (specialtyFilter !== 'all' && specialtyFilter && consSpecialty !== specialtyFilter) {
-        return false;
+      const consSpecialty = (cons as any).doctorSpecialty as string | undefined;
+      if (specialtyFilter !== 'all' && specialtyFilter) {
+        const docProfile = cons.doctorId ? doctors.find(d => d.uid === cons.doctorId) : undefined;
+        const docSpecialties = docProfile?.specialties || (docProfile?.specialty ? [docProfile.specialty] : []);
+        const matchesSpecialty = consSpecialty === specialtyFilter || docSpecialties.includes(specialtyFilter);
+        if (!matchesSpecialty) return false;
       }
 
       const consDate = new Date(cons.date);
@@ -163,7 +185,10 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
         <span className="text-sm font-medium text-brand-600 bg-brand-50 px-3 py-1 rounded-full">Paso 1 de 4</span>
       </div>
 
-      <ReferralNotesAlert patientId={patient.id} doctorSpecialty={currentUser.specialty} />
+      <ReferralNotesAlert
+        patientId={patient.id}
+        doctorSpecialties={currentUser.specialties || (currentUser.specialty ? [currentUser.specialty] : [])}
+      />
       
       {/* --- SECCIÓN A: HISTORIAL (TOP) --- */}
       <div className="space-y-6">
@@ -362,26 +387,26 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                             </div>
                           </div>
 
-                          <div>
+                          <div className="bg-emerald-50 border-2 border-emerald-300 ring-2 ring-emerald-200 rounded-2xl p-4 shadow-md">
                             <div className="flex items-center gap-2 mb-2">
-                              <div className="bg-emerald-50 text-emerald-700 p-1.5 rounded-lg border border-emerald-100">
+                              <div className="bg-emerald-600 text-white p-1.5 rounded-lg shadow-sm">
                                 <Pill className="w-3 h-3" />
                               </div>
-                              <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">Receta médica</p>
+                              <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">Receta médica</p>
                             </div>
                             {hasPrescription ? (
                               <div className="space-y-2">
                                 {cons.prescription && cons.prescription.length > 0 && (
-                                  <div className="border border-slate-200 rounded-xl overflow-hidden overflow-x-auto bg-white">
+                                  <div className="border border-emerald-200 rounded-xl overflow-hidden overflow-x-auto bg-white">
                                     <table className="w-full text-xs md:text-sm text-left min-w-[380px]">
-                                      <thead className="bg-slate-100 text-slate-500 font-semibold border-b border-slate-200">
+                                      <thead className="bg-emerald-100 text-emerald-700 font-semibold border-b border-emerald-200">
                                         <tr>
                                           <th className="px-3 py-2 md:px-4">Medicamento</th>
                                           <th className="px-3 py-2 md:px-4">Cant</th>
                                           <th className="px-3 py-2 md:px-4">Ind</th>
                                         </tr>
                                       </thead>
-                                      <tbody className="divide-y divide-slate-100">
+                                      <tbody className="divide-y divide-emerald-50">
                                         {cons.prescription.map((item, idx) => (
                                           <tr key={idx} className="bg-white">
                                             <td className="px-3 py-2 md:px-4 font-medium text-slate-800">{item.name}</td>
@@ -403,7 +428,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                                 )}
                               </div>
                             ) : (
-                              <p className="text-[11px] text-slate-400 italic">Sin receta registrada.</p>
+                              <p className="text-[11px] text-emerald-600 italic">Sin receta registrada.</p>
                             )}
                           </div>
 
@@ -612,14 +637,80 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                 <h4 className="font-bold text-amber-800 flex items-center gap-2 mb-2 text-base">
                     <History className="w-5 h-5"/> Antecedentes Médicos
                 </h4>
-                <p className="text-sm text-slate-600 mb-4 line-clamp-3">
-                    {patient.medical_history || "Sin registro detallado."}
-                </p>
+                {medicalHistoryEntries.length === 0 ? (
+                    <p className="text-sm text-slate-600 mb-4">
+                        Sin registro detallado.
+                    </p>
+                ) : (
+                    <div className="space-y-3 mb-4">
+                        {medicalHistoryEntries.map(entry => (
+                            <div
+                                key={entry.id}
+                                className="bg-white/80 border border-amber-200 rounded-xl p-3 text-xs text-slate-700 shadow-sm"
+                            >
+                                {entry.vitalsLine && (
+                                    <p className="font-semibold text-slate-700">{entry.vitalsLine}</p>
+                                )}
+                                {entry.obsLine && (
+                                    <p className="text-slate-600 italic mt-1">{entry.obsLine}</p>
+                                )}
+                                {entry.otherLines.length > 0 && (
+                                    <p className="text-slate-600 mt-1">{entry.otherLines.join(' · ')}</p>
+                                )}
+                                {!entry.vitalsLine && !entry.obsLine && entry.otherLines.length === 0 && entry.raw && (
+                                    <p className="text-slate-600">{entry.raw}</p>
+                                )}
+                                {entry.headerLine && (
+                                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 text-[10px] font-semibold text-amber-800">
+                                        {entry.headerLine.replace(/^\[|\]$/g, '')}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
                 {patient.historyFiles && patient.historyFiles.length > 0 && (
-                    <div className="mb-4 flex flex-wrap gap-2">
-                         <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full flex items-center gap-1">
-                             <Paperclip className="w-3 h-3"/> {patient.historyFiles.length} Archivos Adjuntos
-                         </span>
+                    <div className="mb-4">
+                        <div className="flex flex-wrap gap-2 mb-2">
+                            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full flex items-center gap-1">
+                                <Paperclip className="w-3 h-3"/> {patient.historyFiles.length} Archivos Adjuntos
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {patient.historyFiles
+                              .slice()
+                              .sort((a, b) => {
+                                  const ak = (a.name || '').toLowerCase();
+                                  const bk = (b.name || '').toLowerCase();
+                                  const aIsFicha = /ficha|presoft|presoftware|historia/i.test(ak);
+                                  const bIsFicha = /ficha|presoft|presoftware|historia/i.test(bk);
+                                  if (aIsFicha && !bIsFicha) return -1;
+                                  if (!aIsFicha && bIsFicha) return 1;
+                                  return (b.uploadedAt || 0) - (a.uploadedAt || 0);
+                              })
+                              .map((file, idx) => (
+                                <a 
+                                  key={idx}
+                                  href={file.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`group border rounded-xl p-3 flex items-center gap-2 bg-white hover:shadow transition ${
+                                    /ficha|presoft|presoftware|historia/i.test((file.name || ''))
+                                    ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-200 shadow-md'
+                                    : 'border-slate-200 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="w-8 h-8 bg-brand-50 text-brand-600 rounded-lg flex items-center justify-center">
+                                    {file.type.includes('image') ? <Image className="w-4 h-4"/> : <FileText className="w-4 h-4"/>}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[11px] font-bold text-slate-700 truncate">{file.name}</p>
+                                    <span className="text-[9px] text-slate-400">{formatFileDate(file.uploadedAt)}</span>
+                                  </div>
+                                  <ExternalLink className="w-3 h-3 text-slate-300" />
+                                </a>
+                              ))}
+                        </div>
                     </div>
                 )}
              </div>
@@ -632,27 +723,6 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
              </button>
           </motion.div>
       </div>
-
-      {!isReconsulta ? (
-        <SpecialtyFormContainer doctorSpecialty={currentUser.specialty} />
-      ) : (
-        <div className="mt-8 mb-8">
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-6 shadow-sm flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-bold text-red-700 text-sm mb-1">
-                Aviso: esta es una RECONSULTA
-              </h3>
-              <p className="text-xs text-red-700/80">
-                Debido a que la cita fue marcada como reconsulta, no se muestra la ficha de especialidad. 
-                Puede avanzar directamente al diagnóstico y tratamiento.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       <hr className="border-slate-200" />
 
@@ -710,7 +780,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                                               {file.type.includes('image') ? <Image className="w-5 h-5"/> : <FileText className="w-5 h-5"/>}
                                           </div>
                                           <p className="text-xs font-bold text-slate-700 text-center line-clamp-2 w-full break-words">{file.name}</p>
-                                          <span className="text-[9px] text-slate-400 mt-1">{new Date(file.uploadedAt).toLocaleDateString()}</span>
+                                          <span className="text-[9px] text-slate-400 mt-1">{formatFileDate(file.uploadedAt)}</span>
                                           <ExternalLink className="absolute top-2 right-2 w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition"/>
                                       </a>
                                   ))}

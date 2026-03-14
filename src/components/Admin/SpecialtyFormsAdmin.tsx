@@ -16,6 +16,7 @@ export const SpecialtyFormsAdmin: React.FC = () => {
   const [saving, setSaving] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const [optionsInputByField, setOptionsInputByField] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let isMounted = true;
@@ -190,11 +191,57 @@ export const SpecialtyFormsAdmin: React.FC = () => {
     );
   };
 
+  const parseOptionsInput = (raw: string) => {
+    return raw
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+  };
+
+  const getOptionsInputValue = (field: FormField) => {
+    const raw = optionsInputByField[field.id];
+    if (raw !== undefined) return raw;
+    return (field.options || []).join(', ');
+  };
+
+  const applyOptionsFromInput = (sectionId: string, fieldId: string, raw: string) => {
+    setOptionsInputByField(prev => ({ ...prev, [fieldId]: raw }));
+    const options = parseOptionsInput(raw);
+    handleFieldChange(sectionId, fieldId, 'options', options);
+  };
+
+  const normalizeOption = (value: string) => {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  };
+
+  const isYesNoField = (field: FormField) => {
+    if (field.type !== 'radio') return false;
+    if (!field.options || field.options.length === 0) return true;
+    const normalized = field.options.map(opt => normalizeOption(opt));
+    return normalized.includes('si') && normalized.includes('no');
+  };
+
   const handleSave = async () => {
     if (!selectedForm) return;
     try {
       setSaving(true);
-      await specialtyFormsService.save(selectedForm);
+      const normalized: EditableForm = {
+        ...selectedForm,
+        sections: selectedForm.sections.map(section => ({
+          ...section,
+          fields: section.fields.map(field => {
+            const raw = optionsInputByField[field.id];
+            if (raw === undefined) return field;
+            return { ...field, options: parseOptionsInput(raw) };
+          }),
+        })),
+      };
+      await specialtyFormsService.save(normalized);
+      setForms(prev => prev.map(f => (f.id === selectedForm.id ? normalized : f)));
       toast.success('Ficha guardada correctamente');
     } catch (e: any) {
       console.error('[SpecialtyFormsAdmin] Error al guardar la ficha', e);
@@ -228,6 +275,7 @@ export const SpecialtyFormsAdmin: React.FC = () => {
     { value: 'select', label: 'Lista desplegable' },
     { value: 'radio', label: 'Opción única (Sí/No, etc.)' },
     { value: 'checkbox', label: 'Casillas múltiples' },
+    { value: 'multiText', label: 'Campos múltiples (texto)' },
   ];
 
   return (
@@ -507,28 +555,68 @@ export const SpecialtyFormsAdmin: React.FC = () => {
                           </div>
                           {(field.type === 'select' ||
                             field.type === 'radio' ||
-                            field.type === 'checkbox') && (
+                            field.type === 'checkbox' ||
+                            field.type === 'multiText') && (
                             <div className="col-span-12 space-y-1 pt-2">
                               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-                                Opciones (separadas por coma)
+                                {field.type === 'multiText' ? 'Campos (separados por coma)' : 'Opciones (separadas por coma)'}
                               </span>
                               <input
                                 className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white"
-                                value={(field.options || []).join(', ')}
+                                value={getOptionsInputValue(field)}
                                 onChange={e =>
-                                  handleFieldChange(
-                                    section.id,
-                                    field.id,
-                                    'options',
-                                    e.target.value
-                                      .split(',')
-                                      .map(s => s.trim())
-                                      .filter(Boolean)
-                                  )
+                                  applyOptionsFromInput(section.id, field.id, e.target.value)
                                 }
                               />
                             </div>
                           )}
+                          <div className="col-span-12 pt-2">
+                            <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
+                                Mostrar cuando sea Sí en
+                              </span>
+                              <select
+                                className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white"
+                                value={field.conditional?.fieldId || ''}
+                                onChange={e => {
+                                  const nextFieldId = e.target.value;
+                                  if (!nextFieldId) {
+                                    handleFieldChange(section.id, field.id, 'conditional', undefined);
+                                    return;
+                                  }
+                                  handleFieldChange(section.id, field.id, 'conditional', {
+                                    fieldId: nextFieldId,
+                                    value: 'Si',
+                                  });
+                                }}
+                              >
+                                <option value="">Sin condición</option>
+                                {selectedForm.sections
+                                  .flatMap(s => s.fields)
+                                  .filter(f => f.id !== field.id && f.type !== 'header' && f.type !== 'subHeader')
+                                  .filter(isYesNoField)
+                                  .map(f => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.label}
+                                    </option>
+                                  ))}
+                              </select>
+                              {field.conditional?.fieldId && (
+                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-lg">
+                                  Sí
+                                </span>
+                              )}
+                              {field.conditional?.fieldId && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleFieldChange(section.id, field.id, 'conditional', undefined)}
+                                  className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 border border-red-100 px-2 py-1 rounded-lg"
+                                >
+                                  Quitar
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>

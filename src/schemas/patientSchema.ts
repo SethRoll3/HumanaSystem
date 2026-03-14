@@ -7,10 +7,12 @@ export const patientSchema = z.object({
     .regex(/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/, "Solo se permiten letras y espacios"),
   
   // Validación de CUI (DPI)
-  id: z.string()
+  dpi: z.string()
     .length(13, "El DPI debe tener exactamente 13 dígitos")
     .regex(/^\d+$/, "Solo se permiten números")
-    .refine((val) => !/^(\d)\1+$/.test(val), "El DPI no puede tener todos los dígitos iguales"),
+    .refine((val) => !/^(\d)\1+$/.test(val), "El DPI no puede tener todos los dígitos iguales")
+    .optional()
+    .or(z.literal('')),
 
   age: z.number({ message: "La edad debe ser un número" })
     .min(0, "La edad no puede ser negativa")

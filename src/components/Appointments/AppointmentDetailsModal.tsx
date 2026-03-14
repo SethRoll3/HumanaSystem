@@ -18,11 +18,13 @@ import {
   Video,
   Users
 } from 'lucide-react';
-import { Appointment, AppointmentStatus, UserProfile } from '../../types';
+import { Appointment, AppointmentStatus, Patient, UserProfile } from '../../types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Timestamp } from 'firebase/firestore';
 import { getPatientByDPI, patientService } from '../../services/patientService';
+import { PatientEditModal } from '../Patients/PatientEditModal';
+import { toast } from 'sonner';
 
 interface AppointmentDetailsModalProps {
   isOpen: boolean;
@@ -35,12 +37,15 @@ interface AppointmentDetailsModalProps {
   userRole: string; 
   onOpenResidentIntake?: () => void;
   users?: UserProfile[]; // Propiedad opcional para mapear nombres
+  currentUser?: UserProfile;
 }
 
 const paymentSchema = z.object({
   receiptNumber: z.string().min(1, "El número de boleta es requerido"),
   amount: z.string().min(1, "El monto es requerido").transform((val) => Number(val))
 });
+
+const igssTypeOptions = ['Consulta normal', 'Evaluación básica', 'Evaluación avanzada', 'Evaluación prequirúrgica'] as const;
 
 export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = ({
   isOpen,
@@ -52,7 +57,8 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
   onUpdateAppointment,
   userRole,
   onOpenResidentIntake,
-  users = []
+  users = [],
+  currentUser
 }) => {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
@@ -67,22 +73,33 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
   const [editTime, setEditTime] = useState('');
   const [editDoctorId, setEditDoctorId] = useState('');
   const [editReason, setEditReason] = useState('');
+  const [editConsultationType, setEditConsultationType] = useState<'Nueva' | 'Reconsulta' | ''>('');
+  const [editDuration, setEditDuration] = useState('');
   const [editModality, setEditModality] = useState<'Virtual' | 'Presencial' | ''>('');
+  const [editIsIGSS, setEditIsIGSS] = useState(false);
+  const [editIGSSType, setEditIGSSType] = useState<'Consulta normal' | 'Evaluación básica' | 'Evaluación avanzada' | 'Evaluación prequirúrgica' | ''>('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editConfirmationMethod, setEditConfirmationMethod] = useState<'En Persona' | 'Por Teléfono' | 'Por WhatsApp' | ''>('');
   const [editConfirmedById, setEditConfirmedById] = useState('');
   const [editReceiptNumber, setEditReceiptNumber] = useState('');
   const [editPaymentAmount, setEditPaymentAmount] = useState('');
   const [editPaidById, setEditPaidById] = useState('');
+  const [showPatientEditModal, setShowPatientEditModal] = useState(false);
+  const [patientForEdit, setPatientForEdit] = useState<Patient | null>(null);
+  const [isLoadingPatientEdit, setIsLoadingPatientEdit] = useState(false);
 
   const { register, handleSubmit, formState: { errors }, reset } = useForm({
     resolver: zodResolver(paymentSchema)
   });
 
-  const isDoctor = userRole === 'doctor';
+  const isDoctor = userRole === 'doctor' || userRole === 'licenciado';
   const isAdmin = userRole === 'admin';
   // Solo admins y recepcionistas pueden gestionar (confirmar, pagar, cancelar)
   const canManage = userRole === 'admin' || userRole === 'receptionist';
+  const canEditConfirmationMethod = canManage;
+  const canEditPaymentFields = canManage;
+  const canEditConfirmedBy = isAdmin;
+  const canEditPaidBy = isAdmin;
 
   const [patientBillingCode, setPatientBillingCode] = useState<string>('');
   const [newBillingCode, setNewBillingCode] = useState<string>('');
@@ -122,6 +139,15 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
       setEditTime(format(baseDate, 'HH:mm'));
       setEditDoctorId(appointment.doctorId || '');
       setEditReason(appointment.reason || '');
+      setEditConsultationType((appointment.consultationType as any) || 'Nueva');
+      setEditDuration(
+        appointment.consultationType === 'Reconsulta' && typeof appointment.duration === 'number'
+          ? String(appointment.duration)
+          : ''
+      );
+      setEditModality((appointment.modality as any) || '');
+      setEditIsIGSS(Boolean(appointment.isIGSS));
+      setEditIGSSType((appointment.igssType as any) || '');
       setEditConfirmationMethod((appointment.confirmationMethod as any) || '');
       setEditConfirmedById(appointment.confirmedBy || '');
       setEditReceiptNumber(appointment.paymentReceipt || '');
@@ -134,7 +160,11 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
       setEditTime('');
       setEditDoctorId('');
       setEditReason('');
+      setEditConsultationType('Nueva');
+      setEditDuration('');
       setEditModality('');
+      setEditIsIGSS(false);
+      setEditIGSSType('');
       setEditConfirmationMethod('');
       setEditConfirmedById('');
       setEditReceiptNumber('');
@@ -143,6 +173,14 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
     }
     reset();
   }, [appointment, isOpen, reset]);
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      setShowPatientEditModal(false);
+      setPatientForEdit(null);
+      setIsLoadingPatientEdit(false);
+    }
+  }, [isOpen]);
 
   React.useEffect(() => {
     const loadPatientBilling = async () => {
@@ -188,12 +226,36 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
 
   const canEditAppointment =
     (userRole === 'admin' || userRole === 'receptionist') &&
-    !['cancelled', 'no_show'].includes(appointment.status);
-  const doctorOptions = users.filter(u => u.role === 'doctor');
+    !['cancelled', 'no_show', 'completed'].includes(appointment.status);
+  const doctorOptions = users.filter(u => u.role === 'doctor' || u.role === 'licenciado');
+  const formatDoctorSpecialties = (doctor: UserProfile) => {
+    const list = Array.isArray(doctor.specialties) && doctor.specialties.length > 0
+      ? doctor.specialties
+      : (doctor.specialty ? [doctor.specialty] : []);
+    return list.join(', ');
+  };
   const isReceptionistUser = userRole === 'receptionist';
   const isAdminUser = userRole === 'admin';
   const canConfigureNurseFlow = (isReceptionistUser || isAdminUser) && appointment.consultationType === 'Reconsulta';
   const appointmentGoToNurse = appointment.goToNurse !== false;
+
+  const handleOpenPatientEdit = async () => {
+    if (!appointment.patientId) return;
+    setIsLoadingPatientEdit(true);
+    try {
+      const patient = await getPatientByDPI(appointment.patientId);
+      if (!patient) {
+        toast.error('No se encontró el paciente');
+        return;
+      }
+      setPatientForEdit(patient);
+      setShowPatientEditModal(true);
+    } catch (error) {
+      toast.error('Error al cargar datos del paciente');
+    } finally {
+      setIsLoadingPatientEdit(false);
+    }
+  };
 
   const ensureDate = (date: any): Date => {
     if (!date) return new Date();
@@ -296,6 +358,16 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
               </h3>
               <div>
                 <p className="text-lg font-bold text-slate-800">{appointment.patientName}</p>
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={handleOpenPatientEdit}
+                    disabled={isLoadingPatientEdit}
+                    className="mt-2 inline-flex items-center gap-2 text-xs font-bold text-brand-700 hover:text-brand-800"
+                  >
+                    {isLoadingPatientEdit ? 'Cargando...' : 'Editar datos del paciente'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -314,11 +386,14 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500 bg-white"
                     >
                       <option value="">Seleccione...</option>
-                      {doctorOptions.map(doc => (
-                        <option key={doc.uid} value={doc.uid}>
-                          Dr. {doc.name} {doc.specialty ? `- ${doc.specialty}` : ''}
-                        </option>
-                      ))}
+                      {doctorOptions.map(doc => {
+                        const label = formatDoctorSpecialties(doc);
+                        return (
+                          <option key={doc.uid} value={doc.uid}>
+                            Dr. {doc.name}{label ? ` - ${label}` : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -342,6 +417,37 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                     </div>
                   </div>
                   
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-slate-500">Tipo de consulta</label>
+                    <div className="flex gap-4">
+                      {(['Nueva', 'Reconsulta'] as const).map(type => (
+                        <label key={type} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            checked={editConsultationType === type}
+                            onChange={() => setEditConsultationType(type)}
+                            className="w-3 h-3 text-brand-600 focus:ring-brand-500"
+                          />
+                          <span className="text-sm text-slate-700">{type}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  {editConsultationType === 'Reconsulta' && (
+                    <div className="space-y-1">
+                      <label className="block text-xs font-medium text-slate-500">Duración (minutos)</label>
+                      <input
+                        type="number"
+                        min={10}
+                        max={240}
+                        value={editDuration}
+                        onChange={(e) => setEditDuration(e.target.value.replace(/[^0-9]/g, ''))}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+                        placeholder="Ej. 30"
+                      />
+                    </div>
+                  )}
+
                   {/* Edit Modality */}
                   <div className="space-y-1">
                     <label className="block text-xs font-medium text-slate-500">Modalidad</label>
@@ -359,6 +465,47 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                       ))}
                     </div>
                   </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-slate-500">IGSS</label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={editIsIGSS}
+                          onChange={() => setEditIsIGSS(true)}
+                          className="w-3 h-3 text-brand-600 focus:ring-brand-500"
+                        />
+                        <span className="text-sm text-slate-700">Sí</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={!editIsIGSS}
+                          onChange={() => {
+                            setEditIsIGSS(false);
+                            setEditIGSSType('');
+                          }}
+                          className="w-3 h-3 text-brand-600 focus:ring-brand-500"
+                        />
+                        <span className="text-sm text-slate-700">No</span>
+                      </label>
+                    </div>
+                  </div>
+                  {editIsIGSS && (
+                    <div className="space-y-1">
+                      <label className="block text-xs font-medium text-slate-500">Tipo de IGSS</label>
+                      <select
+                        value={editIGSSType}
+                        onChange={(e) => setEditIGSSType(e.target.value as any)}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500 bg-white"
+                      >
+                        <option value="">Seleccione...</option>
+                        {igssTypeOptions.map(option => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -375,6 +522,16 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                     {appointment.modality === 'Virtual' ? <Video className="w-4 h-4" /> : <Users className="w-4 h-4" />}
                     {appointment.modality || 'Presencial'}
                   </div>
+                  {appointment.isIGSS && (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-[0.14em] border border-fuchsia-200 bg-fuchsia-100 text-fuchsia-700">
+                        IGSS
+                      </span>
+                      <span className="text-sm text-slate-700">
+                        {appointment.igssType || 'IGSS'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -449,7 +606,7 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                <h3 className="text-sm font-bold text-yellow-800 mb-2 flex items-center gap-2">
                  <CheckCircle2 className="w-4 h-4" /> Confirmación
                </h3>
-               {isEditing && canEditAppointment ? (
+              {isEditing && canEditAppointment && canEditConfirmationMethod ? (
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-yellow-900">
                    <div className="space-y-1">
                      <span className="font-medium block">Método:</span>
@@ -466,16 +623,20 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                    </div>
                    <div className="space-y-1">
                      <span className="font-medium block">Por:</span>
-                     <select
-                       value={editConfirmedById}
-                       onChange={(e) => setEditConfirmedById(e.target.value)}
-                       className="w-full px-3 py-2 rounded-lg border border-yellow-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-200 focus:border-yellow-500"
-                     >
-                       <option value="">Seleccione usuario...</option>
-                       {users.map(u => (
-                         <option key={u.uid} value={u.uid}>{u.name}</option>
-                       ))}
-                     </select>
+                     {canEditConfirmedBy ? (
+                       <select
+                         value={editConfirmedById}
+                         onChange={(e) => setEditConfirmedById(e.target.value)}
+                         className="w-full px-3 py-2 rounded-lg border border-yellow-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-200 focus:border-yellow-500"
+                       >
+                         <option value="">Seleccione usuario...</option>
+                         {users.map(u => (
+                           <option key={u.uid} value={u.uid}>{u.name}</option>
+                         ))}
+                       </select>
+                     ) : (
+                       <p className="text-yellow-900">{getUserName(appointment.confirmedBy)}</p>
+                     )}
                    </div>
                  </div>
                ) : (
@@ -493,7 +654,7 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                <h3 className="text-sm font-bold text-green-800 mb-2 flex items-center gap-2">
                  <CheckCircle2 className="w-4 h-4" /> Pago Registrado
                </h3>
-               {isEditing && canEditAppointment ? (
+              {isEditing && canEditAppointment && canEditPaymentFields ? (
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                    <div className="space-y-1">
                      <span className="text-green-700 font-medium block">No. Boleta:</span>
@@ -517,16 +678,20 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                    </div>
                    <div className="space-y-1 md:col-span-1">
                      <span className="text-green-700 font-medium block">Cobrado por:</span>
-                     <select
-                       value={editPaidById}
-                       onChange={(e) => setEditPaidById(e.target.value)}
-                       className="w-full px-3 py-2 rounded-lg border border-green-200 text-sm text-green-900 bg-white focus:outline-none focus:ring-2 focus:ring-green-200 focus:border-green-500"
-                     >
-                       <option value="">Seleccione usuario...</option>
-                       {users.map(u => (
-                         <option key={u.uid} value={u.uid}>{u.name}</option>
-                       ))}
-                     </select>
+                    {canEditPaidBy ? (
+                      <select
+                        value={editPaidById}
+                        onChange={(e) => setEditPaidById(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-green-200 text-sm text-green-900 bg-white focus:outline-none focus:ring-2 focus:ring-green-200 focus:border-green-500"
+                      >
+                        <option value="">Seleccione usuario...</option>
+                        {users.map(u => (
+                          <option key={u.uid} value={u.uid}>{u.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-green-900">{getUserName(appointment.paidBy)}</p>
+                    )}
                    </div>
                  </div>
                ) : (
@@ -639,33 +804,29 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                    <CreditCard className="w-5 h-5 text-blue-600" /> Datos del Pago
                  </h4>
                  <div className="mb-4">
-                   {patientBillingCode ? (
-                     <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-800">
-                       Código de facturación del paciente: <span className="font-bold">{patientBillingCode}</span>
+                   <div className={`border rounded-lg p-3 ${patientBillingCode ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
+                     <p className={`text-sm mb-2 ${patientBillingCode ? 'text-blue-800' : 'text-amber-800'}`}>
+                       {patientBillingCode
+                         ? 'Código de facturación actual. Puedes editarlo si es necesario.'
+                         : 'Este paciente no tiene código de facturación registrado. Ingrese el número para guardarlo.'}
+                     </p>
+                     <div className="flex items-center gap-2">
+                       <input 
+                         value={newBillingCode}
+                         onChange={(e) => setNewBillingCode(e.target.value)}
+                         className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 text-slate-900 bg-white ${patientBillingCode ? 'border-blue-200 focus:ring-blue-100 focus:border-blue-400' : 'border-amber-200 focus:ring-amber-200 focus:border-amber-400'}`}
+                         placeholder="Ej. FAC-000123"
+                       />
+                       <button 
+                         type="button"
+                         onClick={handleSaveBillingCode}
+                         disabled={isSavingBilling}
+                         className={`px-3 py-2 text-white rounded-lg text-sm font-bold disabled:opacity-50 ${patientBillingCode ? 'bg-blue-600 hover:bg-blue-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+                       >
+                         Guardar código
+                       </button>
                      </div>
-                   ) : (
-                     <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
-                       <p className="text-sm text-amber-800 mb-2">
-                         Este paciente no tiene código de facturación registrado. Ingrese el número para guardarlo.
-                       </p>
-                       <div className="flex items-center gap-2">
-                         <input 
-                           value={newBillingCode}
-                           onChange={(e) => setNewBillingCode(e.target.value)}
-                           className="flex-1 px-3 py-2 border border-amber-200 rounded-lg focus:ring-2 focus:ring-amber-200 focus:border-amber-400 text-amber-900 bg-white"
-                           placeholder="Ej. FAC-000123"
-                         />
-                         <button 
-                           type="button"
-                           onClick={handleSaveBillingCode}
-                           disabled={isSavingBilling}
-                           className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-bold disabled:opacity-50"
-                         >
-                           Guardar código
-                         </button>
-                       </div>
-                     </div>
-                   )}
+                   </div>
                  </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                    <div>
@@ -784,17 +945,38 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                         setIsSavingEdit(false);
                         return;
                       }
-                      const durationMinutes =
-                        typeof appointment.duration === 'number' && appointment.duration > 0
-                          ? appointment.duration
-                          : appointment.consultationType === 'Nueva'
+                      const normalizedConsultationType =
+                        editConsultationType || (appointment.consultationType as any) || 'Nueva';
+                      let durationMinutes =
+                        normalizedConsultationType === 'Nueva'
                           ? 60
-                          : 45;
+                          : typeof appointment.duration === 'number' && appointment.duration > 0
+                          ? appointment.duration
+                          : 30;
+
+                      if (normalizedConsultationType === 'Reconsulta') {
+                        if (editDuration.trim() !== '') {
+                          const parsedDuration = Number(editDuration);
+                          if (Number.isNaN(parsedDuration) || parsedDuration < 10 || parsedDuration > 240) {
+                            toast.error("Duración debe estar entre 10 y 240 minutos");
+                            setIsSavingEdit(false);
+                            return;
+                          }
+                          durationMinutes = parsedDuration;
+                        }
+                      }
+
                       const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60000);
                       const selectedDoctor = doctorOptions.find(d => d.uid === editDoctorId);
                       const parsedAmount = editPaymentAmount ? Number(editPaymentAmount) : undefined;
 
-                      await onUpdateAppointment(appointment.id, {
+                      if (editIsIGSS && !editIGSSType) {
+                        toast.error("Seleccione el tipo de IGSS");
+                        setIsSavingEdit(false);
+                        return;
+                      }
+
+                      const updates: Partial<Appointment> = {
                         doctorId: editDoctorId,
                         doctorName: selectedDoctor?.name || appointment.doctorName,
                         date: startDateTime,
@@ -802,14 +984,33 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                         duration: durationMinutes,
                         reason: editReason.trim() || appointment.reason,
                         modality: editModality || appointment.modality || 'Presencial',
-                        confirmationMethod: editConfirmationMethod || appointment.confirmationMethod,
-                        confirmedBy: editConfirmedById || appointment.confirmedBy,
-                        paymentReceipt: editReceiptNumber || appointment.paymentReceipt,
-                        paymentAmount: typeof parsedAmount === 'number' && !Number.isNaN(parsedAmount)
-                          ? parsedAmount
-                          : appointment.paymentAmount,
-                        paidBy: editPaidById || appointment.paidBy,
-                      });
+                        isIGSS: editIsIGSS,
+                        consultationType: normalizedConsultationType,
+                      };
+
+                      if (editIsIGSS && editIGSSType) {
+                        updates.igssType = editIGSSType;
+                      }
+
+                      if (canEditConfirmationMethod) {
+                        updates.confirmationMethod = editConfirmationMethod || appointment.confirmationMethod;
+                      }
+                      if (canEditConfirmedBy) {
+                        updates.confirmedBy = editConfirmedById || appointment.confirmedBy;
+                      }
+                      if (canEditPaidBy) {
+                        updates.paidBy = editPaidById || appointment.paidBy;
+                      }
+                      if (canEditPaymentFields) {
+                        updates.paymentReceipt = editReceiptNumber || appointment.paymentReceipt;
+                        if (typeof parsedAmount === 'number' && !Number.isNaN(parsedAmount)) {
+                          updates.paymentAmount = parsedAmount;
+                        } else if (typeof appointment.paymentAmount === 'number') {
+                          updates.paymentAmount = appointment.paymentAmount;
+                        }
+                      }
+
+                      await onUpdateAppointment(appointment.id, updates);
                       setIsEditing(false);
                     } finally {
                       setIsSavingEdit(false);
@@ -825,6 +1026,17 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
           </div>
         </div>
       </div>
+
+      {showPatientEditModal && patientForEdit && currentUser && (
+        <PatientEditModal
+          isOpen={showPatientEditModal}
+          onClose={() => setShowPatientEditModal(false)}
+          patient={patientForEdit}
+          currentUser={currentUser}
+          appointmentId={appointment.id}
+          onSaved={(updated) => setPatientForEdit(updated)}
+        />
+      )}
     </div>
   );
 };

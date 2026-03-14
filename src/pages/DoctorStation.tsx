@@ -1,17 +1,17 @@
 import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useForm, FormProvider } from 'react-hook-form';
-import {  Loader2, CheckCircle, Zap, Plus, AlertTriangle, 
-     Lock, Calendar as CalendarIcon, List, LayoutGrid, 
+import {  Loader2, CheckCircle, Plus, AlertTriangle, 
+     Calendar as CalendarIcon, List, LayoutGrid, 
      FileText, Clock, Book, ChevronDown,
      X, Video, Users
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { collection, addDoc, doc, Timestamp, updateDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, doc, Timestamp, updateDoc, query, where, getDocs, DocumentSnapshot } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { Patient, Consultation, UserProfile, PrescriptionItem, ReferralGroup, SpecialtyReferral, Appointment } from '../../types';
+import { Patient, Consultation, UserProfile, PrescriptionItem, ReferralGroup, SpecialtyReferral, Appointment, ResonanceOrder, EegOrder } from '../types.ts';
 import { MainLayout } from '../components/Layout/MainLayout';
 import { AdminPanel } from './AdminPanel';
 import { UserProfileSettings } from './UserProfileSettings'; 
@@ -22,10 +22,16 @@ import { StepPrescription } from '../components/Wizard/StepPrescription';
 import { ConsultationDetail } from '../components/History/ConsultationDetail'; 
 import { HistoryList } from '../components/History/HistoryList'; 
 import { QuickPatientModal } from '../components/Patients/QuickPatientModal'; 
+import { PatientModal } from '../components/Patients/PatientModal';
 import { Cuaderno } from '../components/Patients/Cuaderno';
+import { PatientListView } from '../components/Patients/PatientListView';
+import { PatientDetailView } from '../components/Patients/PatientDetailView';
 import { CreateAppointmentModal } from '../components/Appointments/CreateAppointmentModal';
 import { AppointmentDetailsModal } from '../components/Appointments/AppointmentDetailsModal';
 import { ResidentIntakeModal } from '../components/Appointments/ResidentIntakeModal';
+import { ResidentClinicalFormModal } from '../components/Appointments/ResidentClinicalFormModal';
+import { AgendaListView } from '../components/Appointments/AgendaListView';
+import { AvailabilityView } from '../components/Availability/AvailabilityView';
 import { AppointmentCalendar } from './AppointmentCalendar'; 
 import { DoctorDayScheduleDropdown } from '../components/Appointments/DoctorDayScheduleDropdown';
 
@@ -34,9 +40,10 @@ import {  getPatientByDPI, patientService } from '../services/patientService';
 import { appointmentService } from '../services/appointmentService'; 
 import {userService } from '../services/userService';
 import {  notifyConsultationFinished, notifyReceptionFollowUp } from '../services/notificationService';
-import { generatePrescriptionPDF, generateExamsPDF, generateNursingPDF, generateFullFichaPDF } from '../services/pdfService';
+import { generatePrescriptionPDF, generateExamsPDF, generateNursingPDF, generateFullFichaPDF, generateResonanceOrdersPDF, generateEegOrdersPDF } from '../services/pdfService';
 import { specialtyFormsService } from '../services/specialtyFormsService';
 import { doctorScheduleService } from '../services/doctorScheduleService';
+import { logAuditAction } from '../services/auditService.ts';
 
 const calculateAppointmentDurationSeconds = (appt: Appointment): number => {
   const start = appt.date instanceof Date ? appt.date : new Date(appt.date as any);
@@ -74,6 +81,8 @@ const formatCountdown = (seconds: number) => {
   };
 };
 
+const AGENDA_PAGE_SIZE = 12;
+
 interface DoctorStationProps {
   user: UserProfile;
   onLogout: () => void;
@@ -88,31 +97,39 @@ interface WizardFormValues {
   prescription: PrescriptionItem[];
   signature: any;
   followUpText: string;
+  followUpRequestText?: string;
+  followUpDays?: number;
+  followUpEstimatedDate?: number;
+  followUpRequired?: boolean;
   omittedFields: { [key: string]: boolean };
   isReadyToFinish: boolean;
   prescriptionNotes: string;
   importantNotices: string;
+  emotionalEvaluationSelections?: string[];
   specialtyFormId?: string;
   specialtyFormName?: string;
   specialtyData?: Record<string, any>;
+  resonanceOrders?: ResonanceOrder[];
+  eegOrders?: EegOrder[];
 }
 
 export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) => {
   const isAdmin = user.role === 'admin';
-  const isDoctor = user.role === 'doctor';
+  const isDoctor = user.role === 'doctor' || user.role === 'licenciado';
   const isNurse = user.role === 'nurse';
   const isReceptionist = user.role === 'receptionist';
   const isResident = user.role === 'resident';
   
   // Roles de permisos
   const canConsult = isDoctor || isAdmin;
-  const canCreate = !isDoctor; // Solo no-doctores pueden crear citas
+  const canCreate = isAdmin || isReceptionist;
 
-  const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'admin' | 'history_detail' | 'settings' | 'my_schedule'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'patients' | 'patient_detail' | 'admin' | 'history_detail' | 'settings' | 'my_schedule'>('dashboard');
   const [allowDoctorSelfManage, setAllowDoctorSelfManage] = useState(false);
   
   // ESTADO PARA ALTERNAR VISTA AGENDA (Lista vs Calendario)
-  const [agendaViewMode, setAgendaViewMode] = useState<'list' | 'calendar'>('list');
+  const [agendaViewMode, setAgendaViewMode] = useState<'list' | 'calendar' | 'availability'>('list');
+  const [agendaSearchTerm, setAgendaSearchTerm] = useState('');
 
   // ESTADO PRINCIPAL DE WIZARD
   const [currentPatient, setCurrentPatient] = useState<Patient | null>(null);
@@ -122,6 +139,11 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const [isCuadernoExpanded, setIsCuadernoExpanded] = useState(true);
  
   const [todaysAppointments, setTodaysAppointments] = useState<Appointment[]>([]);
+  const [residentAppointments, setResidentAppointments] = useState<Appointment[]>([]);
+  const [agendaPage, setAgendaPage] = useState(1);
+  const [agendaLastDocs, setAgendaLastDocs] = useState<Record<number, DocumentSnapshot | null>>({});
+  const [agendaHasMore, setAgendaHasMore] = useState(false);
+  const [agendaDateFilter, setAgendaDateFilter] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   // Estados para Detalle de Historial
@@ -134,6 +156,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [showAppointmentDetailsModal, setShowAppointmentDetailsModal] = useState(false);
   const [showResidentIntakeModal, setShowResidentIntakeModal] = useState(false);
+  const [showResidentClinicalModal, setShowResidentClinicalModal] = useState(false);
+  const [residentClinicalAppointment, setResidentClinicalAppointment] = useState<Appointment | null>(null);
+  const [residentClinicalPatient, setResidentClinicalPatient] = useState<Patient | null>(null);
 
   // Estados para Entrega con Excepciones (Enfermería)
   const [showDeliveryOverrideModal, setShowDeliveryOverrideModal] = useState(false);
@@ -152,6 +177,17 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const [preSelectedPatientId, setPreSelectedPatientId] = useState<string | null>(null); // Para seleccionar al nuevo paciente
   const [currentConsultationType, setCurrentConsultationType] = useState<'Nueva' | 'Reconsulta' | undefined>(undefined);
   const [currentModality, setCurrentModality] = useState<'Virtual' | 'Presencial' | undefined>(undefined);
+
+  const [patientSearchTerm, setPatientSearchTerm] = useState('');
+  const [patientList, setPatientList] = useState<Patient[]>([]);
+  const [patientListLoading, setPatientListLoading] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+
+  // PAGINATION & PATIENT MODAL STATE
+  const [patientPage, setPatientPage] = useState(1);
+  const [patientLastDocs, setPatientLastDocs] = useState<Record<number, DocumentSnapshot | null>>({});
+  const [hasMorePatients, setHasMorePatients] = useState(false);
+  const [showPatientModal, setShowPatientModal] = useState(false);
 
   const topRef = useRef<HTMLDivElement>(null);
   const consultationTimerRef = useRef<number | null>(null);
@@ -173,7 +209,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   };
 
   const methods = useForm<WizardFormValues>({
-    defaultValues: { diagnosis: '', prescription: [], exams: [], referralGroups: [], specialtyReferrals: [], isReadyToFinish: false, followUpText: '', prescriptionNotes: '', importantNotices: '' }
+    defaultValues: { diagnosis: '', prescription: [], exams: [], referralGroups: [], specialtyReferrals: [], isReadyToFinish: false, followUpText: '', followUpRequestText: '', followUpDays: undefined, followUpEstimatedDate: undefined, followUpRequired: false, prescriptionNotes: '', importantNotices: '', emotionalEvaluationSelections: [], specialtyFormId: undefined, specialtyFormName: undefined, specialtyData: {}, resonanceOrders: undefined, eegOrders: undefined }
   });
 
   const formValues = methods.watch();
@@ -200,6 +236,12 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     loadAllUsers();
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (activeView === 'patients') {
+      loadPatientsList();
+    }
+  }, [activeView]);
 
   useEffect(() => {
     return () => {
@@ -269,39 +311,74 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     }
   };
 
-  // CARGAR CITAS DEL DÍA
-  const loadAppointments = async () => {
-    try {
-        // Solo filtrar por doctorId si es doctor. 
-        // Admin, Recepción, Residente y Enfermera ven todo.
-        const filterId = isDoctor ? user.uid : undefined;
-        
-        // Obtener citas crudas del servicio
-        const apps = await appointmentService.getAppointmentsForToday(filterId);
-        
-        // CORRECCIÓN: Convertir Timestamp a Date
-        const processedApps = apps.map(app => ({
-            ...app,
-            date: app.date instanceof Timestamp ? app.date.toDate() : new Date(app.date),
-            endDate: app.endDate instanceof Timestamp ? app.endDate.toDate() : new Date(app.endDate),
-            // Aseguramos que otros campos timestamp opcionales también se conviertan si existen
-            createdAt: app.createdAt instanceof Timestamp ? app.createdAt.toDate() : app.createdAt
-        }));
+  const getAgendaDateRange = (dateStr: string) => {
+    if (dateStr) {
+      const start = new Date(dateStr);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(dateStr);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+    }
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return { start, end: undefined as Date | undefined };
+  };
 
+  const fetchAgendaPage = async (targetPage: number, useResidentList: boolean) => {
+    try {
+      const filterId = isDoctor ? user.uid : undefined;
+      const { start, end } = getAgendaDateRange(agendaDateFilter);
+      const prevDoc = targetPage > 1 ? agendaLastDocs[targetPage - 1] : null;
+      if (targetPage > 1 && !prevDoc) {
+        setAgendaPage(1);
+        return;
+      }
+
+      const result = await appointmentService.getAppointmentsPaginated({
+        doctorId: filterId,
+        startDate: start,
+        endDate: end,
+        limitCount: AGENDA_PAGE_SIZE,
+        lastDoc: prevDoc || undefined
+      });
+
+      const processedApps = result.appointments.map(app => ({
+        ...app,
+        date: app.date instanceof Timestamp ? app.date.toDate() : new Date(app.date),
+        endDate: app.endDate instanceof Timestamp ? app.endDate.toDate() : new Date(app.endDate),
+        createdAt: app.createdAt instanceof Timestamp ? app.createdAt.toDate() : app.createdAt
+      }));
+
+      if (useResidentList) {
+        setResidentAppointments(processedApps);
+      } else {
         setTodaysAppointments(processedApps);
+      }
+
+      setAgendaHasMore(result.hasMore);
+      setAgendaLastDocs(prev => ({
+        ...prev,
+        [targetPage]: result.lastDoc || null
+      }));
     } catch (error) {
-        console.error("Error loading appointments", error);
+      console.error("Error loading appointments", error);
     }
   };
 
   useEffect(() => {
-    // Solo cargamos la lista si estamos en modo lista para no hacer doble fetch
     if (agendaViewMode === 'list') {
-        loadAppointments();
-        const interval = setInterval(loadAppointments, 60000);
+        const useResidentList = isResident;
+        fetchAgendaPage(agendaPage, useResidentList);
+        const interval = setInterval(() => fetchAgendaPage(agendaPage, useResidentList), 60000);
         return () => clearInterval(interval);
     }
-  }, [user.uid, isDoctor, isAdmin, agendaViewMode]);
+  }, [user.uid, isDoctor, isAdmin, isResident, agendaViewMode, agendaPage, agendaDateFilter]);
+
+  useEffect(() => {
+    setAgendaPage(1);
+    setAgendaLastDocs({});
+    setAgendaHasMore(false);
+  }, [agendaDateFilter, isResident]);
 
   // CARGAR DATOS PARA MODAL DE CITA
   const loadModalData = async () => {
@@ -319,11 +396,28 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     }
   }, [showCreateAppointmentModal]);
 
+  useEffect(() => {
+    if (agendaViewMode === 'availability' && allDoctors.length === 0) {
+      userService.getDoctors().then(setAllDoctors);
+    }
+  }, [agendaViewMode, allDoctors.length]);
+
 
   // --- INICIAR CONSULTA (MÁQUINA DE ESTADOS) ---
   const handleStartConsultation = async (appt: Appointment) => {
-    if (appt.status !== 'resident_intake' && appt.status !== 'in_progress') {
-        toast.error("El paciente debe pasar primero por evaluación de enfermería.");
+    const isNewConsultation = appt.consultationType === 'Nueva';
+    const requiresResidentFicha = isNewConsultation;
+    const residentFichaCompleted = appt.residentClinicalCompleted === true;
+    const canSkipNurse = appt.consultationType === 'Reconsulta' && appt.goToNurse === false;
+    const statusAllowsStart = appt.status === 'resident_intake' || appt.status === 'in_progress' || (canSkipNurse && appt.status === 'paid_checked_in');
+
+    if (requiresResidentFicha && !residentFichaCompleted) {
+        toast.error("Debe completarse la ficha clínica del residente antes de iniciar.");
+        return;
+    }
+
+    if (!statusAllowsStart) {
+        toast.error("El paciente debe pasar primero por enfermería.");
         return;
     }
 
@@ -393,14 +487,21 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
         loadImportantNotices(patient.id);
         setCurrentConsultationId(activeConsId);
         
+        const residentDefaults = residentFichaCompleted ? {
+            specialtyFormId: appt.residentSpecialtyFormId || undefined,
+            specialtyFormName: appt.residentSpecialtyFormName || undefined,
+            specialtyData: appt.residentSpecialtyData || {}
+        } : {};
+
+        const baseForm = getEmptyForm(residentDefaults);
         const savedDraft = localStorage.getItem(`draft_${activeConsId}`);
         if (savedDraft) {
             try {
-                methods.reset(JSON.parse(savedDraft));
+                methods.reset({ ...baseForm, ...JSON.parse(savedDraft) });
                 toast.info("Sesión restaurada");
-            } catch (e) { methods.reset(getEmptyForm()); }
+            } catch (e) { methods.reset(baseForm); }
         } else {
-            methods.reset(getEmptyForm());
+            methods.reset(baseForm);
         }
 
         setStep(1); 
@@ -416,6 +517,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const createNewConsultationDoc = async (appt: Appointment, patient: Patient) => {
       const isForeign = isForeignPatient(patient);
+      const primarySpecialty = Array.isArray(user.specialties) && user.specialties.length > 0
+        ? user.specialties[0]
+        : (user.specialty || '');
       const newCons = { 
           status: 'in_progress' as const, 
           paymentReceipt: appt.paymentReceipt || 'N/A', 
@@ -426,11 +530,14 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
           patientIsForeign: isForeign, 
           doctorId: user.uid, 
           doctorName: user.name, 
-          doctorSpecialty: user.specialty,
+          doctorSpecialty: primarySpecialty,
           consultationType: appt.consultationType || 'Nueva',
           modality: appt.modality || 'Presencial',
           date: Date.now(), 
           appointmentId: appt.id,
+          specialtyFormId: appt.residentSpecialtyFormId || null,
+          specialtyFormName: appt.residentSpecialtyFormName || null,
+          specialtyData: appt.residentSpecialtyData || {},
           createdAt: Timestamp.now() 
       };
       const ref = await addDoc(collection(db, 'consultations'), newCons);
@@ -444,7 +551,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               createdBy: user.uid
           });
           toast.success("Cita agendada correctamente");
-          loadAppointments(); 
+          fetchAgendaPage(agendaPage, isResident);
           setShowCreateAppointmentModal(false);
           setPreSelectedPatientId(null);
       } catch (error: any) {
@@ -456,14 +563,69 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
       }
   };
 
-  const getEmptyForm = () => ({ diagnosis: '', prescription: [], exams: [], referralGroups: [], specialtyReferrals: [], isReadyToFinish: false, followUpText: '', prescriptionNotes: '', importantNotices: '' });
+  const getEmptyForm = (overrides?: Partial<WizardFormValues>) => ({
+    diagnosis: '',
+    prescription: [],
+    exams: [],
+    referralGroups: [],
+    specialtyReferrals: [],
+    isReadyToFinish: false,
+    followUpText: '',
+    followUpRequestText: '',
+    followUpDays: undefined,
+    followUpEstimatedDate: undefined,
+    followUpRequired: false,
+    prescriptionNotes: '',
+    importantNotices: '',
+    emotionalEvaluationSelections: [],
+    specialtyFormId: undefined,
+    specialtyFormName: undefined,
+    specialtyData: {},
+    resonanceOrders: undefined,
+    eegOrders: undefined,
+    ...overrides
+  });
+
+  const followUpRequestText = methods.watch('followUpRequestText');
+  const resonanceOrders = methods.watch('resonanceOrders') || [];
+  const eegOrders = methods.watch('eegOrders') || [];
+
+  const isFilled = (value?: string) => typeof value === 'string' && value.trim().length > 0;
+
+  const areResonanceOrdersComplete = resonanceOrders.every((order: ResonanceOrder) =>
+    isFilled(order.examName) && isFilled(order.probableDiagnosis) && isFilled(order.attentionNotes)
+  );
+  const areEegOrdersComplete = eegOrders.every((order: EegOrder) =>
+    isFilled(order.examName) &&
+    isFilled(order.duration) &&
+    isFilled(order.probableDiagnosis) &&
+    isFilled(order.specialIndications) &&
+    isFilled(order.medicatedWith) &&
+    isFilled(order.videoMonitoringHours) &&
+    isFilled(order.videoMonitoringSleepDeprivation) &&
+    isFilled(order.ictalVideoHours) &&
+    isFilled(order.ictalSleepDeprivation) &&
+    isFilled(order.spikeDetectionHours)
+  );
+  const hasIncompleteOrders = (resonanceOrders.length > 0 && !areResonanceOrdersComplete) || (eegOrders.length > 0 && !areEegOrdersComplete);
+  const isFollowUpMissing = !isFilled(followUpRequestText);
+  const nextDisabled = (step === 2 && isFollowUpMissing) || (step === 3 && hasIncompleteOrders);
 
   // --- NAVEGACIÓN Y HISTORIAL ---
 
   const goToDetail = async (c: Consultation) => {
     setLoadingHistory(true);
     try {
-        const p = await getPatientByDPI(c.patientId);
+        const patientId = c.patientId ? String(c.patientId) : '';
+        let p = null;
+        if (patientId) {
+            p = await getPatientByDPI(patientId);
+            if (!p) {
+                toast.error("Paciente no encontrado. Se mostrará el detalle básico.");
+            }
+        } else {
+            toast.error("Consulta sin paciente asociado. Se mostrará el detalle básico.");
+        }
         setHistoryPatient(p);
         setSelectedHistoryConsultation(c);
         setShowSuccessModal(false);
@@ -476,13 +638,11 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     }
   };
 
-  const handlePrintDoc = async (type: 'prescription' | 'labs' | 'report' | 'full_ficha') => {
+  const handlePrintDoc = async (type: 'prescription' | 'labs' | 'report' | 'full_ficha' | 'resonance_orders' | 'eeg_orders') => {
       if (!selectedHistoryConsultation || !historyPatient) return;
       try {
           const action: 'download' | 'print' = (isDoctor && !isNurse && !isAdmin) ? 'download' : 'print';
 
-          // LOGIC FIX: Always use the Consultation's Doctor profile for PDF generation (signature/header),
-          // regardless of who is printing (Nurse/Admin/Doctor).
           let doctorProfileForPdf = user;
           
           if (selectedHistoryConsultation.doctorId && selectedHistoryConsultation.doctorId !== user.uid) {
@@ -491,11 +651,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                   doctorProfileForPdf = foundDoctor;
               } else {
                   // Fallback if doctor profile not found in cache: create a temporary profile with stored names
+                  const fallbackSpecialty = (selectedHistoryConsultation as any).doctorSpecialty || "Medicina General";
                   doctorProfileForPdf = {
                       ...user, // Base on current user for structure
                       uid: selectedHistoryConsultation.doctorId,
                       name: selectedHistoryConsultation.doctorName || "Doctor",
-                      specialty: (selectedHistoryConsultation as any).doctorSpecialty || "Medicina General",
+                      specialty: fallbackSpecialty,
+                      specialties: [fallbackSpecialty],
                       role: 'doctor'
                   };
               }
@@ -507,11 +669,15 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               await generateExamsPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
           } else if (type === 'report') {
               await generateNursingPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+          } else if (type === 'resonance_orders') {
+              await generateResonanceOrdersPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+          } else if (type === 'eeg_orders') {
+              await generateEegOrdersPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
           } else {
               await generateFullFichaPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
           }
 
-          if (!isDoctor && (isNurse || isAdmin)) {
+          if (!isDoctor && (isNurse || isAdmin || isReceptionist) && selectedHistoryConsultation.status !== 'delivered') {
               const printedKey =
                 type === 'prescription'
                   ? 'prescription'
@@ -519,6 +685,10 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                   ? 'labs'
                   : type === 'report'
                   ? 'report'
+                  : type === 'resonance_orders'
+                  ? 'resonanceOrders'
+                  : type === 'eeg_orders'
+                  ? 'eegOrders'
                   : 'fullFicha';
               const updatedPrintedDocs = { ...(selectedHistoryConsultation.printedDocs || {}), [printedKey]: true };
 
@@ -535,6 +705,10 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               ? 'reporte de enfermería'
               : type === 'labs'
               ? 'labs'
+              : type === 'resonance_orders'
+              ? 'órdenes de resonancia'
+              : type === 'eeg_orders'
+              ? 'órdenes de EEG'
               : type === 'full_ficha'
               ? 'ficha completa'
               : 'receta';
@@ -547,11 +721,12 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const hasAllRequiredDocsPrinted = (consultation: Consultation | null) => {
       if (!consultation || !consultation.printedDocs) return false;
-      const { prescription, labs, report, fullFicha } = consultation.printedDocs;
-      const basePrinted = !!prescription && !!labs && !!report;
-      const hasFichaFlag = Object.prototype.hasOwnProperty.call(consultation.printedDocs, 'fullFicha');
-      const fichaPrintedOrNotRequired = hasFichaFlag ? !!fullFicha : true;
-      return basePrinted && fichaPrintedOrNotRequired;
+      const { prescription, labs, resonanceOrders, eegOrders } = consultation.printedDocs;
+      const basePrinted = !!prescription && !!labs;
+      const hasResonanceOrders = (consultation.resonanceOrders?.length || 0) > 0;
+      const hasEegOrders = (consultation.eegOrders?.length || 0) > 0;
+      const ordersPrinted = (!hasResonanceOrders || !!resonanceOrders) && (!hasEegOrders || !!eegOrders);
+      return basePrinted && ordersPrinted;
   };
 
   const attemptFinalizeDelivery = () => {
@@ -576,6 +751,11 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               updateData.nonPrintReason = reason.trim();
           }
           await updateDoc(consRef, updateData);
+          if(reason && reason.trim()){
+            await logAuditAction( user.name, "Expediente Entregado", `El usuario ${user.name} ha entregado sus archivos correctamente al paciente ${historyPatient.fullName}, con archivos no impresos por la razón: ${reason.trim()}`);
+          } else {
+            await logAuditAction( user.name, "Expediente Entregado", `El usuario ${user.name} ha entregado sus archivos correctamente al paciente ${historyPatient.fullName}`);
+          }
 
           toast.success("Entregado correctamente");
           setShowDeliveryOverrideModal(false);
@@ -585,11 +765,22 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const filteredAppointments = todaysAppointments.filter(appt => {
     if (isDoctor) return appt.status === 'resident_intake' || appt.status === 'in_progress' || appt.status === 'paid_checked_in';
-    if (isResident) return appt.status === 'paid_checked_in';
     if (isNurse) return appt.status === 'paid_checked_in' || appt.status === 'in_progress' || appt.status === 'completed';
     if (isReceptionist || isAdmin) return true;
     return false;
   });
+
+  const normalizeSearch = (value: string) =>
+    value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+
+  const baseAppointments = isResident ? residentAppointments : filteredAppointments;
+  const normalizedAgendaSearch = normalizeSearch(agendaSearchTerm);
+  const searchedAppointments = baseAppointments.filter(appt => {
+    if (!normalizedAgendaSearch) return true;
+    const haystack = normalizeSearch(`${appt.patientName || ''} ${appt.doctorName || ''}`);
+    return haystack.includes(normalizedAgendaSearch);
+  });
+  const listAppointments = searchedAppointments;
 
   const handleToggleNurseFlow = async (appt: Appointment) => {
     if (!appt.id) return;
@@ -632,19 +823,135 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     }
   };
 
+  const handleOpenResidentClinical = async (appt: Appointment) => {
+    if (appt.consultationType !== 'Nueva') {
+      toast.error("La ficha clínica del residente solo aplica a consultas nuevas.");
+      return;
+    }
+    try {
+      const patient = await getPatientByDPI(appt.patientId);
+      if (!patient) {
+        toast.error("No se encontró el paciente");
+        return;
+      }
+      setResidentClinicalAppointment(appt);
+      setResidentClinicalPatient(patient);
+      setShowResidentClinicalModal(true);
+    } catch (error) {
+      toast.error("Error al cargar datos del paciente");
+    }
+  };
+
+  const handleResidentClinicalSaved = (updates: Partial<Appointment>) => {
+    if (!residentClinicalAppointment?.id) return;
+    const updateList = (list: Appointment[]) =>
+      list.map(a => a.id === residentClinicalAppointment.id ? { ...a, ...updates } : a);
+    setResidentAppointments(prev => updateList(prev));
+    setTodaysAppointments(prev => updateList(prev));
+  };
+
   const hasConsultationTimer = consultationDurationSeconds !== null && consultationRemainingSeconds !== null;
   const countdown = hasConsultationTimer ? formatCountdown(consultationRemainingSeconds!) : null;
+  const agendaPagination = {
+    currentPage: agendaPage,
+    hasNext: agendaHasMore,
+    onPrev: () => setAgendaPage(p => Math.max(1, p - 1)),
+    onNext: () => setAgendaPage(p => (agendaHasMore ? p + 1 : p))
+  };
+
+  const loadPatientsList = async (term?: string, targetPage: number = 1) => {
+    const search = (term ?? patientSearchTerm).trim();
+    setPatientListLoading(true);
+    try {
+      if (search) {
+        const results = await patientService.search(search);
+        setPatientList(results);
+        setHasMorePatients(false);
+        setPatientPage(1);
+      } else {
+        // Pagination logic
+        let startDoc = null;
+        if (targetPage > 1) {
+            startDoc = patientLastDocs[targetPage - 1]; 
+            if (!startDoc) {
+                targetPage = 1;
+            }
+        }
+
+        const { patients, lastDoc: newLastDoc, hasMore } = await patientService.getPaginated(20, startDoc);
+        setPatientList(patients);
+        setHasMorePatients(hasMore);
+        setPatientPage(targetPage);
+        
+        if (newLastDoc) {
+            setPatientLastDocs(prev => ({ ...prev, [targetPage]: newLastDoc }));
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al cargar pacientes");
+    } finally {
+      setPatientListLoading(false);
+    }
+  };
+
+  const handlePatientSearchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await loadPatientsList(undefined, 1);
+  };
+
+  const handleClearPatientSearch = async () => {
+    setPatientSearchTerm('');
+    await loadPatientsList('', 1);
+  };
+
+  const handleNextPage = () => {
+    if (hasMorePatients && !patientListLoading) {
+        loadPatientsList(undefined, patientPage + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (patientPage > 1 && !patientListLoading) {
+        loadPatientsList(undefined, patientPage - 1);
+    }
+  };
+
+  const handleCreatePatientClick = () => {
+      setSelectedPatient(null); 
+      setShowPatientModal(true);
+  };
+
+  const handlePatientSavedFromModal = (newPatient: Patient) => {
+      // Mostrar directamente al paciente nuevo en la lista para confirmación visual inmediata
+      setPatientSearchTerm(newPatient.fullName);
+      setPatientList([newPatient]);
+      setHasMorePatients(false);
+      setPatientPage(1);
+      toast.success("Paciente creado exitosamente");
+  };
+
+  const handleSelectPatient = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setActiveView('patient_detail');
+  };
+
+  const handlePatientSaved = (updated: Patient) => {
+    setSelectedPatient(updated);
+    setPatientList(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+  };
 
   return (
     <MainLayout 
         user={user} 
         onLogout={onLogout} 
-        activeView={activeView === 'history_detail' ? 'history' : activeView} 
+        activeView={activeView === 'history_detail' ? 'history' : activeView === 'patient_detail' ? 'patients' : activeView} 
         onViewChange={setActiveView} 
         allowDoctorSelfManage={allowDoctorSelfManage}
         currentTitle={
             (currentPatient && activeView === 'dashboard') ? currentPatient.fullName : 
-            activeView === 'history_detail' ? `Expediente: ${selectedHistoryConsultation?.patientName}` : 
+            activeView === 'history_detail' ? `Expediente: ${selectedHistoryConsultation?.patientName}` :
+            activeView === 'patient_detail' ? `Paciente: ${selectedPatient?.fullName}` :
             undefined
         }
     >
@@ -668,6 +975,37 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                    onDeliver={attemptFinalizeDelivery}
                    isSaving={isSaving}
                    onUpdate={(updated) => setSelectedHistoryConsultation(updated)}
+               />
+           ) : activeView === 'patients' ? (
+              <>
+               <PatientListView
+                   searchTerm={patientSearchTerm}
+                   onSearchTermChange={setPatientSearchTerm}
+                   onSearchSubmit={handlePatientSearchSubmit}
+                   onClearSearch={handleClearPatientSearch}
+                   patients={patientList}
+                   loading={patientListLoading}
+                   onSelectPatient={handleSelectPatient}
+                   onCreatePatient={handleCreatePatientClick}
+                   onNextPage={handleNextPage}
+                   onPrevPage={handlePrevPage}
+                   hasMore={hasMorePatients}
+                   page={patientPage}
+                   isFirstPage={patientPage === 1}
+               />
+               <PatientModal
+                   isOpen={showPatientModal}
+                   onClose={() => setShowPatientModal(false)}
+                   currentUser={user}
+                   onSaved={handlePatientSavedFromModal}
+               />
+               </>
+           ) : activeView === 'patient_detail' && selectedPatient ? (
+               <PatientDetailView
+                   patient={selectedPatient}
+                   currentUser={user}
+                   onBack={() => setActiveView('patients')}
+                   onPatientUpdated={handlePatientSaved}
                />
            ) : currentPatient ? (
                /* --- WIZARD DE CONSULTA ACTIVA --- */
@@ -875,13 +1213,27 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
                    <FormProvider {...methods}>
                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
-                           {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} appointmentType={currentConsultationType} />}
+                           {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />}
                           {step === 2 && <StepPrescription currentUser={user} />}
-                          {step === 3 && <StepExams userSpecialty={user.specialty} patient={currentPatient} appointmentType={currentConsultationType} />}
+                         {step === 3 && (
+                           <StepExams
+                             userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
+                             patient={currentPatient}
+                             appointmentType={currentConsultationType}
+                           />
+                         )}
                           {step === 4 && <StepFinalize 
                                currentUser={user}
                                 hasUnseenImportantNotices={hasUnseenImportantNotices}
                                 onFinish={methods.handleSubmit(async (d) => {
+                                if (isFollowUpMissing) {
+                                    toast.error('Debe completar la reconsulta antes de finalizar.');
+                                    return;
+                                }
+                                if (hasIncompleteOrders) {
+                                    toast.error('Complete todos los campos de las órdenes antes de finalizar.');
+                                    return;
+                                }
                                 setIsSaving(true);
                                 try {
                                     const consultationRef = doc(db, 'consultations', currentConsultationId!);
@@ -922,7 +1274,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                         specialtyFormId: specialtyFormId || null,
                                         specialtyFormName: specialtyFormName || null,
                                         specialtyData: filteredSpecialtyData || {},
-                                        printedDocs: { prescription: false, labs: false, report: false } 
+                                        printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
                                     };
 
                                     // Sanitizar undefined a null para evitar errores de Firestore
@@ -943,15 +1295,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                         }
                                     }
 
-                                    // Si la consulta era NUEVA, actualizamos al paciente a RECONSULTA
-                                    if (currentPatient && (currentPatient.consultationType === 'Nueva' || (currentPatient.consultationType as string) === 'Primera Consulta')) {
-                                        try {
-                                            const patientRef = doc(db, 'patients', currentPatient.id!);
-                                            await updateDoc(patientRef, { consultationType: 'Reconsulta' });
-                                        } catch (err) {
-                                            console.error("Error al actualizar tipo de consulta del paciente", err);
-                                        }
-                                    }
+                                    
 
                                     // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
                                     const notificationPayload = { 
@@ -962,24 +1306,34 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                     await notifyConsultationFinished(notificationPayload, user.name);
 
                                     try {
-                                        const textSources: string[] = [];
-                                        if (finishedData.diagnosis) textSources.push(finishedData.diagnosis);
-                                        if (finishedData.followUpText) textSources.push(finishedData.followUpText);
-                                        if (finishedData.prescriptionNotes) textSources.push(finishedData.prescriptionNotes);
-                                        const combinedText = textSources.join('\n\n');
+                                        if (finishedData.followUpRequired && finishedData.followUpDays && finishedData.followUpEstimatedDate) {
+                                            await notifyReceptionFollowUp(
+                                                { ...notificationPayload, followUpRequired: true } as Consultation,
+                                                user.name,
+                                                finishedData.followUpDays,
+                                                new Date(finishedData.followUpEstimatedDate)
+                                            );
+                                        } else {
+                                            const textSources: string[] = [];
+                                            if (finishedData.diagnosis) textSources.push(finishedData.diagnosis);
+                                            if (finishedData.followUpText) textSources.push(finishedData.followUpText);
+                                            if (finishedData.prescriptionNotes) textSources.push(finishedData.prescriptionNotes);
+                                            if (finishedData.followUpRequestText) textSources.push(finishedData.followUpRequestText);
+                                            const combinedText = textSources.join('\n\n');
 
-                                        if (combinedText.trim().length > 0) {
-                                            const { analyzeFollowUpIntent } = await import('../services/geminiService.ts');
-                                            const analysis = await analyzeFollowUpIntent(combinedText);
-                                            if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
-                                                const baseDate = new Date(finishedData.date || Date.now());
-                                                const followUpDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
-                                                await notifyReceptionFollowUp(
-                                                    { ...notificationPayload, followUpRequired: true } as Consultation,
-                                                    user.name,
-                                                    analysis.days,
-                                                    followUpDate
-                                                );
+                                            if (combinedText.trim().length > 0) {
+                                                const { analyzeFollowUpIntent } = await import('../services/geminiService.ts');
+                                                const analysis = await analyzeFollowUpIntent(combinedText);
+                                                if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
+                                                    const baseDate = new Date(finishedData.date || Date.now());
+                                                    const followUpDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
+                                                    await notifyReceptionFollowUp(
+                                                        { ...notificationPayload, followUpRequired: true } as Consultation,
+                                                        user.name,
+                                                        analysis.days,
+                                                        followUpDate
+                                                    );
+                                                }
                                             }
                                         }
                                     } catch (aiError) {
@@ -995,7 +1349,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                     methods.reset();
                                     setShowSuccessModal(true);
                                     
-                                    loadAppointments();
+                                    fetchAgendaPage(agendaPage, isResident);
 
                                 } catch (e) { 
                                     console.error("Error CRÍTICO al guardar consulta:", e);
@@ -1011,7 +1365,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                 } finally { setIsSaving(false); }
                            })} isSaving={isSaving} />}
                            
-                           <div className="mt-8 flex justify-between gap-4">
+                           {nextDisabled && (
+                               <p className="mb-3 text-xs font-bold text-red-600">
+                                   {step === 2 && isFollowUpMissing && 'Debe completar la reconsulta para continuar.'}
+                                   {step === 3 && hasIncompleteOrders && 'Complete todos los campos de las órdenes para continuar.'}
+                               </p>
+                           )}
+                           <div className="mt-4 flex justify-between gap-4">
                                <button onClick={() => {
                                    if (step === 1) {
                                        setCurrentPatient(null);
@@ -1027,7 +1387,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                      setStep(s => s + 1);
                                      setIsCuadernoExpanded(false);
                                    }}
-                                   className="px-8 py-2 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 shadow-lg transition-colors"
+                                  disabled={nextDisabled}
+                                  className="px-8 py-2 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                  >
                                    Siguiente
                                  </button>
@@ -1066,6 +1427,12 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                     >
                                         <LayoutGrid className="w-4 h-4" /> Calendario
                                     </button>
+                                    <button 
+                                        onClick={() => setAgendaViewMode('availability')}
+                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'availability' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        <Clock className="w-4 h-4" /> Disponibilidad
+                                    </button>
                                </div>
                            </div>
                            
@@ -1086,157 +1453,54 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
                        {/* CONTENIDO DE VISTAS */}
                        <div className="flex-1 overflow-hidden">
-                           {agendaViewMode === 'list' ? (
-                               /* VISTA DE LISTA (TABLA CLÁSICA) */
-                               <div className="overflow-x-auto h-full">
-                                    <table className="w-full text-left min-w-[700px]">
-                                        <thead className="bg-slate-200 text-[10px] text-slate-600 uppercase font-bold tracking-widest border-b border-slate-300">
-                                            <tr>
-                                                <th className="p-4">Hora</th>
-                                                <th className="p-4">Paciente</th>
-                                                <th className="p-4">Motivo</th>
-                                                <th className="p-4">Médico</th>
-                                                <th className="p-4">Estado</th>
-                                                <th className="p-4 text-right">Acción</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {filteredAppointments.map(appt => {
-                                                const isReadyForDoctor = appt.status === 'resident_intake';
-                                                const isInProgress = appt.status === 'in_progress';
-                                                const isLocked = isDoctor && (!isReadyForDoctor && !isInProgress);
-                                                
-                                                const timeString = appt.date instanceof Date 
-                                                    ? appt.date.toLocaleTimeString('es-GT', {hour:'2-digit', minute:'2-digit', timeZone: 'America/Guatemala'})
-                                                    : 'Hora inválida';
+                          {agendaViewMode === 'list' ? (
+                              <AgendaListView
+                                appointments={listAppointments}
+                                isDoctor={isDoctor}
+                                isResident={isResident}
+                                isNurse={isNurse}
+                                isReceptionist={isReceptionist}
+                                isAdmin={isAdmin}
+                                isSaving={isSaving}
+                                onOpenDetails={(appt) => {
+                                  setSelectedAppointment(appt);
+                                  setShowAppointmentDetailsModal(true);
+                                }}
+                                onOpenNurseIntake={handleOpenResidentIntake}
+                                onOpenResidentClinical={handleOpenResidentClinical}
+                                onStartConsultation={handleStartConsultation}
+                                onToggleNurseFlow={handleToggleNurseFlow}
+                                onViewSummary={async (appt) => {
+                                  const startOfDay = new Date();
+                                  startOfDay.setHours(0, 0, 0, 0);
 
-                                                return (
-                                                    <tr key={appt.id} className={`${isInProgress ? 'bg-amber-50/40' : 'hover:bg-slate-50/50 transition-colors'}`}>
-                                                        <td className="p-4 text-sm font-bold text-slate-500 font-mono">
-                                                            {timeString}
-                                                        </td>
-                                                       <td className="p-4 text-sm">
-                                                           <div className="font-bold text-slate-800">{appt.patientName}</div>
-                                                       </td>
-                                                       <td className="p-4 text-sm text-slate-600 truncate max-w-[150px]">{appt.reason}</td>
-                                                       <td className="p-4 text-sm font-medium text-brand-700">Dr. {appt.doctorName}</td>
-                                                        <td className="p-4">
-                                                            {appt.status === 'scheduled' && <span className="px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-xs font-bold border border-slate-200">Agendada</span>}
-                                                            {appt.status === 'confirmed_phone' && <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs font-bold border border-yellow-200">Confirmada</span>}
-                                                            {appt.status === 'paid_checked_in' && <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold border border-green-200 flex w-fit items-center gap-1"><CheckCircle className="w-3 h-3"/> En Sala</span>}
-                                                            {appt.status === 'resident_intake' && <span className="px-3 py-1 bg-sky-100 text-sky-700 rounded-full text-xs font-bold border border-sky-200 flex w-fit items-center gap-1"><CheckCircle className="w-3 h-3"/> Listo para consulta</span>}
-                                                            {appt.status === 'in_progress' && <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold border border-blue-200 animate-pulse">En Consulta</span>}
-                                                            {appt.status === 'completed' && <span className="px-3 py-1 bg-gray-100 text-gray-500 rounded-full text-xs font-bold">Finalizada</span>}
-                                                            {appt.status === 'no_show' && <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full text-xs font-bold border border-red-200">No se presentó</span>}
-                                                            {(isReceptionist || isAdmin) && appt.consultationType === 'Reconsulta' && (
-                                                                <div className="mt-2 flex items-center gap-2">
-                                                                    <span className="text-[10px] text-slate-500 font-medium">
-                                                                        Paso por enfermería:
-                                                                    </span>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => handleToggleNurseFlow(appt)}
-                                                                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${
-                                                                            appt.goToNurse === false
-                                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                                                : 'bg-amber-50 text-amber-700 border-amber-200'
-                                                                        }`}
-                                                                    >
-                                                                        {appt.goToNurse === false ? 'Directo a doctor' : 'Con enfermería'}
-                                                                    </button>
-                                                                </div>
-                                                            )}
-                                                        </td>
-                                                        <td className="p-4 text-right">
-                                                            {/* BOTÓN PARA RECEPCIONISTA / ADMIN */}
-                                                            {(isReceptionist || isAdmin) && (
-                                                                <button 
-                                                                    onClick={() => {
-                                                                        setSelectedAppointment(appt);
-                                                                        setShowAppointmentDetailsModal(true);
-                                                                    }}
-                                                                    className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition shadow-md flex items-center gap-2 ml-auto"
-                                                                >
-                                                                    <Plus className="w-3 h-3" /> Ver Detalle / Boleta
-                                                                </button>
-                                                            )}
-
-                                                            {/* BOTÓN PARA ENFERMERÍA (ANTES RESIDENTE) */}
-                                                            {isNurse && appt.status === 'paid_checked_in' && (
-                                                                <button 
-                                                                    onClick={() => handleOpenResidentIntake(appt)}
-                                                                    className="px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition shadow-md flex items-center gap-2 ml-auto"
-                                                                >
-                                                                    <FileText className="w-3 h-3" /> Evaluación Enfermería
-                                                                </button>
-                                                            )}
-
-                                                            {/* BOTÓN PARA ENFERMERA - VER RESUMEN */}
-                                                             {isNurse && appt.status === 'completed' && (
-                                                                 <button 
-                                                                     onClick={async () => {
-                                                                         // Buscar la consulta asociada para ver el detalle
-                                                                         const startOfDay = new Date();
-                                                                         startOfDay.setHours(0, 0, 0, 0);
-                                                                         
-                                                                         const q = query(
-                                                                             collection(db, 'consultations'), 
-                                                                             where('patientId', '==', appt.patientId),
-                                                                             where('status', 'in', ['finished', 'delivered']),
-                                                                             where('date', '>=', startOfDay.getTime())
-                                                                         );
-                                                                         const snap = await getDocs(q);
-                                                                         if (!snap.empty) {
-                                                                             const doc = snap.docs[0];
-                                                                             goToDetail({ id: doc.id, ...doc.data() } as Consultation);
-                                                                         } else {
-                                                                             toast.error("No se encontró el detalle de la consulta de hoy");
-                                                                         }
-                                                                     }}
-                                                                     className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-md flex items-center gap-2 ml-auto"
-                                                                 >
-                                                                     <List className="w-3 h-3" /> Ver Resumen
-                                                                 </button>
-                                                             )}
-
-                                                            {/* BOTÓN PARA DOCTOR */}
-                                                            {isDoctor && (appt.status === 'resident_intake' || appt.status === 'in_progress') &&  (
-                                                                <button 
-                                                                    onClick={() => handleStartConsultation(appt)}
-                                                                    disabled={isLocked || isSaving}
-                                                                    className={`
-                                                                        px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-2 ml-auto
-                                                                        ${isLocked 
-                                                                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' 
-                                                                            : 'bg-brand-600 text-white hover:bg-brand-700 shadow-brand-500/20 shadow-md'
-                                                                        }
-                                                                    `}
-                                                                >
-                                                                    {isLocked ? <Lock className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
-                                                                    {isInProgress ? 'Continuar' : 'Atender'}
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                            {filteredAppointments.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={6} className="p-12 text-center text-slate-400 italic font-medium">
-                                                        {isResident ? "No hay pacientes pendientes de evaluación" : 
-                                                         isNurse ? "No hay consultas activas o finalizadas por revisar" :
-                                                         "No hay citas programadas para hoy"}
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                               </div>
-                           ) : (
-                               /* VISTA DE CALENDARIO (React Big Calendar) */
+                                  const q = query(
+                                    collection(db, 'consultations'),
+                                    where('patientId', '==', appt.patientId),
+                                    where('status', 'in', ['finished', 'delivered']),
+                                    where('date', '>=', startOfDay.getTime())
+                                  );
+                                  const snap = await getDocs(q);
+                                  if (!snap.empty) {
+                                    const doc = snap.docs[0];
+                                    goToDetail({ id: doc.id, ...doc.data() } as Consultation);
+                                  } else {
+                                    toast.error("No se encontró el detalle de la consulta de hoy");
+                                  }
+                                }}
+                                pagination={agendaPagination}
+                                searchTerm={agendaSearchTerm}
+                                onSearchTermChange={setAgendaSearchTerm}
+                                dateFilter={agendaDateFilter}
+                                onDateFilterChange={setAgendaDateFilter}
+                                onClearDateFilter={() => setAgendaDateFilter('')}
+                              />
+                           ) : agendaViewMode === 'calendar' ? (
                                <div className="h-full p-4">
                                    <AppointmentCalendar user={user} />
                                </div>
+                           ) : (
+                               <AvailabilityView currentUser={user} doctors={allDoctors} />
                            )}
                        </div>
                    </motion.div>
@@ -1257,6 +1521,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                 setShowQuickPatientModal(true); 
             }}
             preSelectedPatientId={preSelectedPatientId}
+            existingAppointments={todaysAppointments}
         />
 
         <AnimatePresence>
@@ -1414,17 +1679,18 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
             }}
             appointment={selectedAppointment}
             userRole={user.role}
+            currentUser={user}
             users={allUsers}
             onConfirmPhone={async (id, method) => {
                 await appointmentService.confirmByPhone(id, user.uid, method);
                 toast.success("Cita confirmada");
-                loadAppointments();
+                fetchAgendaPage(agendaPage, isResident);
                 setShowAppointmentDetailsModal(false);
             }}
             onRegisterPayment={async (id, receipt, amount) => {
                 await appointmentService.registerPayment(id, user.uid, receipt, amount);
                 toast.success("Pago registrado");
-                loadAppointments();
+                fetchAgendaPage(agendaPage, isResident);
                 setShowAppointmentDetailsModal(false);
             }}
            onCancel={async (id, reason) => {
@@ -1435,7 +1701,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                     await appointmentService.cancelAppointment(id, reason);
                     toast.success("Cita cancelada");
                 }
-                loadAppointments();
+                fetchAgendaPage(agendaPage, isResident);
                 setShowAppointmentDetailsModal(false);
             }}
             onUpdateAppointment={async (id, updates) => {
@@ -1445,7 +1711,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                         editorName: user.name,
                     });
                     toast.success("Cita actualizada");
-                    loadAppointments();
+                    fetchAgendaPage(agendaPage, isResident);
                     setShowAppointmentDetailsModal(false);
                 } catch (error) {
                     console.error("Error al actualizar cita", error);
@@ -1467,8 +1733,23 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                 currentUser={user}
                 onSaveComplete={() => {
                     toast.success("Evaluación de la enfermera guardada");
-                    loadAppointments();
+                    fetchAgendaPage(agendaPage, isResident);
                 }}
+            />
+         )}
+
+         {showResidentClinicalModal && residentClinicalAppointment && residentClinicalPatient && (
+            <ResidentClinicalFormModal
+              isOpen={showResidentClinicalModal}
+              onClose={() => {
+                setShowResidentClinicalModal(false);
+                setResidentClinicalAppointment(null);
+                setResidentClinicalPatient(null);
+              }}
+              appointment={residentClinicalAppointment}
+              patient={residentClinicalPatient}
+              currentUser={user}
+              onSaveComplete={handleResidentClinicalSaved}
             />
          )}
     </MainLayout>

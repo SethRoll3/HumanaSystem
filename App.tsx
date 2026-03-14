@@ -3,9 +3,10 @@ import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { Toaster, toast } from 'sonner';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './src/firebase/config.ts';
 import { DoctorStation } from './src/pages/DoctorStation.tsx';
+import { specialtyFormsService } from './src/services/specialtyFormsService.ts';
 import { UserProfile } from './types.ts';
 import { Lock, Mail, Eye, EyeOff, Activity, ChevronRight, Loader2, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -50,6 +51,12 @@ export function App() {
   const [showPassword, setShowPassword] = useState(false);
   
   const sessionTimeoutRef = useRef<any>(null);
+  const userDocUnsubRef = useRef<null | (() => void)>(null);
+
+  useEffect(() => {
+    if (!user || user.role !== 'admin') return;
+    specialtyFormsService.getAll().catch(() => {});
+  }, [user]);
 
   // --- 1. FUNCIÓN PARA CERRAR SESIÓN ---
   const handleLogout = async (reason?: string) => {
@@ -109,6 +116,10 @@ export function App() {
   // --- 3. PERSISTENCIA DE AUTH ---
   useEffect(() => {
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+          if (userDocUnsubRef.current) {
+              userDocUnsubRef.current();
+              userDocUnsubRef.current = null;
+          }
           if (firebaseUser) {
               try {
                   // A. Verificar Cookie de Tiempo
@@ -126,49 +137,64 @@ export function App() {
                   startSessionTimer(sessionStart);
 
                   // B. Obtener Datos Usuario
-                  const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-                  
-                  if (userDoc.exists()) {
-                      const userData = userDoc.data() as any;
-                      if (userData.isActive === false) {
-                          handleLogout("Su cuenta ha sido desactivada.");
-                          setIsAuthChecking(false);
-                          return;
+                  userDocUnsubRef.current = onSnapshot(doc(db, 'users', firebaseUser.uid), (userDoc) => {
+                      if (userDoc.exists()) {
+                          const userData = userDoc.data() as any;
+                          if (userData.isActive === false) {
+                              handleLogout("Su cuenta ha sido desactivada.");
+                              setIsAuthChecking(false);
+                              return;
+                          }
+                          const specialties = Array.isArray(userData.specialties) && userData.specialties.length > 0
+                              ? userData.specialties
+                              : (userData.specialty ? [userData.specialty] : []);
+                          setUser({
+                              uid: firebaseUser.uid,
+                              email: userData.email,
+                              role: userData.role,
+                              name: userData.displayName || userData.name || 'Usuario',
+                              specialty: specialties[0] || 'Medicina General',
+                              specialties: specialties,
+                              isActive: userData.isActive !== false,
+                              digitalCertData: userData.digitalCertData
+                          });
+                      } else {
+                          setUser({
+                              uid: firebaseUser.uid,
+                              email: firebaseUser.email || '',
+                              role: 'doctor',
+                              name: 'Usuario',
+                              specialty: 'Medicina',
+                              specialties: ['Medicina'],
+                              isActive: true
+                          });
                       }
-
-                      setUser({
-                          uid: firebaseUser.uid,
-                          email: userData.email,
-                          role: userData.role,
-                          name: userData.displayName || userData.name || 'Usuario',
-                          specialty: userData.specialty || 'Medicina General',
-                          isActive: userData.isActive !== false,
-                          digitalCertData: userData.digitalCertData
-                      });
-                  } else {
-                      // Fallback
-                      setUser({
-                          uid: firebaseUser.uid,
-                          email: firebaseUser.email || '',
-                          role: 'doctor',
-                          name: 'Usuario',
-                          specialty: 'Medicina',
-                          isActive: true
-                      });
-                  }
+                      setIsAuthChecking(false);
+                  }, (error) => {
+                      console.error("Error sesión:", error);
+                      handleLogout();
+                      setIsAuthChecking(false);
+                  });
               } catch (error) {
                   console.error("Error sesión:", error);
                   handleLogout();
+                  setIsAuthChecking(false);
               }
           } else {
               setUser(null);
               setLoading(false);
               if (sessionTimeoutRef.current) clearTimeout(sessionTimeoutRef.current);
+              setIsAuthChecking(false);
           }
-          setIsAuthChecking(false);
       });
 
-      return () => unsubscribe();
+      return () => {
+          unsubscribe();
+          if (userDocUnsubRef.current) {
+              userDocUnsubRef.current();
+              userDocUnsubRef.current = null;
+          }
+      };
   }, []);
 
   // --- 4. LISTENER PARA SINCRONIZAR PESTAÑAS (STORAGE EVENT) ---
@@ -189,14 +215,30 @@ export function App() {
     e.preventDefault();
     setLoading(true);
     try {
-        await signInWithEmailAndPassword(auth, email, password);
+        const emailValue = email.trim().toLowerCase();
+        const passwordValue = password.trim();
+        if (!emailValue || !passwordValue) {
+            toast.error("Ingrese correo y contraseña.");
+            setLoading(false);
+            return;
+        }
+        await signInWithEmailAndPassword(auth, emailValue, passwordValue);
         const now = Date.now();
         setSessionCookie(now);
         startSessionTimer(now);
         toast.success("Bienvenido al sistema.");
     } catch (error: any) {
         console.error("Auth Error", error);
-        toast.error("Credenciales incorrectas.");
+        const code = error?.code as string | undefined;
+        if (code === 'auth/user-disabled') {
+            toast.error("Usuario deshabilitado.");
+        } else if (code === 'auth/invalid-email') {
+            toast.error("Correo inválido.");
+        } else if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+            toast.error("Credenciales incorrectas.");
+        } else {
+            toast.error("No se pudo iniciar sesión.");
+        }
         setLoading(false);
     }
   };

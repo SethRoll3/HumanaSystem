@@ -11,11 +11,33 @@ export const SpecialtyFormRenderer: React.FC<SpecialtyFormRendererProps> = ({ fo
     const { register, watch, formState: { errors } } = useFormContext();
     const values = watch();
 
+    const normalizeValue = (value: string) => {
+        return value
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
+    };
+
+    const matchesConditional = (dependentValue: any, expectedValue: string) => {
+        if (dependentValue === undefined || dependentValue === null) return false;
+        const expected = normalizeValue(String(expectedValue));
+        if (Array.isArray(dependentValue)) {
+            return dependentValue.some(item => normalizeValue(String(item)) === expected);
+        }
+        return normalizeValue(String(dependentValue)) === expected;
+    };
+
+    const buildOptionKey = (option: string, index: number) => {
+        const normalized = encodeURIComponent(option.trim());
+        return normalized || `op_${index + 1}`;
+    };
+
     const renderField = (field: FormField) => {
         // Lógica condicional
         if (field.conditional) {
             const dependentValue = values[`specialtyData.${field.conditional.fieldId}`];
-            if (dependentValue !== field.conditional.value) return null;
+            if (!matchesConditional(dependentValue, field.conditional.value)) return null;
         }
 
         const fieldName = `specialtyData.${field.id}`;
@@ -29,6 +51,38 @@ export const SpecialtyFormRenderer: React.FC<SpecialtyFormRendererProps> = ({ fo
         let widthClass = "col-span-12";
         if (field.width === 'third') widthClass = "col-span-12 md:col-span-4";
         else if (field.width === 'half') widthClass = "col-span-12 md:col-span-6";
+
+        if (field.type === 'header') {
+            return (
+                <div key={field.id} className="col-span-12">
+                    <div className="text-sm font-bold text-slate-700 uppercase tracking-wider border-b border-slate-200 pb-2">
+                        {field.label}
+                    </div>
+                </div>
+            );
+        }
+
+        if (field.type === 'subHeader') {
+            return (
+                <div key={field.id} className="col-span-12">
+                    <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                        {field.label}
+                    </div>
+                </div>
+            );
+        }
+
+        const radioOptions = field.type === 'radio'
+            ? (field.options && field.options.length > 0 ? field.options : ['Si', 'No'])
+            : [];
+
+        const checkboxOptions = field.type === 'checkbox'
+            ? (field.options && field.options.length > 0 ? field.options : ['Si', 'No'])
+            : [];
+
+        const multiTextOptions = field.type === 'multiText'
+            ? (field.options && field.options.length > 0 ? field.options : ['Detalle'])
+            : [];
 
         return (
             <div key={field.id} className={`${widthClass} space-y-1`}>
@@ -59,18 +113,57 @@ export const SpecialtyFormRenderer: React.FC<SpecialtyFormRendererProps> = ({ fo
                         <ChevronDown className="absolute right-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
                     </div>
                 ) : field.type === 'radio' ? (
-                    <div className="flex flex-wrap gap-4 mt-1">
-                        {field.options?.map((opt: string) => (
-                            <label key={opt} className="flex items-center gap-2 cursor-pointer group">
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {radioOptions.map((opt: string) => (
+                            <label key={opt} className="cursor-pointer">
                                 <input
                                     type="radio"
                                     value={opt}
                                     {...register(fieldName, { required: field.required ? "Seleccione una opción" : false })}
-                                    className="text-brand-600 focus:ring-brand-500 h-4 w-4"
+                                    className="sr-only peer"
                                 />
-                                <span className="text-sm text-slate-600 group-hover:text-slate-900">{opt}</span>
+                                <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-300 text-xs font-semibold text-slate-600 bg-white peer-checked:bg-brand-600 peer-checked:text-white peer-checked:border-brand-600 hover:border-brand-400 transition-colors">
+                                    {opt}
+                                </span>
                             </label>
                         ))}
+                    </div>
+                ) : field.type === 'checkbox' ? (
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {checkboxOptions.map((opt: string) => (
+                            <label key={opt} className="cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    value={opt}
+                                    {...register(fieldName)}
+                                    className="sr-only peer"
+                                />
+                                <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-300 text-xs font-semibold text-slate-600 bg-white peer-checked:bg-brand-600 peer-checked:text-white peer-checked:border-brand-600 hover:border-brand-400 transition-colors">
+                                    {opt}
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+                ) : field.type === 'multiText' ? (
+                    <div className="space-y-2 mt-1">
+                        {multiTextOptions.map((opt: string, idx: number) => {
+                            const optionKey = buildOptionKey(opt, idx);
+                            const optionFieldName = `${fieldName}.${optionKey}`;
+                            return (
+                                <div key={optionKey} className="flex flex-col gap-1">
+                                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                                        {opt}
+                                    </span>
+                                    <input
+                                        id={optionFieldName}
+                                        type="text"
+                                        {...register(optionFieldName)}
+                                        placeholder={field.placeholder}
+                                        className={`${baseInputClasses} ${error ? 'border-red-500' : ''}`}
+                                    />
+                                </div>
+                            );
+                        })}
                     </div>
                 ) : field.type === 'date' ? (
                      <input

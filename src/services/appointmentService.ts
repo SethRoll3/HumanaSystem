@@ -9,9 +9,12 @@ import {
   Timestamp,
   serverTimestamp,
   orderBy,
+  limit,
+  startAfter,
   arrayUnion,
   getDoc,
-  onSnapshot
+  onSnapshot,
+  DocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Appointment, AppointmentStatus } from '../types';
@@ -25,10 +28,72 @@ export const appointmentService = {
   // 1. Crear una nueva cita (Estado inicial: scheduled)
   async createAppointment(data: Omit<Appointment, 'id' | 'status' | 'createdAt'>, userEmail?: string) {
     const dateObj = data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date);
+    dateObj.setSeconds(0, 0);
+    const ensureDate = (value: any) => {
+      if (!value) return new Date();
+      if (value instanceof Date) return value;
+      if (value instanceof Timestamp) return value.toDate();
+      if (typeof value === 'number') return new Date(value);
+      if (value?.seconds) return new Timestamp(value.seconds, value.nanoseconds).toDate();
+      return new Date(value);
+    };
+    const baseDuration = data.consultationType === 'Nueva' ? 60 : 30;
+    const durationMinutes = Number.isFinite(data.duration as number)
+      ? Number(data.duration)
+      : baseDuration;
+    const endDateObj = data.endDate ? ensureDate(data.endDate) : new Date(dateObj.getTime() + durationMinutes * 60000);
+    endDateObj.setSeconds(0, 0);
+
+    const startOfDay = new Date(dateObj);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(dateObj);
+    endOfDay.setHours(23, 59, 59, 999);
 
     const validation = await doctorScheduleService.validateAppointmentForDoctor(data.doctorId, dateObj);
     if (!validation.ok) {
       throw new Error(validation.message || 'El doctor no tiene horario disponible para esta fecha.');
+    }
+
+    const exactQuery = query(
+      collection(db, COLLECTION_NAME),
+      where('doctorId', '==', data.doctorId),
+      where('date', '==', Timestamp.fromDate(dateObj))
+    );
+    const exactSnap = await getDocs(exactQuery);
+    const exactMatches = exactSnap.docs
+      .map(doc => ({ id: doc.id, ...(doc.data() as any) } as Appointment))
+      .filter(appt => appt.status !== 'cancelled');
+    const exactMatch = exactMatches[0];
+    if (exactMatch) {
+      if (exactMatch.patientId === data.patientId) {
+        throw new Error('El paciente ya tiene una cita con este médico en esa hora.');
+      }
+      throw new Error('El médico ya tiene una cita asignada en esa hora.');
+    }
+
+    const conflictQuery = query(
+      collection(db, COLLECTION_NAME),
+      where('doctorId', '==', data.doctorId),
+      where('date', '>=', Timestamp.fromDate(startOfDay)),
+      where('date', '<=', Timestamp.fromDate(endOfDay))
+    );
+    const conflictSnap = await getDocs(conflictQuery);
+    const conflicts = conflictSnap.docs
+      .map(doc => ({ id: doc.id, ...(doc.data() as any) } as Appointment))
+      .filter(appt => appt.status !== 'cancelled')
+      .some(appt => {
+        const apptStart = ensureDate(appt.date);
+        const apptEnd = ensureDate(appt.endDate);
+        const overlaps = dateObj < apptEnd && endDateObj > apptStart;
+        if (!overlaps) return false;
+        if (appt.patientId === data.patientId) {
+          throw new Error('El paciente ya tiene una cita con este médico en ese horario.');
+        }
+        return true;
+      });
+
+    if (conflicts) {
+      throw new Error('El médico ya tiene una cita asignada en ese horario.');
     }
 
     const docRef = await addDoc(collection(db, COLLECTION_NAME), {
@@ -122,6 +187,63 @@ export const appointmentService = {
       id: doc.id,
       ...(doc.data() as any)
     } as Appointment));
+  },
+
+  async getAppointmentsForResidentList() {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('date', '>=', Timestamp.fromDate(startOfDay)),
+      orderBy('date', 'asc')
+    );
+
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...(doc.data() as any)
+    } as Appointment));
+  },
+
+  async getAppointmentsPaginated(params: {
+    doctorId?: string;
+    startDate: Date;
+    endDate?: Date;
+    limitCount: number;
+    lastDoc?: DocumentSnapshot | null;
+  }) {
+    const { doctorId, startDate, endDate, limitCount, lastDoc } = params;
+    const baseConstraints: any[] = [
+      where('date', '>=', Timestamp.fromDate(startDate)),
+      orderBy('date', 'asc')
+    ];
+    if (endDate) {
+      baseConstraints.splice(1, 0, where('date', '<=', Timestamp.fromDate(endDate)));
+    }
+    if (doctorId) {
+      baseConstraints.unshift(where('doctorId', '==', doctorId));
+    }
+    if (lastDoc) {
+      baseConstraints.push(startAfter(lastDoc));
+    }
+    baseConstraints.push(limit(limitCount + 1));
+
+    const q = query(collection(db, COLLECTION_NAME), ...baseConstraints);
+    const snapshot = await getDocs(q);
+    const docs = snapshot.docs;
+    const hasMore = docs.length > limitCount;
+    const pageDocs = hasMore ? docs.slice(0, limitCount) : docs;
+    const nextCursor = pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null;
+
+    return {
+      appointments: pageDocs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as any)
+      } as Appointment)),
+      lastDoc: nextCursor,
+      hasMore
+    };
   },
 
   // 4. MÁQUINA DE ESTADOS: Transiciones seguras
@@ -234,7 +356,9 @@ export const appointmentService = {
     audit?: { editorId: string; editorName?: string; editorEmail?: string }
   ) {
     const ref = doc(db, COLLECTION_NAME, id);
-    const payload: any = { ...updates };
+    const payload: any = Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined)
+    );
 
     if (updates.date instanceof Date) {
       payload.date = Timestamp.fromDate(updates.date);

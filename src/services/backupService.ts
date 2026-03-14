@@ -87,7 +87,6 @@ export const generateReadableExcelReport = async (userEmail: string) => {
                 "Responsable": p.responsibleName,
                 "Tel. Responsable": p.responsiblePhone,
                 "Historial Médico": p.medical_history,
-                "Tipo Consulta": p.consultationType,
                 "Tratamiento Previo": p.previousTreatment,
                 "Creado": fmtDate(p.createdAt)
             };

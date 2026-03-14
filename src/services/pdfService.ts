@@ -1,5 +1,5 @@
 
-import { Consultation, Patient, UserProfile, ReferralGroup } from '../types.ts';
+import { Consultation, Patient, UserProfile, ReferralGroup, ResonanceOrder, EegOrder } from '../types.ts';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config.ts';
 import { LOGO_BASE64 } from '../data/assets.ts';
@@ -7,6 +7,7 @@ import { LOGOLARGO_BASE64 } from '../data/assets.ts';
 import { specialtyFormsService } from './specialtyFormsService';
 import { translateSpecialtyLabel } from '../utils/specialtyTranslation';
 import type { SpecialtyFormDefinition } from '../components/Wizard/SpecialtyForms/types';
+
 
 // --- CONFIGURACIÓN DE COLORES (PROFESSIONAL WARM NEUTRAL) ---
 // Paleta Neutra Cálida: Gris Carbón + Bronce Suave. Sin tonos morados/azules.
@@ -27,6 +28,19 @@ const resolveFichaLabel = (
     fieldKey: string
 ) => {
     return translateSpecialtyLabel(fieldKey, forms, formId);
+};
+
+const getGuatemalaDateParts = (date: Date) => {
+    const parts = new Intl.DateTimeFormat('es-GT', { timeZone: 'America/Guatemala', day: '2-digit', month: 'long', year: 'numeric' }).formatToParts(date);
+    const day = parts.find(p => p.type === 'day')?.value || '';
+    const month = parts.find(p => p.type === 'month')?.value || '';
+    const year = parts.find(p => p.type === 'year')?.value || '';
+    return { day, month, year };
+};
+
+const drawClinicLogo = (doc: any, x: number, y: number, w: number, h: number) => {
+    const logo = LOGO_BASE64 || LOGOLARGO_BASE64;
+    if (logo) doc.addImage(logo, 'PNG', x, y, w, h);
 };
 
 // Helper to lazy load PDF libraries
@@ -161,11 +175,10 @@ const drawPatientInfo = (doc: any, patient: Patient, consultation: Consultation)
     
     // Columna 1
     doc.text("PACIENTE:", 14, startY);
-    doc.text("DPI / ID:", 14, startY + 6);
     
     // Columna 2
     doc.text("EDAD:", 110, startY);
-    doc.text("GÉNERO:", 110, startY + 6);
+    doc.text("GÉNERO:", 150, startY);
 
     // Valores
     doc.setFontSize(10);
@@ -173,13 +186,11 @@ const drawPatientInfo = (doc: any, patient: Patient, consultation: Consultation)
     doc.setFont("helvetica", "normal");
 
     doc.text(patient.fullName.toUpperCase(), 38, startY);
-    doc.text(patient.id || "---", 38, startY + 6);
-    
     doc.text(`${patient.age || 0} años`, 130, startY);
     
     const genderStr = patient.gender ? patient.gender.toString().toLowerCase() : '';
     const isMale = genderStr === 'm' || genderStr.startsWith('masc');
-    doc.text(isMale ? 'Masculino' : 'Femenino', 130, startY + 6);
+    doc.text(isMale ? 'Masculino' : 'Femenino', 170, startY);
 };
 
 // --- FIRMA (PROFESIONAL) ---
@@ -239,7 +250,11 @@ const drawSignature = async (doc: any, currentY: number, doctor: UserProfile, co
       doc.setFontSize(9); 
       doc.setFont("helvetica", "normal");
       doc.setTextColor(COLORS.TEXT_GRAY[0], COLORS.TEXT_GRAY[1], COLORS.TEXT_GRAY[2]);
-      doc.text(doctor.specialty || "Medicina General", 105, signatureY + 25, { align: 'center' });
+      const specialtiesList = Array.isArray(doctor.specialties) && doctor.specialties.length > 0
+        ? doctor.specialties
+        : (doctor.specialty ? [doctor.specialty] : []);
+      const specialtyLabel = specialtiesList.join(', ') || "Medicina General";
+      doc.text(specialtyLabel, 105, signatureY + 25, { align: 'center' });
     }
 
     // Footer Oficial
@@ -317,15 +332,31 @@ export const generateNursingPDF = async (
         if (consultation.prescriptionNotes) {
             medsRows.push(`NOTA: ${consultation.prescriptionNotes}`);
         }
+        if (consultation.followUpRequestText) {
+            medsRows.push(`RECONSULTA: ${consultation.followUpRequestText}`);
+        }
+        if (consultation.followUpEstimatedDate) {
+            const followUpDateText = new Date(consultation.followUpEstimatedDate).toLocaleDateString('es-GT');
+            medsRows.push(`FECHA APROX.: ${followUpDateText}${consultation.followUpDays ? ` (aprox. ${consultation.followUpDays} días)` : ''}`);
+        }
 
         // Laboratorios
         const labsRows: string[] = [];
+        const shouldIncludeExam = (exam: string) => {
+            const normalized = exam.toLowerCase();
+            const isLabToggle = normalized.includes('laboratorios') && !exam.startsWith('Laboratorios:');
+            return !isLabToggle;
+        };
         consultation.referralGroups?.forEach(g => {
+            const filtered = g.exams.filter(shouldIncludeExam);
+            if (filtered.length === 0 && !g.note) return;
             labsRows.push(`[${g.pathology}]`);
-            g.exams.forEach(e => labsRows.push(`• ${e}`));
+            filtered.forEach(e => labsRows.push(`• ${e}`));
             if (g.note) labsRows.push(`  Nota: ${g.note}`);
         });
-        consultation.exams?.forEach(e => labsRows.push(`• ${e}`));
+        consultation.exams?.forEach(e => {
+            if (shouldIncludeExam(e)) labsRows.push(`• ${e}`);
+        });
         if (consultation.referralNote) {
             labsRows.push(`NOTA GENERAL: ${consultation.referralNote}`);
         }
@@ -507,12 +538,35 @@ export const generateFullFichaPDF = async (
         const formId = (consultation as any).specialtyFormId as string | undefined;
         const specialtyData = (consultation as any).specialtyData as Record<string, any> | undefined;
         
-        let specialtyEntries = specialtyData ? Object.entries(specialtyData) : [];
+        const decodeOptionKey = (value: string) => {
+            try {
+                return decodeURIComponent(value);
+            } catch {
+                return value;
+            }
+        };
+
+        let specialtyEntriesRaw = specialtyData ? Object.entries(specialtyData) : [];
         const activeForm = formId ? forms.find(f => f.id === formId) : undefined;
 
         if (activeForm) {
             const allowedIds = new Set(activeForm.sections.flatMap(section => section.fields.map(field => field.id)));
-            specialtyEntries = specialtyEntries.filter(([key]) => allowedIds.has(key));
+            specialtyEntriesRaw = specialtyEntriesRaw.filter(([key]) => allowedIds.has(key));
+        }
+
+        let specialtyEntries: Array<[string, string]> = [];
+        for (const [k, v] of specialtyEntriesRaw) {
+            if (v && typeof v === 'object' && !Array.isArray(v)) {
+                for (const subKey of Object.keys(v)) {
+                    const label = `${resolveFichaLabel(forms, formId, k)} - ${decodeOptionKey(subKey).toUpperCase()}`;
+                    const val = v[subKey] ? String(v[subKey]) : '---';
+                    specialtyEntries.push([label, val]);
+                }
+            } else {
+                const label = resolveFichaLabel(forms, formId, k);
+                const val = v ? String(v) : '---';
+                specialtyEntries.push([label, val]);
+            }
         }
 
         if (specialtyEntries.length > 0) {
@@ -522,13 +576,13 @@ export const generateFullFichaPDF = async (
                 const item1 = specialtyEntries[i];
                 const item2 = specialtyEntries[i+1];
                 
-                const label1 = resolveFichaLabel(forms, formId, item1[0]);
+                const label1 = item1[0];
                 const val1 = item1[1] ? String(item1[1]) : '---';
                 
                 let row = [`${label1}:\n${val1}`];
 
                 if (item2) {
-                    const label2 = resolveFichaLabel(forms, formId, item2[0]);
+                    const label2 = item2[0];
                     const val2 = item2[1] ? String(item2[1]) : '---';
                     row.push(`${label2}:\n${val2}`);
                 } else {
@@ -563,21 +617,6 @@ export const generateFullFichaPDF = async (
             });
             // @ts-ignore
             currentY = pdfDoc.lastAutoTable.finalY + 8;
-        }
-
-        // 3. Plan / Indicaciones
-        if (consultation.followUpText) {
-             autoTable(pdfDoc, {
-                startY: currentY,
-                head: [['PLAN / INDICACIONES']],
-                body: [[consultation.followUpText]],
-                theme: 'plain',
-                styles: { fontSize: 10, cellPadding: 2, textColor: COLORS.TEXT_DARK },
-                headStyles: { fillColor: COLORS.BG_LIGHT, textColor: COLORS.PRIMARY, fontSize: 10, fontStyle: 'bold' },
-                margin: { left: 14, right: 14 }
-            });
-            // @ts-ignore
-            currentY = pdfDoc.lastAutoTable.finalY + 15;
         }
 
         await drawSignature(pdfDoc, currentY, doctor, consultation);
@@ -737,8 +776,17 @@ export const generateExamsPDF = async (
         currentY += 15;
 
         const uniqueExams = new Set<string>();
-        consultation.referralGroups?.forEach(g => g.exams.forEach(e => uniqueExams.add(e)));
-        consultation.exams?.forEach(e => uniqueExams.add(e));
+        const shouldIncludeExam = (exam: string) => {
+            const normalized = exam.toLowerCase();
+            const isLabToggle = normalized.includes('laboratorios') && !exam.startsWith('Laboratorios:');
+            return !isLabToggle;
+        };
+        consultation.referralGroups?.forEach(g => g.exams.forEach(e => {
+            if (shouldIncludeExam(e)) uniqueExams.add(e);
+        }));
+        consultation.exams?.forEach(e => {
+            if (shouldIncludeExam(e)) uniqueExams.add(e);
+        });
         const allExamsList = Array.from(uniqueExams).sort();
 
         if (allExamsList.length > 0) {
@@ -797,4 +845,330 @@ export const generateExamsPDF = async (
         console.error("PDF Generation Error", error);
         alert("Error generando PDF de exámenes.");
     }
+};
+
+export const generateResonanceOrdersPDF = async (
+    consultation: Consultation,
+    patient: Patient,
+    doctor: UserProfile,
+    action: 'download' | 'print' = 'download'
+) => {
+    try {
+        const orders = (consultation.resonanceOrders || []) as ResonanceOrder[];
+        if (orders.length === 0) {
+            alert("No hay órdenes de resonancia.");
+            return;
+        }
+        const { jsPDF } = await loadPdfLibs();
+        const doc = new jsPDF();
+        const now = new Date();
+        const { day, month, year } = getGuatemalaDateParts(now);
+        const dateLine = `Guatemala, ${day} de ${month} de ${year}`;
+
+        const drawOrder = (order: ResonanceOrder, index: number) => {
+            if (index > 0) doc.addPage();
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(0, 0, 0);
+            drawClinicLogo(doc, 14, 10, 18, 18);
+            doc.setFontSize(12);
+            doc.setFont("helvetica", "bold");
+            doc.text("ORDEN DE RESONANCIA MAGNETICA CON", 105, 16, { align: 'center' });
+            doc.text("PROTOCOLO DE EPILEPSIA", 105, 22, { align: 'center' });
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "normal");
+            doc.text(dateLine, 196, 30, { align: 'right' });
+
+            let y = 36;
+            doc.setFont("helvetica", "bold");
+            doc.text("TECNODIAGNOSIS", 14, y);
+            doc.setFont("helvetica", "normal");
+            y += 5;
+            doc.text("Depto. Imágenes", 14, y);
+            y += 4;
+            doc.text("Diag. 6, 5ta. Av. y 11 Calle Zona 10", 14, y);
+            y += 4;
+            doc.text("Edif. Interamericas nivel 1 y 2", 14, y);
+            y += 4;
+            doc.text("Tel. 2413-0000", 14, y);
+            y += 4;
+            doc.text("Indicar que tienen una orden de Asociación Humana.", 14, y);
+
+            y += 8;
+            doc.text("Por medio de la presente, tengo a bien referir", 14, y);
+            y += 6;
+            doc.text("Al(a) paciente:", 14, y);
+            doc.line(45, y + 1, 196, y + 1);
+            doc.setFont("helvetica", "bold");
+            doc.text(patient.fullName || "", 47, y);
+            doc.setFont("helvetica", "normal");
+            y += 6;
+            doc.text("que está siendo estudiada(o) por epilepsia de difícil control con diagnóstico probable de", 14, y);
+            y += 6;
+            doc.line(14, y + 1, 196, y + 1);
+            doc.text(order.probableDiagnosis || "", 16, y);
+            y += 8;
+            doc.setFont("helvetica", "bold");
+            doc.text("Para realizar RESONANCIA MAGNETICA CEREBRAL CON PROTOCOLO DE EPILEPSIA. Sin medio de contraste.", 14, y);
+            doc.setFont("helvetica", "normal");
+            y += 8;
+            doc.text("Poner especial atención en:", 14, y);
+            y += 5;
+            doc.line(14, y + 1, 196, y + 1);
+            doc.text(order.attentionNotes || "", 16, y);
+            y += 7;
+            doc.text("Sírvase enviar los resultados a nuestras oficinas en zona 10.", 14, y);
+
+            y += 12;
+            doc.text("Atentamente,", 105, y, { align: 'center' });
+            y += 10;
+            doc.line(60, y, 150, y);
+            y += 4;
+            doc.text("Nombre y firma del médico", 105, y, { align: 'center' });
+
+            y += 6;
+            doc.setFontSize(8);
+            doc.text("NOTIFICACION: Pacientes de 0 a 8 años existe la posibilidad que se requiera el uso de sedación.", 14, y);
+            y += 4;
+            doc.text("Este servicio de sedación lo presta la empresa que realiza el estudio y tiene un precio aproximado de Q.800.00", 14, y);
+            y += 4;
+            doc.text("que lo cobra directamente la empresa.", 14, y);
+
+            y += 10;
+            doc.setFontSize(9);
+            doc.text(`Guatemala, ${day} de ${month} de ${year}`, 196, y, { align: 'right' });
+            y += 6;
+            doc.text("NOMBRE DEL PACIENTE:", 14, y);
+            doc.line(56, y + 1, 196, y + 1);
+            doc.text(patient.fullName || "", 58, y);
+            y += 6;
+            doc.text("se le informa que el estudio tiene el siguiente valor para su conocimiento:", 14, y);
+
+            y += 8;
+            doc.text("Valor real del estudio:", 14, y);
+            doc.line(55, y + 1, 110, y + 1);
+            doc.text("Q", 50, y);
+            y += 6;
+            doc.text("Donación paciente:", 14, y);
+            doc.line(55, y + 1, 110, y + 1);
+            doc.text("Q", 50, y);
+            y += 6;
+            doc.text("Beneficio para el paciente:", 14, y);
+            doc.line(65, y + 1, 110, y + 1);
+            doc.text("Q", 60, y);
+            doc.setFontSize(16);
+            doc.setFont("helvetica", "bold");
+            doc.text("RM", 170, y - 6);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            y += 10;
+            doc.line(14, y, 96, y);
+            doc.line(114, y, 196, y);
+            y += 4;
+            doc.text("Nombre y apellidos del paciente", 14, y);
+            doc.text("Nombre y apellidos del testigo", 114, y);
+            y += 4;
+            y += 6;
+            doc.text("Centro de Epilepsia y Neurocirugía Funcional Humana: 7ª. Calle A 1-62 Zona 10 Teléfono: 23 62 32 09/11.", 14, y);
+        };
+
+        orders.forEach(drawOrder);
+        handlePdfOutput(doc, `Ordenes_Resonancia_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+    } catch (error) {
+        console.error("PDF Generation Error", error);
+        alert("Error generando PDF de órdenes de resonancia.");
+    }
+};
+
+export const generateEegOrdersPDF = async (
+    consultation: Consultation,
+    patient: Patient,
+    doctor: UserProfile,
+    action: 'download' | 'print' = 'download'
+) => {
+    try {
+        const orders = (consultation.eegOrders || []) as EegOrder[];
+        if (orders.length === 0) {
+            alert("No hay órdenes de EEG.");
+            return;
+        }
+        const { jsPDF } = await loadPdfLibs();
+        const doc = new jsPDF();
+        const now = new Date();
+        const { day, month, year } = getGuatemalaDateParts(now);
+        const dateLine = `Guatemala, ${day} de ${month} del ${year}`;
+        const gender = patient.gender?.toString().toLowerCase() === 'f' || patient.gender?.toString().toLowerCase() === 'femenino' ? 'F' : patient.gender ? 'M' : '';
+
+        const drawCheckbox = (x: number, y: number, checked: boolean) => {
+            doc.rect(x, y, 5, 5);
+            if (checked) doc.text("X", x + 1.2, y + 3.8);
+        };
+
+        const drawOrder = (order: EegOrder, index: number) => {
+            if (index > 0) doc.addPage();
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(0, 0, 0);
+            drawClinicLogo(doc, 14, 10, 18, 18);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(12);
+            doc.text("PROTOCOLO DE EPILEPSIA DE DIFICIL CONTROL", 105, 14, { align: 'center' });
+            doc.text("NEUROFISIOLOGIA", 105, 20, { align: 'center' });
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(9);
+            const prepBoxY = 26;
+            const prepBoxH = 42;
+            const prepBoxX = 132;
+            const prepBoxW = 64;
+            doc.rect(prepBoxX, prepBoxY, prepBoxW, prepBoxH);
+            doc.text("PREPARACION EEG", prepBoxX + prepBoxW / 2, prepBoxY + 4, { align: 'center' });
+            doc.setFontSize(7);
+            const prepItems = [
+                "1. Lavar el cabello únicamente con jabón de olor.",
+                "2. Cabello completamente seco a la hora del examen.",
+                "3. No frotarlo con toalla (secado al aire libre).",
+                "4. No aplicarse crema, gotas, gelatina etc.",
+                "5. Paciente pediátrico con 4 horas de ayuno.",
+                "6. Presentarse a la hora programada de lo contrario no se le atenderá."
+            ];
+            let prepY = prepBoxY + 8;
+            const prepLineHeight = 3.2;
+            const prepTextX = prepBoxX + 2;
+            const prepMaxY = prepBoxY + prepBoxH - 2;
+            for (const item of prepItems) {
+                if (prepY > prepMaxY) break;
+                const itemLines = doc.splitTextToSize(item, prepBoxW - 4);
+                doc.text(itemLines, prepTextX, prepY);
+                prepY += (itemLines.length * prepLineHeight) + 1.2;
+            }
+
+            doc.setFontSize(10);
+            const dateLineY = prepBoxY + prepBoxH + 8;
+            const patientRowY = dateLineY + 8;
+            doc.text(dateLine, 196, dateLineY, { align: 'right' });
+            doc.text("Paciente", 14, patientRowY);
+            doc.line(32, patientRowY + 1, 120, patientRowY + 1);
+            doc.text(patient.fullName || "", 34, patientRowY);
+            doc.text("Edad", 130, patientRowY);
+            doc.line(140, patientRowY + 1, 155, patientRowY + 1);
+            doc.text(patient.age ? String(patient.age) : "", 142, patientRowY);
+            doc.text("Sexo", 160, patientRowY);
+            doc.line(170, patientRowY + 1, 186, patientRowY + 1);
+            doc.text(gender || "", 172, patientRowY);
+            const lineHeight = 6;
+            let y = patientRowY + 8;
+            const diagnosisLabel = "Que está siendo estudiado(a) por epilepsia de difícil control, con diagnóstico probable de";
+            const diagnosisLabelLines = doc.splitTextToSize(diagnosisLabel, 182);
+            doc.text(diagnosisLabelLines, 14, y);
+            y += diagnosisLabelLines.length * lineHeight;
+            const diagnosisText = order.probableDiagnosis || "";
+            const diagnosisLines = doc.splitTextToSize(diagnosisText, 182);
+            doc.text(diagnosisLines.length ? diagnosisLines : [""], 14, y);
+            y += (diagnosisLines.length ? diagnosisLines.length : 1) * lineHeight;
+            doc.line(14, y + 1, 196, y + 1);
+            y += 8;
+
+            doc.text("Con CCTCG", 14, y);
+            drawCheckbox(38, y - 2, !!order.cctcg);
+            doc.text("CPC", 48, y);
+            drawCheckbox(57, y - 2, !!order.cpc);
+            doc.text("CPC SEC. Generalizadas", 68, y);
+            drawCheckbox(120, y - 2, !!order.cpcSecGeneralizadas);
+            doc.text("Ausencias", 128, y);
+            drawCheckbox(147, y - 2, !!order.ausencias);
+            doc.text("Crisis Mioclónicas", 155, y);
+            drawCheckbox(192, y - 2, !!order.crisisMioclonicas);
+            y += 7;
+
+            doc.text("C. Estáticas", 14, y);
+            drawCheckbox(35, y - 2, !!order.crisisEstaticas);
+            y += 7;
+
+            doc.text("INDICACIONES ESPECIALES:", 14, y);
+            y += 6;
+            const indicationsText = order.specialIndications || "";
+            const indicationsLines = doc.splitTextToSize(indicationsText, 182);
+            doc.text(indicationsLines.length ? indicationsLines : [""], 14, y);
+            y += (indicationsLines.length ? indicationsLines.length : 1) * lineHeight;
+            doc.line(14, y + 1, 196, y + 1);
+            y += 8;
+
+            doc.text("Medicado(a) con", 14, y);
+            doc.line(45, y + 1, 196, y + 1);
+            doc.text(order.medicatedWith || "", 47, y);
+            y += 10;
+
+            const videoHours = order.videoMonitoringHours || order.duration || '';
+            doc.text("Video Monitoreo", 14, y);
+            doc.rect(48, y - 2, 14, 6);
+            doc.text(videoHours, 50, y + 2);
+            doc.text("Horas", 66, y + 2);
+            doc.text("Supresión de Sueño", 90, y + 2);
+            doc.text("SI", 138, y + 2);
+            drawCheckbox(146, y, order.videoMonitoringSleepDeprivation === 'Si');
+            doc.text("NO", 158, y + 2);
+            drawCheckbox(166, y, order.videoMonitoringSleepDeprivation === 'No');
+            y += 10;
+
+            doc.text("Video Monitoreo Ictal", 14, y);
+            doc.rect(60, y - 2, 14, 6);
+            doc.text(order.ictalVideoHours || "", 62, y + 2);
+            doc.text("Horas", 78, y + 2);
+            doc.text("Supresión de Sueño", 102, y + 2);
+            doc.text("SI", 150, y + 2);
+            drawCheckbox(158, y, order.ictalSleepDeprivation === 'Si');
+            doc.text("NO", 170, y + 2);
+            drawCheckbox(178, y, order.ictalSleepDeprivation === 'No');
+            y += 10;
+
+            doc.text("Detección de Puntas (Curry)", 14, y);
+            doc.text("64 Canales", 78, y);
+            drawCheckbox(102, y - 2, !!order.spikeDetection64);
+            doc.text("128 Canales", 114, y);
+            drawCheckbox(140, y - 2, !!order.spikeDetection128);
+            doc.text("Horas", 152, y);
+            doc.rect(166, y - 2, 14, 6);
+            doc.text(order.spikeDetectionHours || "", 168, y + 2);
+            y += 10;
+
+            doc.text("P300", 14, y);
+            drawCheckbox(26, y - 2, !!order.p300);
+
+            doc.text("Atentamente,", 105, y + 10, { align: 'center' });
+            doc.line(60, y + 18, 150, y + 18);
+            doc.text("Nombre y firma del médico", 105, y + 24, { align: 'center' });
+
+            doc.text(`Guatemala, ${day} de ${month} de ${year}`, 196, y + 34, { align: 'right' });
+            doc.text("NOMBRE DEL PACIENTE:", 14, y + 40);
+            doc.line(56, y + 41, 196, y + 41);
+            doc.text(patient.fullName || "", 58, y + 40);
+            doc.text("se le informa que el estudio tiene el siguiente valor para su conocimiento:", 14, y + 46);
+
+            doc.text("Valor real del estudio:", 14, y + 54);
+            doc.line(55, y + 55, 110, y + 55);
+            doc.text("Q", 50, y + 54);
+            doc.text("Donación paciente:", 14, y + 60);
+            doc.line(55, y + 61, 110, y + 61);
+            doc.text("Q", 50, y + 60);
+            doc.text("Beneficio para el paciente:", 14, y + 66);
+            doc.line(65, y + 67, 110, y + 67);
+            doc.text("Q", 60, y + 66);
+            doc.setFontSize(16);
+            doc.setFont("helvetica", "bold");
+            doc.text("EEG", 170, y + 60);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            doc.line(14, y + 76, 96, y + 76);
+            doc.line(114, y + 76, 196, y + 76);
+            doc.text("Nombre y apellidos del paciente", 14, y + 80);
+            doc.text("Nombre y apellidos del testigo", 114, y + 80);
+            doc.text("Centro de Epilepsia y Neurocirugía Funcional Humana: 7ª. Calle A 1-62 Zona 10 Teléfono: 23 62 32 09/11.", 14, y + 90);
+        };
+
+        orders.forEach(drawOrder);
+        handlePdfOutput(doc, `Ordenes_EEG_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+    } catch (error) {
+        console.error("PDF Generation Error", error);
+        alert("Error generando PDF de órdenes de EEG.");
+    }
+    //await logAuditAction( "GENERATE_ORDER_PDF", `PDF de órdenes de EEG generado para el paciente ${patient.fullName}`);
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar, dateFnsLocalizer, Views } from 'react-big-calendar';
 import { format } from 'date-fns/format';
 import { parse } from 'date-fns/parse';
@@ -6,19 +6,20 @@ import { startOfWeek } from 'date-fns/startOfWeek';
 import { getDay } from 'date-fns/getDay';
 import { es } from 'date-fns/locale/es';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { Plus, Filter, Search, Calendar as CalendarIcon, RefreshCw, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Building2, Stethoscope, Video, Users } from 'lucide-react';
+import { Plus, Filter, Search, Calendar as CalendarIcon, RefreshCw, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Stethoscope, Video, Users } from 'lucide-react';
 import { appointmentService } from '../services/appointmentService';
 import { userService } from '../services/userService';
-import { getClinics } from '../services/clinicService';
+import { getSpecialties } from '../services/inventoryService';
 import { notifyAppointmentCancelled } from '../services/notificationService';
 import { notifyAppointmentCancellationToAdmins } from '../services/emailService';
 import { patientService } from '../services/patientService';
-import { Appointment, UserProfile, Patient, Clinic } from '../types';
+import { Appointment, UserProfile, Patient, Specialty } from '../types';
 import { CreateAppointmentModal } from '../components/Appointments/CreateAppointmentModal';
 import { AppointmentDetailsModal } from '../components/Appointments/AppointmentDetailsModal';
 import { ResidentIntakeModal } from '../components/Appointments/ResidentIntakeModal';
 import { toast } from 'sonner';
 import { startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays } from 'date-fns';
+import i18next from 'i18next';
 
 const locales = {
   'es': es,
@@ -61,6 +62,35 @@ const statusStyles = {
 } as const;
 
 type AppointmentStatusKey = keyof typeof statusStyles;
+
+if (!i18next.isInitialized) {
+  i18next.init({
+    lng: 'es',
+    fallbackLng: 'es',
+    resources: {
+      es: {
+        translation: {
+          appointmentStatus: {
+            scheduled: 'Agendada',
+            confirmed_phone: 'Confirmada por teléfono',
+            paid_checked_in: 'Pagada / Check-in',
+            resident_intake: 'Con enfermería',
+            in_progress: 'En consulta',
+            completed: 'Finalizada',
+            cancelled: 'Cancelada',
+            no_show: 'No se presentó'
+          }
+        }
+      }
+    }
+  });
+}
+
+const translateStatus = (status: string) => {
+  return i18next.t(`appointmentStatus.${status}`, {
+    defaultValue: status.replace(/_/g, ' ')
+  });
+};
 
 const statusOptions: { key: AppointmentStatusKey; label: string }[] = [
   { key: 'scheduled',        label: 'Creada' },
@@ -144,6 +174,11 @@ const CustomMonthView = ({
                                         title={`${format(app.date, 'HH:mm')} - ${app.patientName}`}
                                     >
                                         <div className="flex items-center gap-1">
+                                            {app.isIGSS && (
+                                                <span className="px-1 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-300 text-[9px] font-extrabold uppercase tracking-[0.12em]">
+                                                    IGSS
+                                                </span>
+                                            )}
                                             {app.modality === 'Virtual' ? <Video className="w-3 h-3 flex-shrink-0" /> : <Users className="w-3 h-3 flex-shrink-0" />}
                                             <span className="truncate">{format(app.date, 'HH:mm')} {app.patientName}</span>
                                         </div>
@@ -171,16 +206,16 @@ const CustomMonthView = ({
 };
 
 export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }) => {
-  const isDoctor = user?.role === 'doctor';
+  const isDoctor = user?.role === 'doctor' || user?.role === 'licenciado';
   const isAdmin = user?.role === 'admin';
   const isReceptionist = user?.role === 'receptionist';
   const isResident = user?.role === 'resident';
 
-  const canCreate = !isDoctor;
+  const canCreate = isAdmin || isReceptionist;
 
     const [appointments, setAppointments] = useState<CalendarAppointment[]>([]);
   const [doctors, setDoctors] = useState<UserProfile[]>([]);
-  const [clinics, setClinics] = useState<Clinic[]>([]);
+  const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -193,7 +228,7 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   const [residentPatient, setResidentPatient] = useState<Patient | null>(null);
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(isDoctor ? user?.uid || '' : 'all');
-  const [selectedClinicId, setSelectedClinicId] = useState<string>('all');
+  const [selectedSpecialty, setSelectedSpecialty] = useState<string>('all');
   const [viewDate, setViewDate] = useState(new Date());
   
   const [currentView, setCurrentView] = useState<any>('month'); 
@@ -203,8 +238,42 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
       date: Date;
       apps: CalendarAppointment[];
   } | null>(null);
+  const [dayAppointmentsSearchTerm, setDayAppointmentsSearchTerm] = useState('');
 
   const [selectedStatus, setSelectedStatus] = useState<'all' | AppointmentStatusKey>('all');
+  const [patientSearchTerm, setPatientSearchTerm] = useState('');
+
+  useEffect(() => {
+    if (dayAppointmentsModal) {
+      setDayAppointmentsSearchTerm('');
+    }
+  }, [dayAppointmentsModal]);
+
+  const getPatientSearchableText = (appointment: CalendarAppointment) => {
+    const patient = patients.find(p => p.id === appointment.patientId);
+    const parts = [
+      appointment.patientName,
+      patient?.dpi,
+      patient?.billingCode,
+      appointment.patientId
+    ].filter(Boolean);
+    return parts.join(' ').toLowerCase();
+  };
+
+  const filteredDayAppointments = dayAppointmentsModal
+    ? dayAppointmentsModal.apps.filter(app => {
+        const term = dayAppointmentsSearchTerm.trim().toLowerCase();
+        if (!term) return true;
+        return getPatientSearchableText(app).includes(term);
+      })
+    : [];
+
+  const doctorHasSpecialty = (doctor: UserProfile, specialty: string) => {
+    const list = Array.isArray(doctor.specialties) && doctor.specialties.length > 0
+      ? doctor.specialties
+      : (doctor.specialty ? [doctor.specialty] : []);
+    return list.includes(specialty);
+  };
 
   const getCalendarConfig = (level: number) => {
       switch(level) {
@@ -218,6 +287,19 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
 
   const zoomConfig = getCalendarConfig(zoomLevel);
 
+  const normalizeSearch = (value: string) =>
+    value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+
+  const patientLookup = useMemo(() => {
+    const map = new Map<string, Patient>();
+    patients.forEach(p => {
+      if (p.id) {
+        map.set(p.id, p);
+      }
+    });
+    return map;
+  }, [patients]);
+
   useEffect(() => {
     if (isDoctor && user?.uid) {
         setSelectedDoctorId(user.uid);
@@ -225,16 +307,16 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   }, [user, isDoctor]);
 
   useEffect(() => {
-    // Cargar datos estáticos (doctores, clínicas, pacientes) UNA VEZ
+    // Cargar datos estáticos (doctores, especialidades, pacientes) UNA VEZ
     const loadStaticData = async () => {
         try {
             if (!isDoctor) {
-                const [docs, clinicList] = await Promise.all([
+                const [docs, specialtiesList] = await Promise.all([
                     userService.getDoctors(),
-                    getClinics()
+                    getSpecialties()
                 ]);
                 setDoctors(docs);
-                setClinics(clinicList);
+                setSpecialties(specialtiesList);
             }
             
             const [pats, users] = await Promise.all([
@@ -279,16 +361,12 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
         if (isDoctor) {
             apps = apps.filter(app => app.doctorId === user?.uid);
         } else {
-            if (selectedClinicId !== 'all') {
-                // Necesitamos 'doctors' aquí, pero como es un efecto, usaremos el estado actual
-                // Nota: doctors podría estar vacío al inicio, pero se actualizará
-                // Para simplificar y evitar dependencias circulares complejas, filtramos si tenemos doctores cargados
-                // O confiamos en que el filtro se reaplicará cuando 'doctors' cambie (si lo agregamos a deps)
-                // MEJOR: Filtrar en el render o aquí mismo si doctors ya tiene datos.
-                // Si doctors está vacío, no filtramos por clínica todavía (o mostramos todo/nada).
+            if (selectedSpecialty !== 'all') {
                 if (doctors.length > 0) {
-                     const clinicDoctors = doctors.filter(d => d.clinicId === selectedClinicId).map(d => d.uid);
-                     apps = apps.filter(app => clinicDoctors.includes(app.doctorId));
+                     const specialtyDoctors = doctors
+                        .filter(d => doctorHasSpecialty(d, selectedSpecialty))
+                        .map(d => d.uid);
+                     apps = specialtyDoctors.length > 0 ? apps.filter(app => specialtyDoctors.includes(app.doctorId)) : [];
                 }
             }
             if (selectedDoctorId !== 'all') {
@@ -300,12 +378,24 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
             apps = apps.filter(app => app.status === selectedStatus);
         }
 
+        const normalizedTerm = normalizeSearch(patientSearchTerm);
+        if (normalizedTerm) {
+            apps = apps.filter(app => {
+                const patient = patientLookup.get(app.patientId);
+                const fullName = patient?.fullName || app.patientName || '';
+                const dpi = patient?.dpi || '';
+                const billingCode = patient?.billingCode || '';
+                const haystack = normalizeSearch(`${fullName} ${dpi} ${billingCode} ${app.patientName || ''}`);
+                return haystack.includes(normalizedTerm);
+            });
+        }
+
         setAppointments(apps);
     });
 
     return () => unsubscribe(); // Limpiar suscripción al desmontar o cambiar filtros
 
-  }, [viewDate, selectedDoctorId, selectedClinicId, currentView, selectedStatus, isDoctor, user, doctors]); // Agregamos dependencias relevantes
+  }, [viewDate, selectedDoctorId, selectedSpecialty, currentView, selectedStatus, isDoctor, user, doctors, patientSearchTerm, patientLookup]);
 
   /* DEPRECATED: loadData manual
   const loadData = async () => { ... } 
@@ -456,6 +546,11 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   const EventComponent = ({ event }: { event: Appointment }) => (
     <div className="h-full flex flex-col overflow-hidden leading-tight justify-center px-1">
       <div className="font-bold truncate text-xs flex items-center gap-1">
+        {event.isIGSS && (
+          <span className="px-1 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-300 text-[9px] font-extrabold uppercase tracking-[0.12em]">
+            IGSS
+          </span>
+        )}
         {event.modality === 'Virtual' ? <Video className="w-3 h-3 flex-shrink-0" /> : <Users className="w-3 h-3 flex-shrink-0" />}
         {event.patientName}
       </div>
@@ -515,29 +610,34 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
           {!isDoctor && (
               <div className="flex gap-2">
                   <div className="relative">
-                    <Building2 className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <Stethoscope className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                     <select 
-                        value={selectedClinicId} 
-                        onChange={(e) => setSelectedClinicId(e.target.value)} 
+                        value={selectedSpecialty} 
+                        onChange={(e) => {
+                          setSelectedSpecialty(e.target.value);
+                          setSelectedDoctorId('all');
+                        }} 
                         className="pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none cursor-pointer hover:bg-slate-100"
                     >
-                      <option value="all">Todas las Clínicas</option>
-                      {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      <option value="all">Todas las Especialidades</option>
+                      {specialties.map(s => (
+                        <option key={s.id} value={s.name}>{s.name}</option>
+                      ))}
                     </select>
                   </div>
 
-                  {selectedClinicId !== 'all' && (
+                  {selectedSpecialty !== 'all' && (
                       <div className="relative animate-in fade-in slide-in-from-left-2 duration-200">
-                        <Stethoscope className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                        <Users className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                         <select 
                             value={selectedDoctorId} 
                             onChange={(e) => setSelectedDoctorId(e.target.value)} 
                             className="pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none cursor-pointer hover:bg-slate-100"
                         >
-                          <option value="all">Todos los Médicos</option>
+                          <option value="all">Todos los Profesionales</option>
                           {doctors
-                            .filter(d => d.clinicId === selectedClinicId)
-                            .map(d => <option key={d.uid} value={d.uid}>Dr. {d.name}</option>)}
+                            .filter(d => doctorHasSpecialty(d, selectedSpecialty))
+                            .map(d => <option key={d.uid} value={d.uid}>{d.name}</option>)}
                         </select>
                       </div>
                   )}
@@ -557,6 +657,17 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={patientSearchTerm}
+              onChange={(e) => setPatientSearchTerm(e.target.value)}
+              placeholder="Buscar paciente, DPI o código"
+              className="pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none hover:bg-slate-100 focus:ring-2 focus:ring-brand-300"
+            />
           </div>
 
           <button onClick={() => loadData()} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><RefreshCw className="w-5 h-5" /></button>
@@ -670,6 +781,7 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
         }}
         appointment={selectedAppointment}
         userRole={user?.role || ''}
+        currentUser={user}
         users={allUsers}
         onConfirmPhone={handleConfirmPhone}
         onRegisterPayment={handleRegisterPayment}
@@ -717,8 +829,20 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
                 Cerrar
               </button>
             </div>
+            <div className="px-4 pt-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={dayAppointmentsSearchTerm}
+                  onChange={(e) => setDayAppointmentsSearchTerm(e.target.value)}
+                  placeholder="Buscar por paciente, DPI o código..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-white text-xs text-slate-700 focus:ring-2 focus:ring-brand-400 outline-none"
+                />
+              </div>
+            </div>
             <div className="p-3 space-y-2 overflow-y-auto">
-              {dayAppointmentsModal.apps
+              {filteredDayAppointments
                 .slice()
                 .sort((a, b) => a.date.getTime() - b.date.getTime())
                 .map(app => (
@@ -737,9 +861,16 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
                         {format(app.date, 'HH:mm')}
                         {app.modality === 'Virtual' ? <Video className="w-3 h-3 text-slate-400" /> : <Users className="w-3 h-3 text-slate-400" />}
                       </span>
-                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                        {app.status.replace(/_/g, ' ')}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                          {translateStatus(app.status)}
+                        </span>
+                        {app.isIGSS && (
+                          <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-300 text-[9px] font-extrabold uppercase tracking-[0.12em]">
+                            IGSS
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs font-semibold text-slate-800 truncate">
                       {app.patientName}

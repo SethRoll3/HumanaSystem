@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useFormContext, useFieldArray } from 'react-hook-form';
 import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote, Filter } from 'lucide-react';
 import { getAllMedicines, saveExternalMedicine } from '../../services/inventoryService.ts';
-import { parsePrescriptionWithAI, analyzeExternalMedicine } from '../../services/geminiService.ts';
+import { parsePrescriptionWithAI, analyzeExternalMedicine, analyzeFollowUpIntent } from '../../services/geminiService.ts';
 import { Medicine, UserProfile } from '../../../types.ts';
 import { logAuditAction } from '../../services/auditService.ts';
 import { toast } from 'sonner';
@@ -28,6 +28,10 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
   const [filterSource, setFilterSource] = useState<'all' | 'external' | 'inventory'>('all');
   const [loading, setLoading] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [followUpTouched, setFollowUpTouched] = useState(false);
+  const followUpRequestText = watch('followUpRequestText');
+  const followUpEstimatedDate = watch('followUpEstimatedDate');
+  const followUpDays = watch('followUpDays');
 
   // Load all medicines on mount
   useEffect(() => {
@@ -173,14 +177,42 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
       }
   };
 
+  const handleFollowUpBlur = async (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+          setValue('followUpRequired', false);
+          setValue('followUpDays', undefined);
+          setValue('followUpEstimatedDate', undefined);
+          return;
+      }
+      try {
+          const analysis = await analyzeFollowUpIntent(trimmed);
+          if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
+              const baseDate = new Date();
+              const estimatedDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
+              setValue('followUpRequired', true);
+              setValue('followUpDays', analysis.days);
+              setValue('followUpEstimatedDate', estimatedDate.getTime());
+          } else {
+              setValue('followUpRequired', false);
+              setValue('followUpDays', undefined);
+              setValue('followUpEstimatedDate', undefined);
+          }
+      } catch (e) {
+          setValue('followUpRequired', false);
+          setValue('followUpDays', undefined);
+          setValue('followUpEstimatedDate', undefined);
+      }
+  };
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-8 pb-10">
-      <div className="space-y-6">
+      <div className="space-y-6 bg-emerald-50/60 border border-emerald-200 rounded-2xl p-5">
           <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <div className="bg-emerald-600 text-white p-1.5 rounded-lg">
+                <div className="bg-emerald-600 text-white p-1.5 rounded-lg ring-2 ring-emerald-300 ring-offset-2 ring-offset-emerald-50 shadow-[0_0_0_3px_rgba(16,185,129,0.15)]">
                     <Pill className="w-4 h-4"/>
                 </div>
-                1. Receta de Medicamentos
+                <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-200">1. Receta de Medicamentos</span>
           </h4>
 
           <div className="relative z-20 space-y-3" ref={containerRef}>
@@ -248,7 +280,7 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
                                       <span className="text-xs text-slate-400 block">
                                           {med.presentation}
                                           {med.brandName && ` • Marca: ${med.brandName}`}
-                                          {med.activeIngredient && ` • PA: ${med.activeIngredient}`}
+                                          {med.activeIngredient && ` • Principio activo: ${med.activeIngredient}`}
                                       </span>
                                   </div>
                                   <div className="text-right">
@@ -360,6 +392,31 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser 
                 className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-xl p-4 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-yellow-900 shadow-sm resize-none"
              />
              <p className="text-[10px] text-slate-400 mt-2 ml-1">Estas observaciones aparecerán impresas en la receta médica.</p>
+          </div>
+
+          <div className="mt-5">
+             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block flex items-center gap-2">
+                 <StickyNote className="w-3 h-3 text-yellow-600"/> Reconsulta / Próxima cita (Opcional)
+             </label>
+             <input
+                type="text"
+                {...register('followUpRequestText')}
+                placeholder='Ej: Reconsulta en 2 semanas, en 6 meses, verlo en 10 días...'
+                className={`w-full text-sm bg-white border rounded-xl p-3 focus:ring-2 focus:border-transparent placeholder:text-slate-400 text-slate-800 shadow-sm ${
+                    followUpTouched && !followUpRequestText?.trim()
+                        ? 'border-red-300 focus:ring-red-200'
+                        : 'border-slate-200 focus:ring-brand-200'
+                }`}
+                onBlur={(e) => {
+                    setFollowUpTouched(true);
+                    handleFollowUpBlur(e.target.value);
+                }}
+              />
+             {followUpEstimatedDate && (
+                <p className="text-[10px] text-slate-400 mt-2 ml-1">
+                    Fecha estimada: {new Date(followUpEstimatedDate).toLocaleDateString('es-GT')} {followUpDays ? `(aprox. ${followUpDays} días)` : ''}
+                </p>
+             )}
           </div>
       </div>
     </motion.div>
