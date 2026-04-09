@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool } from 'lucide-react';
+import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool, Scale, Wind, Droplets, Activity, Thermometer } from 'lucide-react';
 import { Consultation, Patient, UserProfile } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EditConsultationModal } from './EditConsultationModal';
@@ -58,6 +58,47 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
     if (!value) return 'Sin fecha';
     const date = value?.toDate ? value.toDate() : new Date(value);
     return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleDateString('es-GT');
+  };
+
+  const parseVitals = (vitalsLine: string) => {
+    const result: Record<string, string> = {};
+    if (!vitalsLine) return result;
+    const parts = vitalsLine.split(/[|,]/).map(p => p.trim()).filter(Boolean);
+    parts.forEach(part => {
+      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|Temp)[:\s]+(.+)/i);
+      if (match) {
+        result[match[1].toLowerCase().replace('/', '_')] = match[2].trim();
+      }
+    });
+    return result;
+  };
+
+  const vitalsConfig = [
+    { key: 'peso', label: 'Peso', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { key: 'p_a', label: 'P/A', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
+    { key: 'fr', label: 'FR', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
+    { key: 'fc', label: 'FC', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
+    { key: 'sat', label: 'SAT', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { key: 'temp', label: 'Temp', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
+  ];
+
+  const parseMedicalHistory = (text: string | undefined) => {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return [];
+    return trimmed.split(/\n{2,}/).map((block, idx) => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      const headerLine = lines.find(l => l.startsWith('[Enfermería:')) || '';
+      const vitalsLine = lines.find(l => /Peso:|P\/A:|FR:|FC:|SAT:|Temp:/i.test(l)) || '';
+      const obsLine = lines.find(l => l.toLowerCase().startsWith('observaciones:')) || '';
+      const otherLines = lines.filter(l => l !== headerLine && l !== vitalsLine && l !== obsLine);
+      const parsedVitals = parseVitals(vitalsLine);
+      let nurseName = '', nurseDate = '';
+      if (headerLine) {
+        const m = headerLine.match(/\[Enfermería:\s*(.+?)\s*-\s*(.+?)\]/);
+        if (m) { nurseName = m[1].trim(); nurseDate = m[2].trim(); }
+      }
+      return { id: `${idx}-${lines.length}`, headerLine, vitalsLine, obsLine, otherLines, parsedVitals, nurseName, nurseDate, raw: block.trim() };
+    });
   };
 
   const specialtyData = (consultation as any).specialtyData as Record<string, any> | undefined;
@@ -622,10 +663,62 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         
                         <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
                             <div>
-                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 block">Antecedentes Registrados</label>
-                                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                                    {patient?.medical_history || "No hay antecedentes registrados."}
-                                </div>
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 block">Antecedentes Registrados</label>
+                                {(() => {
+                                    const entries = parseMedicalHistory(patient?.medical_history);
+                                    if (entries.length === 0) return (
+                                        <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed">
+                                            No hay antecedentes registrados.
+                                        </div>
+                                    );
+                                    return (
+                                        <div className="space-y-4">
+                                            {entries.map(entry => (
+                                                <div key={entry.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                                    {entry.headerLine && (
+                                                        <div className="bg-brand-900 px-4 py-2.5 flex items-center justify-between">
+                                                            <div className="flex items-center gap-2">
+                                                                <User className="w-3.5 h-3.5 text-brand-200" />
+                                                                <span className="text-xs font-bold text-white">{entry.nurseName || 'Enfermería'}</span>
+                                                            </div>
+                                                            <span className="text-[10px] text-brand-200 font-medium">{entry.nurseDate}</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="p-4 space-y-3">
+                                                        {Object.keys(entry.parsedVitals).length > 0 && (
+                                                            <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                                                                {vitalsConfig.map(vc => {
+                                                                    const val = entry.parsedVitals[vc.key];
+                                                                    if (!val) return null;
+                                                                    const Icon = vc.icon;
+                                                                    return (
+                                                                        <div key={vc.key} className={`${vc.bg} rounded-xl p-2 flex flex-col items-center gap-1 border border-slate-100`}>
+                                                                            <Icon className={`w-3.5 h-3.5 ${vc.color}`} />
+                                                                            <span className="text-[9px] font-bold text-slate-400 uppercase">{vc.label}</span>
+                                                                            <span className="text-xs font-bold text-slate-800">{val}</span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                        {entry.obsLine && (
+                                                            <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                                                                <p className="text-[10px] font-bold text-amber-700 uppercase mb-0.5">Observaciones</p>
+                                                                <p className="text-xs text-amber-900 leading-relaxed">{entry.obsLine.replace(/^observaciones:\s*/i, '')}</p>
+                                                            </div>
+                                                        )}
+                                                        {entry.otherLines.length > 0 && (
+                                                            <p className="text-xs text-slate-600 leading-relaxed">{entry.otherLines.join(' · ')}</p>
+                                                        )}
+                                                        {!entry.headerLine && !entry.vitalsLine && !entry.obsLine && entry.otherLines.length === 0 && entry.raw && (
+                                                            <p className="text-xs text-slate-600">{entry.raw}</p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             <div>
@@ -654,7 +747,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                                             rel="noopener noreferrer"
                                             className={`group border rounded-xl p-4 flex flex-col items-center justify-center bg-white transition hover:shadow-md cursor-pointer relative ${
                                                 /ficha|presoft|presoftware|historia/i.test((file.name || '')) 
-                                                ? 'border-amber-300 bg-amber-50' 
+                                                ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-200 shadow-md' 
                                                 : 'border-slate-200 hover:bg-slate-50'
                                             }`}
                                             >

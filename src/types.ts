@@ -210,6 +210,7 @@ export interface Consultation {
 
   prescription?: PrescriptionItem[];
   prescriptionNotes?: string; // New field for general prescription observations
+  prescriptionNumber?: string;
   exams?: string[]; 
   
   signature?: {
@@ -333,4 +334,5 @@ export interface DoctorDaySchedule {
 
 export interface DoctorScheduleSettings {
   allowDoctorSelfManage: boolean;
+  qualityReportTime?: string; // e.g. "16:00"
 }

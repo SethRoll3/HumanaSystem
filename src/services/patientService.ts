@@ -123,27 +123,11 @@ const normalizePatientName = (name: string) => {
         .trim();
 };
 
-const isSimilarPatientName = (left: string, right: string) => {
+const isSamePatientName = (left: string, right: string) => {
     const a = normalizePatientName(left);
     const b = normalizePatientName(right);
     if (!a || !b) return false;
-    if (a === b) return true;
-
-    const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
-    const shorterTokens = shorter.split(' ').filter(Boolean);
-    if (shorterTokens.length >= 2 && longer.includes(shorter)) return true;
-
-    const setA = new Set(a.split(' ').filter(Boolean));
-    const setB = new Set(b.split(' ').filter(Boolean));
-    const [shortSet, longSet] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
-    const shortTokens = [...shortSet];
-    const hasSubsetMatch = shortTokens.length >= 2 && shortTokens.every(token => longSet.has(token));
-    if (hasSubsetMatch) return true;
-
-    const intersection = shortTokens.filter(token => longSet.has(token));
-    const maxTokens = Math.max(setA.size, setB.size);
-    const ratio = maxTokens ? intersection.length / maxTokens : 0;
-    return intersection.length >= 2 && ratio >= 0.66;
+    return a === b;
 };
 
 export const checkPatientDuplicates = async ({
@@ -185,7 +169,7 @@ export const checkPatientDuplicates = async ({
     if (trimmedName) {
         const nameSnap = await getDocs(query(collection(db, COLLECTION_NAME), limit(1000)));
         const candidates = nameSnap.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
-        const match = candidates.find(p => p.id !== excludeId && p.fullName && isSimilarPatientName(trimmedName, p.fullName));
+        const match = candidates.find(p => p.id !== excludeId && p.fullName && isSamePatientName(trimmedName, p.fullName));
         if (match) nameMatch = match;
     }
 

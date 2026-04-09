@@ -600,6 +600,23 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
             </div>
           )}
 
+          {/* Info de quién agendó la cita */}
+          {appointment.createdBy && (
+             <div className="mb-8 bg-slate-50 p-4 rounded-lg border border-slate-200">
+               <h3 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                 <Calendar className="w-4 h-4" /> Agendado por
+               </h3>
+               <div className="text-sm text-slate-800">
+                 <span className="font-medium">{getUserName(appointment.createdBy)}</span>
+                 {appointment.createdAt && (
+                   <span className="text-slate-500 ml-2">
+                     — {format(ensureDate(appointment.createdAt), "dd/MM/yyyy 'a las' HH:mm")}
+                   </span>
+                 )}
+               </div>
+             </div>
+          )}
+
           {/* Info de Confirmación si existe */}
           {appointment.confirmedBy && (
              <div className="mb-8 bg-yellow-50 p-4 rounded-lg border border-yellow-100">

@@ -203,7 +203,7 @@ export const PatientDetailView: React.FC<PatientDetailViewProps> = ({
               )}
             </div>
             <div className="rounded-xl border border-slate-100 bg-white p-3 text-sm text-slate-700">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Antecedentes médicos</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Signos Vitales</p>
               <p className="whitespace-pre-wrap">{formatValue(patient.medical_history)}</p>
             </div>
           </div>
@@ -243,7 +243,11 @@ export const PatientDetailView: React.FC<PatientDetailViewProps> = ({
                 href={file.url}
                 target="_blank"
                 rel="noreferrer"
-                className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600 hover:border-brand-300 hover:text-brand-700"
+                className={`px-3 py-2 rounded-xl border text-xs font-semibold transition ${
+                  /ficha|presoft|presoftware|historia/i.test((file.name || ''))
+                  ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-200 shadow-md text-emerald-700'
+                  : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-brand-300 hover:text-brand-700'
+                }`}
               >
                 {file.name} {file.type ? `(${file.type})` : ''}
               </a>

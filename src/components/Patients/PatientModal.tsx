@@ -81,7 +81,7 @@ const PersonalDataSection = React.memo(({
       </div>
       <div>
         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI</label>
-        <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={dpi || ''} onChange={e => onChange('dpi', e.target.value)} placeholder="Opcional" />
+        <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={dpi || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); onChange('dpi', numeric); }} placeholder="Solo números" inputMode="numeric" />
       </div>
       <div>
         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código Facturación</label>
@@ -118,7 +118,8 @@ const PersonalDataSection = React.memo(({
       </div>
       <div>
         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label>
-        <select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={gender || 'M'} onChange={e => onChange('gender', e.target.value)}>
+        <select required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={gender || ''} onChange={e => onChange('gender', e.target.value)}>
+          <option value="" disabled>-- Seleccionar Género --</option>
           <option value="M">Masculino</option>
           <option value="F">Femenino</option>
         </select>
@@ -228,21 +229,15 @@ const ClinicalDataSection = React.memo(({
         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Canal de referencia (¿De dónde nos conoció?)</label>
         <select className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900" value={referralChannel || ''} onChange={e => onChange('referralChannel', e.target.value)}>
           <option value="">-- Seleccionar --</option>
-          <option value="CONOCIDO">CONOCIDO</option>
-          <option value="EMAIL">EMAIL</option>
+          <option value="REFERENCIA DE FAMILIARES O AMIGOS">REFERENCIA DE FAMILIARES O AMIGOS</option>
           <option value="FACEBOOK">FACEBOOK</option>
-          <option value="FAMILIA">FAMILIA</option>
-          <option value="GOOGLE">GOOGLE</option>
-          <option value="IA">IA</option>
           <option value="INSTAGRAM">INSTAGRAM</option>
-          <option value="LINKEDIN">LINKEDIN</option>
-          <option value="OTROS">OTROS</option>
+          <option value="GOOGLE">GOOGLE</option>
           <option value="PAGINA WEB">PAGINA WEB</option>
           <option value="RADIO">RADIO</option>
-          <option value="TELEVISION">TELEVISION</option>
-          <option value="TIKTOK">TIKTOK</option>
-          <option value="WHATSAPP">WHATSAPP</option>
-          <option value="YOUTUBE">YOUTUBE</option>
+          <option value="TELEVISIÓN">TELEVISIÓN</option>
+          <option value="MEDIOS IMPRESOS">MEDIOS IMPRESOS</option>
+          <option value="REFERENCIA DE HOSPITAL NACIONAL">REFERENCIA DE HOSPITAL NACIONAL</option>
         </select>
       </div>
     </>
@@ -303,7 +298,7 @@ const FilesSection = React.memo(({
     <>
       <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Historial Clínico y Archivos</div>
       <div className="md:col-span-2">
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Antecedentes Médicos</label>
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Signos Vitales</label>
         <textarea className="w-full p-4 bg-white border rounded-2xl" rows={4} value={medical_history || ''} onChange={e => onMedicalHistoryChange(e.target.value)} />
       </div>
 
@@ -556,7 +551,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
         throw new Error(`El DPI ya está registrado para ${duplicateCheck.dpiMatch.fullName}.`);
       }
       if (duplicateCheck.nameMatch) {
-        throw new Error(`Ya existe un paciente con nombre igual o muy similar: ${duplicateCheck.nameMatch.fullName}.`);
+        throw new Error(`Ya existe un paciente con nombre igual: ${duplicateCheck.nameMatch.fullName}.`);
       }
 
       if (photoRemoved && !capturedPhoto) {

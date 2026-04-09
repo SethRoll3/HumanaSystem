@@ -19,6 +19,7 @@ import { AccountingDashboard } from '../components/Admin/AccountingDashboard.tsx
 import { SpecialtyFormsAdmin } from '../components/Admin/SpecialtyFormsAdmin.tsx';
 import { getClinics, createClinic, updateClinic, deleteClinic } from '../services/clinicService.ts';
 import { DoctorScheduleAdmin } from '../components/Admin/DoctorScheduleManager.tsx';
+import { QualityReportsAudit } from '../components/Admin/QualityReportsAudit.tsx';
 // @ts-ignore
 import * as XLSX from 'xlsx';
 
@@ -26,7 +27,7 @@ interface AdminPanelProps {
   user: UserProfile;
 }
 
-type AdminTab = 'users' | 'patients' | 'inventory' | 'laboratories' | 'external' | 'pathologies' | 'specialties' | 'forms' | 'logs' | 'security' | 'accounting' | 'clinics' | 'doctor_schedule';
+type AdminTab = 'users' | 'patients' | 'inventory' | 'laboratories' | 'external' | 'pathologies' | 'specialties' | 'forms' | 'logs' | 'security' | 'accounting' | 'clinics' | 'doctor_schedule' | 'quality_reports';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
@@ -463,7 +464,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                   throw new Error(`El DPI ya está registrado para ${duplicateCheck.dpiMatch.fullName}.`);
               }
               if (duplicateCheck.nameMatch) {
-                  throw new Error(`Ya existe un paciente con nombre igual o muy similar: ${duplicateCheck.nameMatch.fullName}.`);
+                  throw new Error(`Ya existe un paciente con nombre igual: ${duplicateCheck.nameMatch.fullName}.`);
               }
               if (!finalPayload.billingCode) delete finalPayload.billingCode;
               if (!finalPayload.dpi) delete finalPayload.dpi;
@@ -592,7 +593,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
       { id: 'doctor_schedule', label: 'Horario de doctores', icon: Clock },
       { id: 'clinics', label: 'Clínicas', icon: Building2 },
       { id: 'security', label: 'Seguridad & Datos', icon: Database },
-      { id: 'logs', label: 'Auditoría', icon: History },
+      { id: 'quality_reports', label: 'Auditoría de Calidad', icon: ClipboardList },
+      { id: 'logs', label: 'Auditoría General', icon: History },
   ];
 
   const DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -656,6 +658,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[650px]">
                     <DoctorScheduleAdmin currentUser={user} />
                 </div>
+            ) : activeTab === 'quality_reports' ? (
+                <QualityReportsAudit />
             ) : activeTab === 'security' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 md:p-8">
@@ -918,14 +922,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                         />
                                     </div>
                                 </div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.dpi || ''} onChange={e => setFormValues({...formValues, dpi: e.target.value})} /></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">DPI</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.dpi || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({...formValues, dpi: numeric}); }} inputMode="numeric" /></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Código Facturación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold" value={formValues.billingCode || ''} onChange={e => setFormValues({...formValues, billingCode: e.target.value})} /></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Ocupación</label><input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.occupation || ''} onChange={e => setFormValues({...formValues, occupation: e.target.value})} /></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono del Paciente</label><input required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.phone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({...formValues, phone: numeric}); }} /></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email del Paciente</label><input type="email" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.email || ''} onChange={e => setFormValues({...formValues, email: e.target.value})} /></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label><input type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); const birthDate = numeric ? calculateBirthDateFromAge(numeric) : ''; setFormValues({...formValues, age: numeric, birthDate}); }} /></div>
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label><input type="date" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.birthDate || ''} onChange={e => { const birthDate = e.target.value; const age = calculateAgeFromBirthDate(birthDate); setFormValues({...formValues, birthDate, age}); }} /></div>
-                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.gender || 'M'} onChange={e => setFormValues({...formValues, gender: e.target.value})}><option value="M">Masculino</option><option value="F">Femenino</option></select></div>
+                                <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label><select required className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.gender || ''} onChange={e => setFormValues({...formValues, gender: e.target.value})}><option value="" disabled>-- Seleccionar Género --</option><option value="M">Masculino</option><option value="F">Femenino</option></select></div>
                                 
                                 <div className="md:col-span-2 text-sm font-bold text-brand-600 uppercase tracking-widest border-b border-brand-100 pb-2 mb-2 mt-4">Dirección Domiciliar</div>
                                 <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -990,21 +994,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                         onChange={e => setFormValues({ ...formValues, referralChannel: e.target.value })}
                                     >
                                         <option value="">-- Seleccionar --</option>
-                                        <option value="CONOCIDO">CONOCIDO</option>
-                                        <option value="EMAIL">EMAIL</option>
+                                        <option value="REFERENCIA DE FAMILIARES O AMIGOS">REFERENCIA DE FAMILIARES O AMIGOS</option>
                                         <option value="FACEBOOK">FACEBOOK</option>
-                                        <option value="FAMILIA">FAMILIA</option>
-                                        <option value="GOOGLE">GOOGLE</option>
-                                        <option value="IA">IA</option>
                                         <option value="INSTAGRAM">INSTAGRAM</option>
-                                        <option value="LINKEDIN">LINKEDIN</option>
-                                        <option value="OTROS">OTROS</option>
+                                        <option value="GOOGLE">GOOGLE</option>
                                         <option value="PAGINA WEB">PAGINA WEB</option>
                                         <option value="RADIO">RADIO</option>
-                                        <option value="TELEVISION">TELEVISION</option>
-                                        <option value="TIKTOK">TIKTOK</option>
-                                        <option value="WHATSAPP">WHATSAPP</option>
-                                        <option value="YOUTUBE">YOUTUBE</option>
+                                        <option value="TELEVISIÓN">TELEVISIÓN</option>
+                                        <option value="MEDIOS IMPRESOS">MEDIOS IMPRESOS</option>
+                                        <option value="REFERENCIA DE HOSPITAL NACIONAL">REFERENCIA DE HOSPITAL NACIONAL</option>
                                     </select>
                                 </div>
 
@@ -1015,7 +1013,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                 <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label><input type="email" disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleEmail || ''} onChange={e => setFormValues({...formValues, responsibleEmail: e.target.value})} /></div>
                                 
                                 <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Historial Clínico y Archivos</div>
-                                <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Antecedentes Médicos</label><textarea className="w-full p-4 bg-white border rounded-2xl" rows={4} value={formValues.medical_history || ''} onChange={e => setFormValues({...formValues, medical_history: e.target.value})} /></div>
+                                <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Signos Vitales</label><textarea className="w-full p-4 bg-white border rounded-2xl" rows={4} value={formValues.medical_history || ''} onChange={e => setFormValues({...formValues, medical_history: e.target.value})} /></div>
                                 <div className="md:col-span-2"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Archivos Adjuntos</label>
                                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
                                         <div className="flex flex-wrap gap-2">

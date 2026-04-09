@@ -36,7 +36,7 @@ export const SpecialtyFormRenderer: React.FC<SpecialtyFormRendererProps> = ({ fo
     const renderField = (field: FormField) => {
         // Lógica condicional
         if (field.conditional) {
-            const dependentValue = values[`specialtyData.${field.conditional.fieldId}`];
+            const dependentValue = values?.specialtyData?.[field.conditional.fieldId];
             if (!matchesConditional(dependentValue, field.conditional.value)) return null;
         }
 

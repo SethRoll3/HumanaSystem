@@ -3,13 +3,11 @@ import * as React from 'react';
 import { useEffect, useState, useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { History, Activity, Calendar, FileText, Stethoscope, Lock, User, Eye, X, Pill, Thermometer, EyeOff, Paperclip, Image, File, FlaskConical, Download, ExternalLink, Share2, ShieldCheck, StickyNote, Fuel, AlertTriangle } from 'lucide-react';
+import { History, Activity, Calendar, FileText, Stethoscope, Lock, User, Eye, X, Pill, Thermometer, EyeOff, Paperclip, Image, File, FlaskConical, Download, ExternalLink, Share2, ShieldCheck, StickyNote, AlertTriangle, Scale, Wind, HeartPulse, Droplets } from 'lucide-react';
 import { db } from '../../firebase/config.ts';
-import { Patient, UserProfile, Consultation, Specialty } from '../../types.ts';
+import { Patient, UserProfile, Consultation } from '../../types.ts';
 import { motion } from 'framer-motion';
 import { ReferralNotesAlert } from './ReferralNotesAlert';
-import { getSpecialties } from '../../services/inventoryService.ts';
-import { getActiveDoctors } from '../../services/userService.ts';
 
 interface StepDiagnosisProps {
   patient: Patient;
@@ -20,13 +18,6 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
   const { register, formState: { errors } } = useFormContext();
   const [history, setHistory] = useState<Consultation[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [doctorFilter, setDoctorFilter] = useState<string>('all');
-  const [specialtyFilter, setSpecialtyFilter] = useState<string>('all');
-  const [doctors, setDoctors] = useState<UserProfile[]>([]);
-  const [specialties, setSpecialties] = useState<Specialty[]>([]);
-  const [exactDateFilter, setExactDateFilter] = useState<string>('');
-  const [fromDateFilter, setFromDateFilter] = useState<string>('');
-  const [toDateFilter, setToDateFilter] = useState<string>('');
   const [expandedMedicalRecords, setExpandedMedicalRecords] = useState<Record<string, boolean>>({});
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const formatFileDate = (value: any) => {
@@ -61,13 +52,6 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
             
         setHistory(data);
 
-        // Set default fromDateFilter to the first consultation date
-        if (data.length > 0) {
-          const firstDate = new Date(data[data.length - 1].date);
-          const guatemalaOffset = -6 * 60; // Guatemala is UTC-6
-          const guatemalaDate = new Date(firstDate.getTime() + (guatemalaOffset + firstDate.getTimezoneOffset()) * 60000);
-          setFromDateFilter(guatemalaDate.toISOString().slice(0, 10));
-        }
       } catch (error) {
         console.error("Error fetching patient history", error);
       } finally {
@@ -77,40 +61,27 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
     fetchHistory();
   }, [patient]);
 
-  useEffect(() => {
-    let isMounted = true;
-    const loadSpecialties = async () => {
-      try {
-        const data = await getSpecialties();
-        if (isMounted) setSpecialties(data);
-      } catch (e) {
-        console.error("Error cargando especialidades", e);
+  const parseVitals = (vitalsLine: string) => {
+    const result: Record<string, string> = {};
+    if (!vitalsLine) return result;
+    const parts = vitalsLine.split(/[|,]/).map(p => p.trim()).filter(Boolean);
+    parts.forEach(part => {
+      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|Temp)[:\s]+(.+)/i);
+      if (match) {
+        result[match[1].toLowerCase().replace('/', '_')] = match[2].trim();
       }
-    };
-    const loadDoctors = async () => {
-      try {
-        const data = await getActiveDoctors();
-        if (isMounted) setDoctors(data);
-      } catch (e) {
-        console.error("Error cargando doctores", e);
-      }
-    };
-    loadSpecialties();
-    loadDoctors();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+    });
+    return result;
+  };
 
-  const doctorOptions = useMemo(
-    () => Array.from(new Set(history.map(c => c.doctorName).filter(Boolean))) as string[],
-    [history]
-  );
-
-  const specialtyOptions = useMemo(
-    () => specialties.map(s => s.name).filter(Boolean),
-    [specialties]
-  );
+  const vitalsConfig = [
+    { key: 'peso', label: 'Peso', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { key: 'p_a', label: 'P/A', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
+    { key: 'fr', label: 'FR', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
+    { key: 'fc', label: 'FC', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
+    { key: 'sat', label: 'SAT', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { key: 'temp', label: 'Temp', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
+  ];
 
   const medicalHistoryEntries = useMemo(() => {
     const text = (patient?.medical_history || '').trim();
@@ -123,49 +94,32 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
       ) || '';
       const obsLine = lines.find(line => line.toLowerCase().startsWith('observaciones:')) || '';
       const otherLines = lines.filter(line => line !== headerLine && line !== vitalsLine && line !== obsLine);
+      const parsedVitals = parseVitals(vitalsLine);
+      // Parse header for nurse name and date
+      let nurseName = '';
+      let nurseDate = '';
+      if (headerLine) {
+        const hMatch = headerLine.match(/\[Enfermería:\s*(.+?)\s*-\s*(.+?)\]/);
+        if (hMatch) {
+          nurseName = hMatch[1].trim();
+          nurseDate = hMatch[2].trim();
+        }
+      }
       return {
         id: `${idx}-${lines.length}`,
         headerLine,
         vitalsLine,
         obsLine,
         otherLines,
+        parsedVitals,
+        nurseName,
+        nurseDate,
         raw: block.trim()
       };
     });
   }, [patient?.medical_history]);
 
-  const filteredHistory = useMemo(() => {
-    return history.filter(cons => {
-      if (doctorFilter !== 'all' && cons.doctorName !== doctorFilter) return false;
-
-      const consSpecialty = (cons as any).doctorSpecialty as string | undefined;
-      if (specialtyFilter !== 'all' && specialtyFilter) {
-        const docProfile = cons.doctorId ? doctors.find(d => d.uid === cons.doctorId) : undefined;
-        const docSpecialties = docProfile?.specialties || (docProfile?.specialty ? [docProfile.specialty] : []);
-        const matchesSpecialty = consSpecialty === specialtyFilter || docSpecialties.includes(specialtyFilter);
-        if (!matchesSpecialty) return false;
-      }
-
-      const consDate = new Date(cons.date);
-      // Adjust to Guatemala time for display/filtering logic consistency
-      const guatemalaOffset = -6 * 60; 
-      const guatemalaDate = new Date(consDate.getTime() + (guatemalaOffset + consDate.getTimezoneOffset()) * 60000);
-      const dateISO = guatemalaDate.toISOString().slice(0, 10);
-
-      if (exactDateFilter) {
-        if (dateISO !== exactDateFilter) return false;
-      } else {
-        if (fromDateFilter) {
-          if (dateISO < fromDateFilter) return false;
-        }
-        if (toDateFilter) {
-          if (dateISO > toDateFilter) return false;
-        }
-      }
-
-      return true;
-    });
-  }, [history, doctors, doctorFilter, specialtyFilter, exactDateFilter, fromDateFilter, toDateFilter]);
+  const filteredHistory = history;
 
   const getOptionalExams = (c: Consultation) => {
       const allExams = c.exams || [];
@@ -203,101 +157,6 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                  <h4 className="font-bold text-slate-800 flex items-center gap-2 text-base">
                     <Activity className="w-5 h-5 text-brand-600"/> Consultas Previas ({filteredHistory.length})
                  </h4>
-                 <div className="flex items-center gap-1 text-[11px] text-slate-500">
-                    <Fuel className="w-3 h-3" />
-                    <span>Filtrar por médico, fecha o especialidad</span>
-                 </div>
-             </div>
-
-             <div className="space-y-3 mb-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
-                            Médico
-                        </label>
-                        <select
-                          value={doctorFilter}
-                          onChange={e => {
-                            setDoctorFilter(e.target.value);
-                          }}
-                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
-                        >
-                          <option value="all">Todos los médicos</option>
-                          {doctorOptions.map(name => (
-                            <option key={name} value={name}>{name}</option>
-                          ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
-                            Especialidad
-                        </label>
-                        <select
-                          value={specialtyFilter}
-                          onChange={e => {
-                            setSpecialtyFilter(e.target.value);
-                          }}
-                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
-                        >
-                          <option value="all">Todas las especialidades</option>
-                          {specialtyOptions.map(spec => (
-                            <option key={spec} value={spec}>{spec}</option>
-                          ))}
-                        </select>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div>
-                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
-                            Fecha específica
-                        </label>
-                        <input
-                          type="date"
-                          value={exactDateFilter}
-                          onChange={e => {
-                            setExactDateFilter(e.target.value);
-                            if (e.target.value) {
-                              setFromDateFilter('');
-                              setToDateFilter('');
-                            }
-                          }}
-                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
-                        />
-                    </div>
-                    <div>
-                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
-                            Desde
-                        </label>
-                        <input
-                          type="date"
-                          value={fromDateFilter}
-                          disabled={!!exactDateFilter}
-                          onChange={e => {
-                            setFromDateFilter(e.target.value);
-                          }}
-                          className={`w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 ${!!exactDateFilter ? 'opacity-50 cursor-not-allowed bg-slate-100' : ''}`}
-                        />
-                    </div>
-                    <div>
-                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1 block">
-                            Hasta
-                        </label>
-                        <input
-                          type="date"
-                          value={toDateFilter}
-                          disabled={!!exactDateFilter}
-                          onChange={e => {
-                            setToDateFilter(e.target.value);
-                          }}
-                          className={`w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 ${!!exactDateFilter ? 'opacity-50 cursor-not-allowed bg-slate-100' : ''}`}
-                        />
-                    </div>
-                </div>
-
-                <p className="text-[11px] text-slate-400">
-                    Si seleccionas una fecha específica, se ignorará el rango Desde/Hasta.
-                </p>
              </div>
              
              {loadingHistory ? (
@@ -307,10 +166,6 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
              ) : history.length === 0 ? (
                 <div className="text-center py-6">
                      <p className="text-sm text-slate-500 italic">No hay consultas finalizadas previas.</p>
-                </div>
-             ) : filteredHistory.length === 0 ? (
-                <div className="text-center py-6">
-                     <p className="text-sm text-slate-500 italic">No hay resultados con los filtros actuales.</p>
                 </div>
              ) : (
                 <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
@@ -635,36 +490,63 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
           >
              <div>
                 <h4 className="font-bold text-amber-800 flex items-center gap-2 mb-2 text-base">
-                    <History className="w-5 h-5"/> Antecedentes Médicos
+                    <History className="w-5 h-5"/> Signos Vitales
                 </h4>
                 {medicalHistoryEntries.length === 0 ? (
                     <p className="text-sm text-slate-600 mb-4">
                         Sin registro detallado.
                     </p>
                 ) : (
-                    <div className="space-y-3 mb-4">
-                        {medicalHistoryEntries.map(entry => (
+                    <div className="space-y-4 mb-4">
+                        {medicalHistoryEntries.map((entry, entryIdx) => (
                             <div
                                 key={entry.id}
-                                className="bg-white/80 border border-amber-200 rounded-xl p-3 text-xs text-slate-700 shadow-sm"
+                                className="bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden"
                             >
-                                {entry.vitalsLine && (
-                                    <p className="font-semibold text-slate-700">{entry.vitalsLine}</p>
-                                )}
-                                {entry.obsLine && (
-                                    <p className="text-slate-600 italic mt-1">{entry.obsLine}</p>
-                                )}
-                                {entry.otherLines.length > 0 && (
-                                    <p className="text-slate-600 mt-1">{entry.otherLines.join(' · ')}</p>
-                                )}
-                                {!entry.vitalsLine && !entry.obsLine && entry.otherLines.length === 0 && entry.raw && (
-                                    <p className="text-slate-600">{entry.raw}</p>
-                                )}
+                                {/* Header: Enfermera y fecha */}
                                 {entry.headerLine && (
-                                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 text-[10px] font-semibold text-amber-800">
-                                        {entry.headerLine.replace(/^\[|\]$/g, '')}
+                                    <div className="bg-brand-900 px-4 py-2.5 flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <User className="w-3.5 h-3.5 text-brand-200" />
+                                            <span className="text-xs font-bold text-white">{entry.nurseName || 'Enfermería'}</span>
+                                        </div>
+                                        <span className="text-[10px] text-brand-200 font-medium">{entry.nurseDate}</span>
                                     </div>
                                 )}
+                                <div className="p-4 space-y-3">
+                                    {/* Vitals grid con íconos */}
+                                    {Object.keys(entry.parsedVitals).length > 0 && (
+                                        <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                                            {vitalsConfig.map(vc => {
+                                                const val = entry.parsedVitals[vc.key];
+                                                if (!val) return null;
+                                                const Icon = vc.icon;
+                                                return (
+                                                    <div key={vc.key} className={`${vc.bg} rounded-xl p-2 flex flex-col items-center gap-1 border border-slate-100`}>
+                                                        <Icon className={`w-3.5 h-3.5 ${vc.color}`} />
+                                                        <span className="text-[9px] font-bold text-slate-400 uppercase">{vc.label}</span>
+                                                        <span className="text-xs font-bold text-slate-800">{val}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                    {/* Observaciones */}
+                                    {entry.obsLine && (
+                                        <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                                            <p className="text-[10px] font-bold text-amber-700 uppercase mb-0.5">Observaciones</p>
+                                            <p className="text-xs text-amber-900 leading-relaxed">{entry.obsLine.replace(/^observaciones:\s*/i, '')}</p>
+                                        </div>
+                                    )}
+                                    {/* Otras líneas */}
+                                    {entry.otherLines.length > 0 && (
+                                        <p className="text-xs text-slate-600 leading-relaxed">{entry.otherLines.join(' · ')}</p>
+                                    )}
+                                    {/* Fallback si no hay nada estructurado */}
+                                    {!entry.headerLine && !entry.vitalsLine && !entry.obsLine && entry.otherLines.length === 0 && entry.raw && (
+                                        <p className="text-xs text-slate-600">{entry.raw}</p>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -755,10 +637,58 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                   
                   <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
                       <div>
-                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 block">Antecedentes Registrados</label>
-                          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
-                              {patient.medical_history || "No hay antecedentes registrados."}
-                          </div>
+                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 block">Antecedentes Registrados</label>
+                          {medicalHistoryEntries.length === 0 ? (
+                              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed">
+                                  No hay antecedentes registrados.
+                              </div>
+                          ) : (
+                              <div className="space-y-4">
+                                  {medicalHistoryEntries.map(entry => (
+                                      <div key={entry.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                          {entry.headerLine && (
+                                              <div className="bg-brand-900 px-4 py-2.5 flex items-center justify-between">
+                                                  <div className="flex items-center gap-2">
+                                                      <User className="w-3.5 h-3.5 text-brand-200" />
+                                                      <span className="text-xs font-bold text-white">{entry.nurseName || 'Enfermería'}</span>
+                                                  </div>
+                                                  <span className="text-[10px] text-brand-200 font-medium">{entry.nurseDate}</span>
+                                              </div>
+                                          )}
+                                          <div className="p-4 space-y-3">
+                                              {Object.keys(entry.parsedVitals).length > 0 && (
+                                                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                                                      {vitalsConfig.map(vc => {
+                                                          const val = entry.parsedVitals[vc.key];
+                                                          if (!val) return null;
+                                                          const Icon = vc.icon;
+                                                          return (
+                                                              <div key={vc.key} className={`${vc.bg} rounded-xl p-2 flex flex-col items-center gap-1 border border-slate-100`}>
+                                                                  <Icon className={`w-3.5 h-3.5 ${vc.color}`} />
+                                                                  <span className="text-[9px] font-bold text-slate-400 uppercase">{vc.label}</span>
+                                                                  <span className="text-xs font-bold text-slate-800">{val}</span>
+                                                              </div>
+                                                          );
+                                                      })}
+                                                  </div>
+                                              )}
+                                              {entry.obsLine && (
+                                                  <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                                                      <p className="text-[10px] font-bold text-amber-700 uppercase mb-0.5">Observaciones</p>
+                                                      <p className="text-xs text-amber-900 leading-relaxed">{entry.obsLine.replace(/^observaciones:\s*/i, '')}</p>
+                                                  </div>
+                                              )}
+                                              {entry.otherLines.length > 0 && (
+                                                  <p className="text-xs text-slate-600 leading-relaxed">{entry.otherLines.join(' · ')}</p>
+                                              )}
+                                              {!entry.headerLine && !entry.vitalsLine && !entry.obsLine && entry.otherLines.length === 0 && entry.raw && (
+                                                  <p className="text-xs text-slate-600">{entry.raw}</p>
+                                              )}
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
                       </div>
 
                       <div>

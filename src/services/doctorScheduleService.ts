@@ -37,18 +37,19 @@ export const doctorScheduleService = {
     const ref = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC_ID);
     const snap = await getDoc(ref);
     if (!snap.exists()) {
-      return { allowDoctorSelfManage: false };
+      return { allowDoctorSelfManage: false, qualityReportTime: '16:00' };
     }
     const data = snap.data() as Partial<DoctorScheduleSettings>;
     return {
       allowDoctorSelfManage: data.allowDoctorSelfManage ?? false,
+      qualityReportTime: data.qualityReportTime ?? '16:00',
     };
   },
 
   async updateGlobalSettings(updates: Partial<DoctorScheduleSettings>): Promise<void> {
     const ref = doc(db, SETTINGS_COLLECTION, SETTINGS_DOC_ID);
     const snap = await getDoc(ref);
-    const current = snap.exists() ? (snap.data() as DoctorScheduleSettings) : { allowDoctorSelfManage: false };
+    const current = snap.exists() ? (snap.data() as DoctorScheduleSettings) : { allowDoctorSelfManage: false, qualityReportTime: '16:00' };
     await setDoc(ref, { ...current, ...updates }, { merge: true });
   },
 

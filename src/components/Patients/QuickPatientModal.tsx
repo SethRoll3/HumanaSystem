@@ -67,7 +67,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
         occupation: '', 
         age: '', 
         birthDate: '', 
-        gender: 'M', 
+        gender: '', 
         previousTreatment: 'No ha estado en tratamiento', 
         previousTreatmentDetail: '',
         careCenter: 'Humana',
@@ -212,7 +212,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                 throw new Error(`El DPI ya está registrado para ${duplicateCheck.dpiMatch.fullName}.`);
             }
             if (duplicateCheck.nameMatch) {
-                throw new Error(`Ya existe un paciente con nombre igual o muy similar: ${duplicateCheck.nameMatch.fullName}.`);
+                throw new Error(`Ya existe un paciente con nombre igual: ${duplicateCheck.nameMatch.fullName}.`);
             }
 
             const newId = await createPatient(payload);
@@ -379,8 +379,8 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                             <input 
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base" 
                                 value={form.dpi}  
-                                onChange={e => setForm({...form, dpi: e.target.value})} 
-                                placeholder="0000000000000"
+                                onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setForm({...form, dpi: numeric}); }} 
+                                placeholder="Solo números" inputMode="numeric"
                             />
                         </div>
                         <div>
@@ -436,10 +436,12 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                         <div>
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label>
                             <select 
+                                required
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
                                 value={form.gender} 
                                 onChange={e => setForm({...form, gender: e.target.value})}
                             >
+                                <option value="" disabled>-- Seleccionar Género --</option>
                                 <option value="M">Masculino</option>
                                 <option value="F">Femenino</option>
                             </select>
@@ -591,21 +593,15 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                                 onChange={e => setForm({ ...form, referralChannel: e.target.value })}
                             >
                                 <option value="">-- Seleccionar --</option>
-                                <option value="CONOCIDO">CONOCIDO</option>
-                                <option value="EMAIL">EMAIL</option>
+                                <option value="REFERENCIA DE FAMILIARES O AMIGOS">REFERENCIA DE FAMILIARES O AMIGOS</option>
                                 <option value="FACEBOOK">FACEBOOK</option>
-                                <option value="FAMILIA">FAMILIA</option>
-                                <option value="GOOGLE">GOOGLE</option>
-                                <option value="IA">IA</option>
                                 <option value="INSTAGRAM">INSTAGRAM</option>
-                                <option value="LINKEDIN">LINKEDIN</option>
-                                <option value="OTROS">OTROS</option>
+                                <option value="GOOGLE">GOOGLE</option>
                                 <option value="PAGINA WEB">PAGINA WEB</option>
                                 <option value="RADIO">RADIO</option>
-                                <option value="TELEVISION">TELEVISION</option>
-                                <option value="TIKTOK">TIKTOK</option>
-                                <option value="WHATSAPP">WHATSAPP</option>
-                                <option value="YOUTUBE">YOUTUBE</option>
+                                <option value="TELEVISIÓN">TELEVISIÓN</option>
+                                <option value="MEDIOS IMPRESOS">MEDIOS IMPRESOS</option>
+                                <option value="REFERENCIA DE HOSPITAL NACIONAL">REFERENCIA DE HOSPITAL NACIONAL</option>
                             </select>
                         </div>
 
@@ -641,7 +637,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                                 disabled={isNoResNew} 
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100 disabled:text-slate-400 outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
                                 value={isNoResNew ? 'No hay' : form.responsiblePhone} 
-                                onChange={e => setForm({...form, responsiblePhone: e.target.value})} 
+                                onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setForm({...form, responsiblePhone: numeric}); }} 
                             />
                         </div>
 

@@ -13,7 +13,12 @@ interface StepExamsProps {
     appointmentType?: 'Nueva' | 'Reconsulta';
 }
 
-const OPTIONAL_EXAMS_TYPES = ['EEG', 'SuperEEG', 'Resonancia', 'Otros'];
+const OPTIONAL_EXAMS_TYPES = [
+  // 'EEG',
+  // 'SuperEEG',
+  // 'Resonancia',
+  'Otros'
+];
 const EG_DURATIONS = ['1/2 hora', '1 hora', '3 horas', '5 horas', '8 horas'];
 
 const LAB_PROTOCOLS: Record<string, { title: string; items: string[] }[]> = {
@@ -396,7 +401,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
                 <div className="flex items-center gap-2 text-brand-800 font-bold">
                     <Microscope className="w-5 h-5" />
-                    <h4>1. Seleccionar Diagnóstico Genérico</h4>
+                    <h4>1. Clasificación según patología de paciente</h4>
                 </div>
                 {userSpecialties && userSpecialties.length > 0 && (
                     <div className="text-xs text-brand-700 flex items-center gap-1 bg-white px-3 py-1.5 rounded-full border border-brand-200 shadow-sm">
@@ -407,20 +412,20 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
            </div>
            
            <div>
-               <label className="block text-sm font-semibold text-slate-700 mb-2">Diagnóstico Genérico</label>
+               <label className="block text-sm font-semibold text-slate-700 mb-2">Clasificación según patología de paciente</label>
                {loadingPaths ? <p className="text-xs text-slate-400">Cargando diagnósticos...</p> : (
                    <select 
                        value={selectedPathology?.name || ''}
                        onChange={handlePathologyChange}
                        className="w-full rounded-lg border-slate-300 p-2.5 bg-white text-slate-800 focus:ring-brand-500 focus:border-brand-500 shadow-sm"
                    >
-                       <option value="">-- Seleccionar Diagnóstico Genérico --</option>
+                       <option value="">-- Seleccionar Clasificación --</option>
                        {pathologies.map(p => (
                            <option key={p.name} value={p.name}>{p.name}</option>
                        ))}
                    </select>
                )}
-               <p className="text-xs text-slate-400 mt-2">Al seleccionar un diagnóstico genérico, los exámenes del protocolo se marcarán automáticamente.</p>
+               <p className="text-xs text-slate-400 mt-2">Al seleccionar una clasificación, los exámenes del protocolo se marcarán automáticamente.</p>
            </div>
        </div>
 
@@ -429,7 +434,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
              <div className="flex justify-between items-end mb-3">
                 <label className="block text-sm font-bold text-slate-700">
-                    2. Protocolo: <span className="text-brand-600">{selectedPathology.name}</span>
+                   2. Clasificación: <span className="text-brand-600">{selectedPathology.name}</span>
                 </label>
              </div>
              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4">
@@ -899,7 +904,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
 
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                             <div className="space-y-2">
-                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Detección de Puntas (Curry)</label>
+                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Detección de Fuentes (Curry)</label>
                                                 <label className="flex items-center gap-2 text-xs text-slate-600">
                                                     <input type="checkbox" {...register(`eegOrders.${index}.spikeDetection64`)} className="w-4 h-4" />
                                                     64 Canales

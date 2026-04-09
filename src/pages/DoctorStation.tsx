@@ -7,7 +7,7 @@ import {  Loader2, CheckCircle, Plus, AlertTriangle,
      X, Video, Users
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { collection, addDoc, doc, Timestamp, updateDoc, query, where, getDocs, DocumentSnapshot } from 'firebase/firestore';
+import { collection, addDoc, doc, Timestamp, updateDoc, query, where, getDocs, DocumentSnapshot, runTransaction, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -81,6 +81,19 @@ const formatCountdown = (seconds: number) => {
   };
 };
 
+const generateUniquePrescriptionNumber = async (): Promise<string> => {
+  const counterRef = doc(db, 'system_counters', 'prescription_number');
+  const nextValue = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(counterRef);
+    const currentValue = snap.exists() ? Number((snap.data() as any).current || 0) : 0;
+    const safeCurrent = Number.isFinite(currentValue) && currentValue > 0 ? Math.floor(currentValue) : 0;
+    const next = safeCurrent + 1;
+    transaction.set(counterRef, { current: next, updatedAt: Date.now() }, { merge: true });
+    return next;
+  });
+  return String(nextValue);
+};
+
 const AGENDA_PAGE_SIZE = 12;
 
 interface DoctorStationProps {
@@ -141,8 +154,6 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const [todaysAppointments, setTodaysAppointments] = useState<Appointment[]>([]);
   const [residentAppointments, setResidentAppointments] = useState<Appointment[]>([]);
   const [agendaPage, setAgendaPage] = useState(1);
-  const [agendaLastDocs, setAgendaLastDocs] = useState<Record<number, DocumentSnapshot | null>>({});
-  const [agendaHasMore, setAgendaHasMore] = useState(false);
   const [agendaDateFilter, setAgendaDateFilter] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -324,42 +335,42 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     return { start, end: undefined as Date | undefined };
   };
 
-  const fetchAgendaPage = async (targetPage: number, useResidentList: boolean) => {
+  const fetchAgendaPage = async (useResidentList: boolean) => {
     try {
       const filterId = isDoctor ? user.uid : undefined;
       const { start, end } = getAgendaDateRange(agendaDateFilter);
-      const prevDoc = targetPage > 1 ? agendaLastDocs[targetPage - 1] : null;
-      if (targetPage > 1 && !prevDoc) {
-        setAgendaPage(1);
-        return;
+      
+      let baseConstraints: any[] = [
+        where('date', '>=', Timestamp.fromDate(start)),
+        orderBy('date', 'asc')
+      ];
+      if (end) {
+        baseConstraints.splice(1, 0, where('date', '<=', Timestamp.fromDate(end)));
+      }
+      if (filterId) {
+        baseConstraints.unshift(where('doctorId', '==', filterId));
       }
 
-      const result = await appointmentService.getAppointmentsPaginated({
-        doctorId: filterId,
-        startDate: start,
-        endDate: end,
-        limitCount: AGENDA_PAGE_SIZE,
-        lastDoc: prevDoc || undefined
-      });
+      const q = query(collection(db, 'appointments'), ...baseConstraints);
+      const snapshot = await getDocs(q);
 
-      const processedApps = result.appointments.map(app => ({
-        ...app,
-        date: app.date instanceof Timestamp ? app.date.toDate() : new Date(app.date),
-        endDate: app.endDate instanceof Timestamp ? app.endDate.toDate() : new Date(app.endDate),
-        createdAt: app.createdAt instanceof Timestamp ? app.createdAt.toDate() : app.createdAt
-      }));
+      const processedApps = snapshot.docs.map(docSnap => {
+        const app = { id: docSnap.id, ...docSnap.data() } as Appointment;
+        return {
+          ...app,
+          date: app.date instanceof Timestamp ? app.date.toDate() : new Date(app.date),
+          endDate: app.endDate instanceof Timestamp ? app.endDate.toDate() : new Date(app.endDate),
+          createdAt: app.createdAt instanceof Timestamp ? app.createdAt.toDate() : app.createdAt
+        };
+      });
 
       if (useResidentList) {
         setResidentAppointments(processedApps);
       } else {
         setTodaysAppointments(processedApps);
       }
-
-      setAgendaHasMore(result.hasMore);
-      setAgendaLastDocs(prev => ({
-        ...prev,
-        [targetPage]: result.lastDoc || null
-      }));
+      // Reset page when fetching new data
+      setAgendaPage(1);
     } catch (error) {
       console.error("Error loading appointments", error);
     }
@@ -368,17 +379,11 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   useEffect(() => {
     if (agendaViewMode === 'list') {
         const useResidentList = isResident;
-        fetchAgendaPage(agendaPage, useResidentList);
-        const interval = setInterval(() => fetchAgendaPage(agendaPage, useResidentList), 60000);
+        fetchAgendaPage(useResidentList);
+        const interval = setInterval(() => fetchAgendaPage(useResidentList), 60000);
         return () => clearInterval(interval);
     }
-  }, [user.uid, isDoctor, isAdmin, isResident, agendaViewMode, agendaPage, agendaDateFilter]);
-
-  useEffect(() => {
-    setAgendaPage(1);
-    setAgendaLastDocs({});
-    setAgendaHasMore(false);
-  }, [agendaDateFilter, isResident]);
+  }, [user.uid, isDoctor, isAdmin, isResident, agendaViewMode, agendaDateFilter]);
 
   // CARGAR DATOS PARA MODAL DE CITA
   const loadModalData = async () => {
@@ -551,7 +556,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               createdBy: user.uid
           });
           toast.success("Cita agendada correctamente");
-          fetchAgendaPage(agendaPage, isResident);
+          fetchAgendaPage(isResident);
           setShowCreateAppointmentModal(false);
           setPreSelectedPatientId(null);
       } catch (error: any) {
@@ -642,6 +647,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
       if (!selectedHistoryConsultation || !historyPatient) return;
       try {
           const action: 'download' | 'print' = (isDoctor && !isNurse && !isAdmin) ? 'download' : 'print';
+          let consultationToPrint = selectedHistoryConsultation;
 
           let doctorProfileForPdf = user;
           
@@ -664,17 +670,26 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
           }
 
           if (type === 'prescription') {
-              await generatePrescriptionPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+              if (!consultationToPrint.prescriptionNumber) {
+                  const prescriptionNumber = await generateUniquePrescriptionNumber();
+                  if (consultationToPrint.id) {
+                      const consRef = doc(db, 'consultations', consultationToPrint.id);
+                      await updateDoc(consRef, { prescriptionNumber });
+                  }
+                  consultationToPrint = { ...consultationToPrint, prescriptionNumber };
+                  setSelectedHistoryConsultation(prev => prev ? ({ ...prev, prescriptionNumber }) : prev);
+              }
+              await generatePrescriptionPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
           } else if (type === 'labs') {
-              await generateExamsPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+              await generateExamsPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
           } else if (type === 'report') {
-              await generateNursingPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+              await generateNursingPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
           } else if (type === 'resonance_orders') {
-              await generateResonanceOrdersPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+              await generateResonanceOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
           } else if (type === 'eeg_orders') {
-              await generateEegOrdersPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+              await generateEegOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
           } else {
-              await generateFullFichaPDF(selectedHistoryConsultation, historyPatient, doctorProfileForPdf, action);
+              await generateFullFichaPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
           }
 
           if (!isDoctor && (isNurse || isAdmin || isReceptionist) && selectedHistoryConsultation.status !== 'delivered') {
@@ -780,7 +795,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     const haystack = normalizeSearch(`${appt.patientName || ''} ${appt.doctorName || ''}`);
     return haystack.includes(normalizedAgendaSearch);
   });
-  const listAppointments = searchedAppointments;
+  
+  const totalPages = Math.ceil(searchedAppointments.length / AGENDA_PAGE_SIZE) || 1;
+  const listAppointments = searchedAppointments.slice((agendaPage - 1) * AGENDA_PAGE_SIZE, agendaPage * AGENDA_PAGE_SIZE);
 
   const handleToggleNurseFlow = async (appt: Appointment) => {
     if (!appt.id) return;
@@ -852,11 +869,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const hasConsultationTimer = consultationDurationSeconds !== null && consultationRemainingSeconds !== null;
   const countdown = hasConsultationTimer ? formatCountdown(consultationRemainingSeconds!) : null;
+  
   const agendaPagination = {
     currentPage: agendaPage,
-    hasNext: agendaHasMore,
+    totalPages,
+    hasNext: agendaPage < totalPages,
     onPrev: () => setAgendaPage(p => Math.max(1, p - 1)),
-    onNext: () => setAgendaPage(p => (agendaHasMore ? p + 1 : p))
+    onNext: () => setAgendaPage(p => (p < totalPages ? p + 1 : p))
   };
 
   const loadPatientsList = async (term?: string, targetPage: number = 1) => {
@@ -1277,6 +1296,12 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                         printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
                                     };
 
+                                    if (Array.isArray(finishedData.prescription) && finishedData.prescription.length > 0) {
+                                        finishedData.prescriptionNumber = await generateUniquePrescriptionNumber();
+                                    } else {
+                                        finishedData.prescriptionNumber = null;
+                                    }
+
                                     // Sanitizar undefined a null para evitar errores de Firestore
                                     Object.keys(finishedData).forEach(key => {
                                         if (finishedData[key] === undefined) {
@@ -1349,7 +1374,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                                     methods.reset();
                                     setShowSuccessModal(true);
                                     
-                                    fetchAgendaPage(agendaPage, isResident);
+                                    fetchAgendaPage(isResident);
 
                                 } catch (e) { 
                                     console.error("Error CRÍTICO al guardar consulta:", e);
@@ -1684,13 +1709,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
             onConfirmPhone={async (id, method) => {
                 await appointmentService.confirmByPhone(id, user.uid, method);
                 toast.success("Cita confirmada");
-                fetchAgendaPage(agendaPage, isResident);
+                fetchAgendaPage(isResident);
                 setShowAppointmentDetailsModal(false);
             }}
             onRegisterPayment={async (id, receipt, amount) => {
                 await appointmentService.registerPayment(id, user.uid, receipt, amount);
                 toast.success("Pago registrado");
-                fetchAgendaPage(agendaPage, isResident);
+                fetchAgendaPage(isResident);
                 setShowAppointmentDetailsModal(false);
             }}
            onCancel={async (id, reason) => {
@@ -1701,7 +1726,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                     await appointmentService.cancelAppointment(id, reason);
                     toast.success("Cita cancelada");
                 }
-                fetchAgendaPage(agendaPage, isResident);
+                fetchAgendaPage(isResident);
                 setShowAppointmentDetailsModal(false);
             }}
             onUpdateAppointment={async (id, updates) => {
@@ -1711,7 +1736,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                         editorName: user.name,
                     });
                     toast.success("Cita actualizada");
-                    fetchAgendaPage(agendaPage, isResident);
+                    fetchAgendaPage(isResident);
                     setShowAppointmentDetailsModal(false);
                 } catch (error) {
                     console.error("Error al actualizar cita", error);
@@ -1733,7 +1758,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                 currentUser={user}
                 onSaveComplete={() => {
                     toast.success("Evaluación de la enfermera guardada");
-                    fetchAgendaPage(agendaPage, isResident);
+                    fetchAgendaPage(isResident);
                 }}
             />
          )}

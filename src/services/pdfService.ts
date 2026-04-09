@@ -651,22 +651,24 @@ export const generatePrescriptionPDF = async (
 
     let currentY = 75; 
 
-    // Título elegante
     doc.setFontSize(16); 
     doc.setFont("helvetica", "bold");
     doc.setTextColor(COLORS.PRIMARY[0], COLORS.PRIMARY[1], COLORS.PRIMARY[2]);
     doc.text("RECETA MÉDICA", 105, currentY, { align: 'center' });
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(COLORS.ACCENT[0], COLORS.ACCENT[1], COLORS.ACCENT[2]);
+    doc.text(`No. ${consultation.prescriptionNumber || 'Pendiente'}`, 14, currentY);
     currentY += 12;
 
-    // Diagnóstico sutil
-    doc.setFontSize(10); 
+    doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(COLORS.TEXT_GRAY[0], COLORS.TEXT_GRAY[1], COLORS.TEXT_GRAY[2]);
-    const diagText = consultation.diagnosis ? `Diagnóstico: ${consultation.diagnosis}` : "";
-    if (diagText) {
-        const splitDiag = doc.splitTextToSize(diagText, 180);
-        doc.text(splitDiag, 105, currentY, { align: 'center' });
-        currentY += (splitDiag.length * 5) + 8;
+    if (consultation.followUpEstimatedDate) {
+        const followUpDateText = new Date(consultation.followUpEstimatedDate).toLocaleDateString('es-GT');
+        const followUpLabel = `Próximo control (fecha aproximada): ${followUpDateText}${consultation.followUpDays ? ` (aprox. ${consultation.followUpDays} días)` : ''}`;
+        doc.text(followUpLabel, 14, currentY);
+        currentY += 8;
     }
 
     if (consultation.prescription && consultation.prescription.length > 0) {
@@ -702,12 +704,13 @@ export const generatePrescriptionPDF = async (
                     fillColor: COLORS.PRIMARY, 
                     textColor: [255, 255, 255],
                     fontStyle: 'bold',
+                    fontSize: 9,
                     halign: 'left',
                     cellPadding: 8
                 },
                 columnStyles: {
-                    0: { cellWidth: 70, fontStyle: 'bold' }, 
-                    1: { cellWidth: 30, halign: 'center' }, 
+                    0: { cellWidth: 60, fontStyle: 'bold' }, 
+                    1: { cellWidth: 40, halign: 'center' }, 
                     2: { cellWidth: 82 } 
                 },
                 alternateRowStyles: {
@@ -720,23 +723,37 @@ export const generatePrescriptionPDF = async (
     }
 
     if (consultation.prescriptionNotes && consultation.prescriptionNotes.trim().length > 0) {
-        // Caja de Observaciones Elegante
+        // Caja de Observaciones con recuadro completo
+        const splitNotes = doc.splitTextToSize(consultation.prescriptionNotes, 168);
+        const boxPadding = 6;
+        const titleHeight = 8;
+        const textHeight = splitNotes.length * 5;
+        const boxHeight = titleHeight + textHeight + boxPadding * 2 + 4;
+        const boxX = 14;
+        const boxW = 182;
+
+        // Recuadro completo
         doc.setDrawColor(COLORS.ACCENT[0], COLORS.ACCENT[1], COLORS.ACCENT[2]);
-        doc.setLineWidth(0.5);
-        doc.line(14, currentY, 50, currentY); // Pequeña línea decorativa
-        
+        doc.setLineWidth(0.6);
+        doc.rect(boxX, currentY, boxW, boxHeight);
+
+        // Título OBSERVACIONES dentro del recuadro
         doc.setFontSize(9); 
         doc.setFont("helvetica", "bold");
         doc.setTextColor(COLORS.ACCENT[0], COLORS.ACCENT[1], COLORS.ACCENT[2]); 
-        doc.text("OBSERVACIONES", 14, currentY + 5);
-        
+        doc.text("OBSERVACIONES", boxX + boxPadding, currentY + boxPadding + 4);
+
+        // Línea separadora debajo del título
+        doc.setLineWidth(0.3);
+        doc.line(boxX + boxPadding, currentY + boxPadding + titleHeight, boxX + boxW - boxPadding, currentY + boxPadding + titleHeight);
+
+        // Texto de las observaciones
         doc.setFontSize(10); 
         doc.setFont("helvetica", "normal");
         doc.setTextColor(COLORS.TEXT_DARK[0], COLORS.TEXT_DARK[1], COLORS.TEXT_DARK[2]);
-        
-        const splitNotes = doc.splitTextToSize(consultation.prescriptionNotes, 182);
-        doc.text(splitNotes, 14, currentY + 12);
-        currentY += (splitNotes.length * 5) + 20;
+        doc.text(splitNotes, boxX + boxPadding, currentY + boxPadding + titleHeight + 6);
+
+        currentY += boxHeight + 10;
     }
     
     await drawSignature(doc, currentY, doctor, consultation);

@@ -9,6 +9,8 @@ import { db } from '../../firebase/config.ts';
 import { getBackupSettings, generateSystemBackup } from '../../services/backupService.ts';
 import { toast } from 'sonner';
 import { LOGOLARGO_BASE64 } from '../../data/assets.ts';
+import { DataQualityReport } from '../Admin/DataQualityReport.tsx';
+import { doctorScheduleService } from '../../services/doctorScheduleService.ts';
 
 interface MainLayoutProps {
   user: UserProfile;
@@ -52,6 +54,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [showBackupAlert, setShowBackupAlert] = useState(false);
+  const [showQualityReport, setShowQualityReport] = useState(false);
   
   const isReceptionist = user.role === 'receptionist';
   const isAdmin = user.role === 'admin';
@@ -89,6 +92,38 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       };
       checkBackupStatus();
       const interval = setInterval(checkBackupStatus, 3600000); 
+      return () => clearInterval(interval);
+  }, [isAdmin]);
+
+  // --- DAILY QUALITY REPORT CHECK (Admin only) ---
+  useEffect(() => {
+      if (!isAdmin) return;
+
+      const checkReportTime = async () => {
+          const todayStr = new Date().toISOString().split('T')[0];
+          const lastReviewed = localStorage.getItem('qualityReport_lastReviewed');
+          if (lastReviewed === todayStr) return;
+
+          try {
+              const settings = await doctorScheduleService.getGlobalSettings();
+              const triggerTimeStr = settings.qualityReportTime || '16:00';
+              const [trigHour, trigMin] = triggerTimeStr.split(':').map(Number);
+              
+              const now = new Date();
+              const currentHour = now.getHours();
+              const currentMin = now.getMinutes();
+
+              // Trigger if current time is >= configured time
+              if (currentHour > trigHour || (currentHour === trigHour && currentMin >= trigMin)) {
+                  setShowQualityReport(true);
+              }
+          } catch (err) {
+              console.error("Error fetching quality report settings", err);
+          }
+      };
+
+      checkReportTime();
+      const interval = setInterval(checkReportTime, 60000); // Check every minute
       return () => clearInterval(interval);
   }, [isAdmin]);
 
@@ -292,6 +327,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         </header>
         <div className="flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
       </main>
+
+      {/* DAILY QUALITY REPORT MODAL (Admin only) */}
+      <DataQualityReport
+        isOpen={showQualityReport}
+        onConfirm={() => setShowQualityReport(false)}
+        currentUser={user}
+      />
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, History, Paperclip, Image, FileText, ExternalLink, UploadCloud, Loader2, Scale, Activity, Wind, HeartPulse, Droplets, Thermometer } from 'lucide-react';
+import { X, History, Paperclip, Image, FileText, ExternalLink, UploadCloud, Loader2, Scale, Activity, Wind, HeartPulse, Droplets, Thermometer, User } from 'lucide-react';
 import { Patient, UserProfile } from '../../types';
 import { db, storage } from '../../firebase/config.ts';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -35,6 +35,47 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
   if (!isOpen) return null;
+
+  const parseVitals = (vitalsLine: string) => {
+    const result: Record<string, string> = {};
+    if (!vitalsLine) return result;
+    const parts = vitalsLine.split(/[|,]/).map(p => p.trim()).filter(Boolean);
+    parts.forEach(part => {
+      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|Temp)[:\s]+(.+)/i);
+      if (match) {
+        result[match[1].toLowerCase().replace('/', '_')] = match[2].trim();
+      }
+    });
+    return result;
+  };
+
+  const vitalsConfig = [
+    { key: 'peso', label: 'Peso', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { key: 'p_a', label: 'P/A', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
+    { key: 'fr', label: 'FR', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
+    { key: 'fc', label: 'FC', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
+    { key: 'sat', label: 'SAT', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { key: 'temp', label: 'Temp', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
+  ];
+
+  const parsedEntries = (() => {
+    const text = (patient.medical_history || '').trim();
+    if (!text) return [];
+    return text.split(/\n{2,}/).map((block, idx) => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      const headerLine = lines.find(l => l.startsWith('[Enfermería:')) || '';
+      const vitalsLine = lines.find(l => /Peso:|P\/A:|FR:|FC:|SAT:|Temp:/i.test(l)) || '';
+      const obsLine = lines.find(l => l.toLowerCase().startsWith('observaciones:')) || '';
+      const otherLines = lines.filter(l => l !== headerLine && l !== vitalsLine && l !== obsLine);
+      const parsedVitals = parseVitals(vitalsLine);
+      let nurseName = '', nurseDate = '';
+      if (headerLine) {
+        const m = headerLine.match(/\[Enfermería:\s*(.+?)\s*-\s*(.+?)\]/);
+        if (m) { nurseName = m[1].trim(); nurseDate = m[2].trim(); }
+      }
+      return { id: `${idx}-${lines.length}`, headerLine, vitalsLine, obsLine, otherLines, parsedVitals, nurseName, nurseDate, raw: block.trim() };
+    });
+  })();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -147,10 +188,58 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/60">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Antecedentes Registrados</h3>
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed whitespace-pre-wrap min-h-[120px]">
-                {patient.medical_history || 'No hay antecedentes registrados.'}
-              </div>
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">Antecedentes Registrados</h3>
+              {parsedEntries.length === 0 ? (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 text-sm leading-relaxed min-h-[120px]">
+                  No hay antecedentes registrados.
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[300px] overflow-y-auto custom-scrollbar">
+                  {parsedEntries.map(entry => (
+                    <div key={entry.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                      {entry.headerLine && (
+                        <div className="bg-brand-900 px-3 py-2 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3 h-3 text-brand-200" />
+                            <span className="text-[11px] font-bold text-white">{entry.nurseName || 'Enfermería'}</span>
+                          </div>
+                          <span className="text-[9px] text-brand-200 font-medium">{entry.nurseDate}</span>
+                        </div>
+                      )}
+                      <div className="p-3 space-y-2">
+                        {Object.keys(entry.parsedVitals).length > 0 && (
+                          <div className="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+                            {vitalsConfig.map(vc => {
+                              const val = entry.parsedVitals[vc.key];
+                              if (!val) return null;
+                              const Icon = vc.icon;
+                              return (
+                                <div key={vc.key} className={`${vc.bg} rounded-lg p-1.5 flex flex-col items-center gap-0.5 border border-slate-100`}>
+                                  <Icon className={`w-3 h-3 ${vc.color}`} />
+                                  <span className="text-[8px] font-bold text-slate-400 uppercase">{vc.label}</span>
+                                  <span className="text-[11px] font-bold text-slate-800">{val}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {entry.obsLine && (
+                          <div className="bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+                            <p className="text-[9px] font-bold text-amber-700 uppercase mb-0.5">Observaciones</p>
+                            <p className="text-[11px] text-amber-900">{entry.obsLine.replace(/^observaciones:\s*/i, '')}</p>
+                          </div>
+                        )}
+                        {entry.otherLines.length > 0 && (
+                          <p className="text-[11px] text-slate-600">{entry.otherLines.join(' · ')}</p>
+                        )}
+                        {!entry.headerLine && !entry.vitalsLine && !entry.obsLine && entry.otherLines.length === 0 && entry.raw && (
+                          <p className="text-[11px] text-slate-600">{entry.raw}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
@@ -165,7 +254,11 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
                       href={file.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="group border border-slate-200 rounded-xl p-3 flex flex-col items-center justify-center bg-white hover:bg-slate-50 transition hover:shadow-md cursor-pointer relative"
+                      className={`group border rounded-xl p-3 flex flex-col items-center justify-center bg-white transition hover:shadow-md cursor-pointer relative ${
+                        /ficha|presoft|presoftware|historia/i.test((file.name || ''))
+                        ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-200 shadow-md'
+                        : 'border-slate-200 hover:bg-slate-50'
+                      }`}
                     >
                       <div className="w-9 h-9 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mb-2 group-hover:scale-110 transition">
                         {file.type.includes('image') ? <Image className="w-4 h-4" /> : <FileText className="w-4 h-4" />}

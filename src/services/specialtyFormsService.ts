@@ -30,7 +30,13 @@ export const specialtyFormsService = {
         console.warn('[specialtyFormsService] specialty_forms vacío en Firestore, usando definiciones locales.');
         return SPECIALTY_FORMS;
       }
-      return docs;
+      const fixedForms = ['epilepsy', 'parkinson', 'neurologica', 'columna']
+        .map(id => SPECIALTY_FORMS.find(form => form.id === id))
+        .filter(Boolean) as SpecialtyFormDefinition[];
+      if (fixedForms.length === 0) return docs;
+      const fixedIds = new Set(fixedForms.map(form => form.id));
+      const formsWithoutFixed = docs.filter(form => !fixedIds.has(form.id));
+      return [...fixedForms, ...formsWithoutFixed];
     } catch (e) {
       console.error('[specialtyFormsService] Error leyendo specialty_forms, usando definiciones locales.', e);
       return SPECIALTY_FORMS;
