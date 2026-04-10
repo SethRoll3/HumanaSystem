@@ -234,6 +234,8 @@ export interface Consultation {
   // NUEVO: Datos de especialidad (Fichas dinámicas)
   specialtyData?: Record<string, any>;
   specialtyFormId?: string;
+  reason?: string;
+  reasonForConsultation?: string; // Especialidad seleccionada al agendar
   resonanceOrders?: ResonanceOrder[];
   eegOrders?: EegOrder[];
 

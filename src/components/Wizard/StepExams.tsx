@@ -637,7 +637,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`resonanceOrders.${index}.examName`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 bg-white ${
                                                         !order.examName?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
                                                             : 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
                                                     }`}
                                                     placeholder="Seleccione o escriba"
@@ -654,7 +654,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`resonanceOrders.${index}.probableDiagnosis`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.probableDiagnosis?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
                                                             : 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
                                                     }`}
                                                     placeholder="Diagnóstico probable"
@@ -669,7 +669,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                 {...register(`resonanceOrders.${index}.attentionNotes`)}
                                                 className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                     !order.attentionNotes?.trim()
-                                                        ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                        ? 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
                                                         : 'border-indigo-200 focus:ring-indigo-200 focus:border-indigo-500'
                                                 }`}
                                                 placeholder="Ej: lesiones temporales, foco epileptogénico..."
@@ -752,7 +752,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.examName`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 bg-white ${
                                                         !order.examName?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                     placeholder="Seleccione o escriba"
@@ -769,7 +769,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.duration`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 bg-white ${
                                                         !order.duration?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                 >
@@ -786,7 +786,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.probableDiagnosis`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.probableDiagnosis?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                     placeholder="Diagnóstico probable"
@@ -829,7 +829,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.specialIndications`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.specialIndications?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                 />
@@ -840,7 +840,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.medicatedWith`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.medicatedWith?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                 />
@@ -854,7 +854,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.videoMonitoringHours`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.videoMonitoringHours?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                     placeholder="Horas"
@@ -866,7 +866,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.videoMonitoringSleepDeprivation`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.videoMonitoringSleepDeprivation?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                 >
@@ -880,7 +880,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.ictalVideoHours`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.ictalVideoHours?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                     placeholder="Horas"
@@ -892,7 +892,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.ictalSleepDeprivation`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.ictalSleepDeprivation?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                 >
@@ -920,7 +920,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                                     {...register(`eegOrders.${index}.spikeDetectionHours`)}
                                                     className={`w-full px-3 py-2 rounded-lg border text-sm text-slate-700 focus:outline-none focus:ring-2 ${
                                                         !order.spikeDetectionHours?.trim()
-                                                            ? 'border-red-300 focus:ring-red-200 focus:border-red-400'
+                                                            ? 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                             : 'border-emerald-200 focus:ring-emerald-200 focus:border-emerald-500'
                                                     }`}
                                                     placeholder="Horas"

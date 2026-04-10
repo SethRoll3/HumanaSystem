@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useForm, FormProvider } from 'react-hook-form';
-import {  Loader2, CheckCircle, Plus, AlertTriangle, 
-     Calendar as CalendarIcon, List, LayoutGrid, 
-     FileText, Clock, Book, ChevronDown,
-     X, Video, Users
+import {
+  Loader2, CheckCircle, Plus, AlertTriangle,
+  Calendar as CalendarIcon, List, LayoutGrid,
+  FileText, Clock, Book, ChevronDown,
+  X, Video, Users
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { collection, addDoc, doc, Timestamp, updateDoc, query, where, getDocs, DocumentSnapshot, runTransaction, orderBy } from 'firebase/firestore';
@@ -14,14 +15,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Patient, Consultation, UserProfile, PrescriptionItem, ReferralGroup, SpecialtyReferral, Appointment, ResonanceOrder, EegOrder } from '../types.ts';
 import { MainLayout } from '../components/Layout/MainLayout';
 import { AdminPanel } from './AdminPanel';
-import { UserProfileSettings } from './UserProfileSettings'; 
+import { UserProfileSettings } from './UserProfileSettings';
 import { StepDiagnosis } from '../components/Wizard/StepDiagnosis';
 import { StepExams } from '../components/Wizard/StepExams';
 import { StepFinalize } from '../components/Wizard/StepFinalize';
-import { StepPrescription } from '../components/Wizard/StepPrescription'; 
-import { ConsultationDetail } from '../components/History/ConsultationDetail'; 
-import { HistoryList } from '../components/History/HistoryList'; 
-import { QuickPatientModal } from '../components/Patients/QuickPatientModal'; 
+import { StepPrescription } from '../components/Wizard/StepPrescription';
+import { ConsultationDetail } from '../components/History/ConsultationDetail';
+import { HistoryList } from '../components/History/HistoryList';
+import { QuickPatientModal } from '../components/Patients/QuickPatientModal';
 import { PatientModal } from '../components/Patients/PatientModal';
 import { Cuaderno } from '../components/Patients/Cuaderno';
 import { PatientListView } from '../components/Patients/PatientListView';
@@ -32,14 +33,14 @@ import { ResidentIntakeModal } from '../components/Appointments/ResidentIntakeMo
 import { ResidentClinicalFormModal } from '../components/Appointments/ResidentClinicalFormModal';
 import { AgendaListView } from '../components/Appointments/AgendaListView';
 import { AvailabilityView } from '../components/Availability/AvailabilityView';
-import { AppointmentCalendar } from './AppointmentCalendar'; 
+import { AppointmentCalendar } from './AppointmentCalendar';
 import { DoctorDayScheduleDropdown } from '../components/Appointments/DoctorDayScheduleDropdown';
 
 import { DoctorScheduleAdmin } from '../components/Admin/DoctorScheduleManager';
-import {  getPatientByDPI, patientService } from '../services/patientService';
-import { appointmentService } from '../services/appointmentService'; 
-import {userService } from '../services/userService';
-import {  notifyConsultationFinished, notifyReceptionFollowUp } from '../services/notificationService';
+import { getPatientByDPI, patientService } from '../services/patientService';
+import { appointmentService } from '../services/appointmentService';
+import { userService } from '../services/userService';
+import { notifyConsultationFinished, notifyReceptionFollowUp } from '../services/notificationService';
 import { generatePrescriptionPDF, generateExamsPDF, generateNursingPDF, generateFullFichaPDF, generateResonanceOrdersPDF, generateEegOrdersPDF } from '../services/pdfService';
 import { specialtyFormsService } from '../services/specialtyFormsService';
 import { doctorScheduleService } from '../services/doctorScheduleService';
@@ -132,14 +133,14 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const isNurse = user.role === 'nurse';
   const isReceptionist = user.role === 'receptionist';
   const isResident = user.role === 'resident';
-  
+
   // Roles de permisos
   const canConsult = isDoctor || isAdmin;
   const canCreate = isAdmin || isReceptionist;
 
   const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'patients' | 'patient_detail' | 'admin' | 'history_detail' | 'settings' | 'my_schedule'>('dashboard');
   const [allowDoctorSelfManage, setAllowDoctorSelfManage] = useState(false);
-  
+
   // ESTADO PARA ALTERNAR VISTA AGENDA (Lista vs Calendario)
   const [agendaViewMode, setAgendaViewMode] = useState<'list' | 'calendar' | 'availability'>('list');
   const [agendaSearchTerm, setAgendaSearchTerm] = useState('');
@@ -148,9 +149,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const [currentPatient, setCurrentPatient] = useState<Patient | null>(null);
   const [currentConsultationId, setCurrentConsultationId] = useState<string | null>(null);
   const [currentAppointmentId, setCurrentAppointmentId] = useState<string | null>(null);
-  const [step, setStep] = useState(0); 
+  const [step, setStep] = useState(0);
   const [isCuadernoExpanded, setIsCuadernoExpanded] = useState(true);
- 
+
   const [todaysAppointments, setTodaysAppointments] = useState<Appointment[]>([]);
   const [residentAppointments, setResidentAppointments] = useState<Appointment[]>([]);
   const [agendaPage, setAgendaPage] = useState(1);
@@ -215,8 +216,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   // --- LÓGICA DE PACIENTE FORÁNEO ---
   const isForeignPatient = (p: Patient | null) => {
-      if (!p || !p.address) return false;
-      return p.address.country !== 'Guatemala' || p.address.department !== 'Guatemala';
+    if (!p || !p.address) return false;
+    return p.address.country !== 'Guatemala' || p.address.department !== 'Guatemala';
   };
 
   const methods = useForm<WizardFormValues>({
@@ -227,21 +228,21 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   useEffect(() => {
     const loadAllUsers = async () => {
-        try {
-            const users = await userService.getAllUsers();
-            setAllUsers(users);
-        } catch (error) {
-            console.error("Error loading users", error);
-        }
+      try {
+        const users = await userService.getAllUsers();
+        setAllUsers(users);
+      } catch (error) {
+        console.error("Error loading users", error);
+      }
     };
 
     const loadSettings = async () => {
-        try {
-            const s = await doctorScheduleService.getGlobalSettings();
-            setAllowDoctorSelfManage(s.allowDoctorSelfManage);
-        } catch (e) {
-            console.error('Error loading doctor schedule settings', e);
-        }
+      try {
+        const s = await doctorScheduleService.getGlobalSettings();
+        setAllowDoctorSelfManage(s.allowDoctorSelfManage);
+      } catch (e) {
+        console.error('Error loading doctor schedule settings', e);
+      }
     };
 
     loadAllUsers();
@@ -265,21 +266,21 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   // Scroll to top when step changes
   useEffect(() => {
     if (topRef.current) {
-        const scrollParent = topRef.current.closest('.overflow-y-auto');
-        if (scrollParent) {
-            scrollParent.scrollTo({ top: 0, behavior: 'smooth' });
-        } else {
-             topRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+      const scrollParent = topRef.current.closest('.overflow-y-auto');
+      if (scrollParent) {
+        scrollParent.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        topRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
   }, [step]);
 
   // Autosave Draft
   useEffect(() => {
-      if (currentConsultationId && step > 0 && formValues) {
-          const draftKey = `draft_${currentConsultationId}`;
-          localStorage.setItem(draftKey, JSON.stringify(formValues));
-      }
+    if (currentConsultationId && step > 0 && formValues) {
+      const draftKey = `draft_${currentConsultationId}`;
+      localStorage.setItem(draftKey, JSON.stringify(formValues));
+    }
   }, [formValues, currentConsultationId, step]);
 
   useEffect(() => {
@@ -339,7 +340,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     try {
       const filterId = isDoctor ? user.uid : undefined;
       const { start, end } = getAgendaDateRange(agendaDateFilter);
-      
+
       let baseConstraints: any[] = [
         where('date', '>=', Timestamp.fromDate(start)),
         orderBy('date', 'asc')
@@ -378,26 +379,26 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   useEffect(() => {
     if (agendaViewMode === 'list') {
-        const useResidentList = isResident;
-        fetchAgendaPage(useResidentList);
-        const interval = setInterval(() => fetchAgendaPage(useResidentList), 60000);
-        return () => clearInterval(interval);
+      const useResidentList = isResident;
+      fetchAgendaPage(useResidentList);
+      const interval = setInterval(() => fetchAgendaPage(useResidentList), 60000);
+      return () => clearInterval(interval);
     }
   }, [user.uid, isDoctor, isAdmin, isResident, agendaViewMode, agendaDateFilter]);
 
   // CARGAR DATOS PARA MODAL DE CITA
   const loadModalData = async () => {
-        const [pats, docs] = await Promise.all([
-            patientService.getAll(),
-            userService.getDoctors()
-        ]);
-        setAllPatients(pats);
-        setAllDoctors(docs);
+    const [pats, docs] = await Promise.all([
+      patientService.getAll(),
+      userService.getDoctors()
+    ]);
+    setAllPatients(pats);
+    setAllDoctors(docs);
   };
 
   useEffect(() => {
     if (showCreateAppointmentModal) {
-        loadModalData();
+      loadModalData();
     }
   }, [showCreateAppointmentModal]);
 
@@ -417,155 +418,157 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     const statusAllowsStart = appt.status === 'resident_intake' || appt.status === 'in_progress' || (canSkipNurse && appt.status === 'paid_checked_in');
 
     if (requiresResidentFicha && !residentFichaCompleted) {
-        toast.error("Debe completarse la ficha clínica del residente antes de iniciar.");
-        return;
+      toast.error("Debe completarse la ficha clínica del residente antes de iniciar.");
+      return;
     }
 
     if (!statusAllowsStart) {
-        toast.error("El paciente debe pasar primero por enfermería.");
-        return;
+      toast.error("El paciente debe pasar primero por enfermería.");
+      return;
     }
 
     try {
-        setCurrentAppointmentId(appt.id ?? null);
-        setCurrentConsultationType(appt.consultationType || 'Nueva');
-        setCurrentModality(appt.modality || 'Presencial');
-        const durationSeconds = calculateAppointmentDurationSeconds(appt);
-        if (durationSeconds > 0) {
-            const minutes = Math.round(durationSeconds / 60);
-            const label = formatDurationLabel(minutes);
+      setCurrentAppointmentId(appt.id ?? null);
+      setCurrentConsultationType(appt.consultationType || 'Nueva');
+      setCurrentModality(appt.modality || 'Presencial');
+      const durationSeconds = calculateAppointmentDurationSeconds(appt);
+      if (durationSeconds > 0) {
+        const minutes = Math.round(durationSeconds / 60);
+        const label = formatDurationLabel(minutes);
 
-            if (consultationTimerRef.current !== null) {
-                window.clearInterval(consultationTimerRef.current);
+        if (consultationTimerRef.current !== null) {
+          window.clearInterval(consultationTimerRef.current);
+        }
+
+        setConsultationDurationSeconds(durationSeconds);
+        setConsultationRemainingSeconds(durationSeconds);
+        setIsConsultationDurationExceeded(false);
+        setConsultationDurationLabel(label);
+
+        const intervalId = window.setInterval(() => {
+          setConsultationRemainingSeconds(prev => {
+            if (prev === null) return prev;
+            if (prev <= 1) {
+              window.clearInterval(intervalId);
+              setIsConsultationDurationExceeded(true);
+              return 0;
             }
+            return prev - 1;
+          });
+        }, 1000);
+        consultationTimerRef.current = intervalId;
+      } else {
+        setConsultationDurationSeconds(null);
+        setConsultationRemainingSeconds(null);
+        setIsConsultationDurationExceeded(false);
+        setConsultationDurationLabel(null);
+      }
 
-            setConsultationDurationSeconds(durationSeconds);
-            setConsultationRemainingSeconds(durationSeconds);
-            setIsConsultationDurationExceeded(false);
-            setConsultationDurationLabel(label);
+      setIsSaving(true);
+      const patient = await getPatientByDPI(appt.patientId);
+      if (!patient) { toast.error("Error: Datos del paciente no encontrados"); return; }
 
-            const intervalId = window.setInterval(() => {
-                setConsultationRemainingSeconds(prev => {
-                    if (prev === null) return prev;
-                    if (prev <= 1) {
-                        window.clearInterval(intervalId);
-                        setIsConsultationDurationExceeded(true);
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
-            consultationTimerRef.current = intervalId;
+      let activeConsId = '';
+
+      if (appt.status === 'in_progress') {
+        const q = query(
+          collection(db, 'consultations'),
+          where('patientId', '==', patient.id),
+          where('status', '==', 'in_progress'),
+          where('doctorId', '==', user.uid)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          activeConsId = snap.docs[0].id;
         } else {
-            setConsultationDurationSeconds(null);
-            setConsultationRemainingSeconds(null);
-            setIsConsultationDurationExceeded(false);
-            setConsultationDurationLabel(null);
+          activeConsId = await createNewConsultationDoc(appt, patient);
         }
+      } else {
+        await appointmentService.startConsultation(appt.id!);
+        activeConsId = await createNewConsultationDoc(appt, patient);
+        setTodaysAppointments(prev => prev.map(a => a.id === appt.id ? { ...a, status: 'in_progress' } : a));
+      }
 
-        setIsSaving(true);
-        const patient = await getPatientByDPI(appt.patientId);
-        if (!patient) { toast.error("Error: Datos del paciente no encontrados"); return; }
+      setCurrentPatient(patient);
+      loadImportantNotices(patient.id);
+      setCurrentConsultationId(activeConsId);
 
-        let activeConsId = '';
+      const residentDefaults = residentFichaCompleted ? {
+        specialtyFormId: appt.residentSpecialtyFormId || undefined,
+        specialtyFormName: appt.residentSpecialtyFormName || undefined,
+        specialtyData: appt.residentSpecialtyData || {}
+      } : {};
 
-        if (appt.status === 'in_progress') {
-            const q = query(
-                collection(db, 'consultations'), 
-                where('patientId', '==', patient.id),
-                where('status', '==', 'in_progress'),
-                where('doctorId', '==', user.uid)
-            );
-            const snap = await getDocs(q);
-            if (!snap.empty) {
-                activeConsId = snap.docs[0].id;
-            } else {
-                activeConsId = await createNewConsultationDoc(appt, patient);
-            }
-        } else {
-            await appointmentService.startConsultation(appt.id!); 
-            activeConsId = await createNewConsultationDoc(appt, patient);
-            setTodaysAppointments(prev => prev.map(a => a.id === appt.id ? { ...a, status: 'in_progress' } : a));
-        }
+      const baseForm = getEmptyForm(residentDefaults);
+      const savedDraft = localStorage.getItem(`draft_${activeConsId}`);
+      if (savedDraft) {
+        try {
+          methods.reset({ ...baseForm, ...JSON.parse(savedDraft) });
+          toast.info("Sesión restaurada");
+        } catch (e) { methods.reset(baseForm); }
+      } else {
+        methods.reset(baseForm);
+      }
 
-        setCurrentPatient(patient);
-        loadImportantNotices(patient.id);
-        setCurrentConsultationId(activeConsId);
-        
-        const residentDefaults = residentFichaCompleted ? {
-            specialtyFormId: appt.residentSpecialtyFormId || undefined,
-            specialtyFormName: appt.residentSpecialtyFormName || undefined,
-            specialtyData: appt.residentSpecialtyData || {}
-        } : {};
+      setStep(1);
+      setIsCuadernoExpanded(true);
 
-        const baseForm = getEmptyForm(residentDefaults);
-        const savedDraft = localStorage.getItem(`draft_${activeConsId}`);
-        if (savedDraft) {
-            try {
-                methods.reset({ ...baseForm, ...JSON.parse(savedDraft) });
-                toast.info("Sesión restaurada");
-            } catch (e) { methods.reset(baseForm); }
-        } else {
-            methods.reset(baseForm);
-        }
-
-        setStep(1); 
-        setIsCuadernoExpanded(true);
-
-    } catch (e) { 
-        console.error(e);
-        toast.error("Error al iniciar consulta"); 
+    } catch (e) {
+      console.error(e);
+      toast.error("Error al iniciar consulta");
     } finally {
-        setIsSaving(false);
+      setIsSaving(false);
     }
   };
 
   const createNewConsultationDoc = async (appt: Appointment, patient: Patient) => {
-      const isForeign = isForeignPatient(patient);
-      const primarySpecialty = Array.isArray(user.specialties) && user.specialties.length > 0
-        ? user.specialties[0]
-        : (user.specialty || '');
-      const newCons = { 
-          status: 'in_progress' as const, 
-          paymentReceipt: appt.paymentReceipt || 'N/A', 
-          paymentAmount: appt.paymentAmount || 0,
-          receptionistId: appt.confirmedBy || 'system', 
-          patientId: patient.id, 
-          patientName: patient.fullName, 
-          patientIsForeign: isForeign, 
-          doctorId: user.uid, 
-          doctorName: user.name, 
-          doctorSpecialty: primarySpecialty,
-          consultationType: appt.consultationType || 'Nueva',
-          modality: appt.modality || 'Presencial',
-          date: Date.now(), 
-          appointmentId: appt.id,
-          specialtyFormId: appt.residentSpecialtyFormId || null,
-          specialtyFormName: appt.residentSpecialtyFormName || null,
-          specialtyData: appt.residentSpecialtyData || {},
-          createdAt: Timestamp.now() 
-      };
-      const ref = await addDoc(collection(db, 'consultations'), newCons);
-      return ref.id;
+    const isForeign = isForeignPatient(patient);
+    const primarySpecialty = Array.isArray(user.specialties) && user.specialties.length > 0
+      ? user.specialties[0]
+      : (user.specialty || '');
+    const newCons = {
+      status: 'in_progress' as const,
+      paymentReceipt: appt.paymentReceipt || 'N/A',
+      paymentAmount: appt.paymentAmount || 0,
+      receptionistId: appt.confirmedBy || 'system',
+      patientId: patient.id,
+      patientName: patient.fullName,
+      patientIsForeign: isForeign,
+      doctorId: user.uid,
+      doctorName: user.name,
+      doctorSpecialty: primarySpecialty,
+      consultationType: appt.consultationType || 'Nueva',
+      modality: appt.modality || 'Presencial',
+      date: Date.now(),
+      appointmentId: appt.id,
+      specialtyFormId: appt.residentSpecialtyFormId || null,
+      specialtyFormName: appt.residentSpecialtyFormName || null,
+      specialtyData: appt.residentSpecialtyData || {},
+      reason: appt.reason || '',
+      reasonForConsultation: appt.reasonForConsultation || '',
+      createdAt: Timestamp.now()
+    };
+    const ref = await addDoc(collection(db, 'consultations'), newCons);
+    return ref.id;
   };
 
   const handleCreateAppointment = async (data: any) => {
-      try {
-          await appointmentService.createAppointment({
-              ...data,
-              createdBy: user.uid
-          });
-          toast.success("Cita agendada correctamente");
-          fetchAgendaPage(isResident);
-          setShowCreateAppointmentModal(false);
-          setPreSelectedPatientId(null);
-      } catch (error: any) {
-          console.error("Error al agendar cita:", error);
-          const message = typeof error?.message === 'string' && error.message.trim()
-              ? error.message
-              : "Ocurrió un error al agendar la cita.";
-          toast.error(message);
-      }
+    try {
+      await appointmentService.createAppointment({
+        ...data,
+        createdBy: user.uid
+      });
+      toast.success("Cita agendada correctamente");
+      fetchAgendaPage(isResident);
+      setShowCreateAppointmentModal(false);
+      setPreSelectedPatientId(null);
+    } catch (error: any) {
+      console.error("Error al agendar cita:", error);
+      const message = typeof error?.message === 'string' && error.message.trim()
+        ? error.message
+        : "Ocurrió un error al agendar la cita.";
+      toast.error(message);
+    }
   };
 
   const getEmptyForm = (overrides?: Partial<WizardFormValues>) => ({
@@ -597,21 +600,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const isFilled = (value?: string) => typeof value === 'string' && value.trim().length > 0;
 
-  const areResonanceOrdersComplete = resonanceOrders.every((order: ResonanceOrder) =>
-    isFilled(order.examName) && isFilled(order.probableDiagnosis) && isFilled(order.attentionNotes)
-  );
-  const areEegOrdersComplete = eegOrders.every((order: EegOrder) =>
-    isFilled(order.examName) &&
-    isFilled(order.duration) &&
-    isFilled(order.probableDiagnosis) &&
-    isFilled(order.specialIndications) &&
-    isFilled(order.medicatedWith) &&
-    isFilled(order.videoMonitoringHours) &&
-    isFilled(order.videoMonitoringSleepDeprivation) &&
-    isFilled(order.ictalVideoHours) &&
-    isFilled(order.ictalSleepDeprivation) &&
-    isFilled(order.spikeDetectionHours)
-  );
+  const areResonanceOrdersComplete = resonanceOrders.length === 0 || resonanceOrders.every((order: ResonanceOrder) => true);
+  const areEegOrdersComplete = eegOrders.length === 0 || eegOrders.every((order: EegOrder) => true);
   const hasIncompleteOrders = (resonanceOrders.length > 0 && !areResonanceOrdersComplete) || (eegOrders.length > 0 && !areEegOrdersComplete);
   const isFollowUpMissing = !isFilled(followUpRequestText);
   const nextDisabled = (step === 2 && isFollowUpMissing) || (step === 3 && hasIncompleteOrders);
@@ -621,161 +611,161 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const goToDetail = async (c: Consultation) => {
     setLoadingHistory(true);
     try {
-        const patientId = c.patientId ? String(c.patientId) : '';
-        let p = null;
-        if (patientId) {
-            p = await getPatientByDPI(patientId);
-            if (!p) {
-                toast.error("Paciente no encontrado. Se mostrará el detalle básico.");
-            }
-        } else {
-            toast.error("Consulta sin paciente asociado. Se mostrará el detalle básico.");
+      const patientId = c.patientId ? String(c.patientId) : '';
+      let p = null;
+      if (patientId) {
+        p = await getPatientByDPI(patientId);
+        if (!p) {
+          toast.error("Paciente no encontrado. Se mostrará el detalle básico.");
         }
-        setHistoryPatient(p);
-        setSelectedHistoryConsultation(c);
-        setShowSuccessModal(false);
-        setLastFinishedConsultation(null);
-        setActiveView('history_detail');
+      } else {
+        toast.error("Consulta sin paciente asociado. Se mostrará el detalle básico.");
+      }
+      setHistoryPatient(p);
+      setSelectedHistoryConsultation(c);
+      setShowSuccessModal(false);
+      setLastFinishedConsultation(null);
+      setActiveView('history_detail');
     } catch (e) {
-        toast.error("Error al cargar detalle");
+      toast.error("Error al cargar detalle");
     } finally {
-        setLoadingHistory(false);
+      setLoadingHistory(false);
     }
   };
 
   const handlePrintDoc = async (type: 'prescription' | 'labs' | 'report' | 'full_ficha' | 'resonance_orders' | 'eeg_orders') => {
-      if (!selectedHistoryConsultation || !historyPatient) return;
-      try {
-          const action: 'download' | 'print' = (isDoctor && !isNurse && !isAdmin) ? 'download' : 'print';
-          let consultationToPrint = selectedHistoryConsultation;
+    if (!selectedHistoryConsultation || !historyPatient) return;
+    try {
+      const action: 'download' | 'print' = (isDoctor && !isNurse && !isAdmin) ? 'download' : 'print';
+      let consultationToPrint = selectedHistoryConsultation;
 
-          let doctorProfileForPdf = user;
-          
-          if (selectedHistoryConsultation.doctorId && selectedHistoryConsultation.doctorId !== user.uid) {
-              const foundDoctor = allUsers.find(u => u.uid === selectedHistoryConsultation.doctorId);
-              if (foundDoctor) {
-                  doctorProfileForPdf = foundDoctor;
-              } else {
-                  // Fallback if doctor profile not found in cache: create a temporary profile with stored names
-                  const fallbackSpecialty = (selectedHistoryConsultation as any).doctorSpecialty || "Medicina General";
-                  doctorProfileForPdf = {
-                      ...user, // Base on current user for structure
-                      uid: selectedHistoryConsultation.doctorId,
-                      name: selectedHistoryConsultation.doctorName || "Doctor",
-                      specialty: fallbackSpecialty,
-                      specialties: [fallbackSpecialty],
-                      role: 'doctor'
-                  };
-              }
+      let doctorProfileForPdf = user;
+
+      if (selectedHistoryConsultation.doctorId && selectedHistoryConsultation.doctorId !== user.uid) {
+        const foundDoctor = allUsers.find(u => u.uid === selectedHistoryConsultation.doctorId);
+        if (foundDoctor) {
+          doctorProfileForPdf = foundDoctor;
+        } else {
+          // Fallback if doctor profile not found in cache: create a temporary profile with stored names
+          const fallbackSpecialty = (selectedHistoryConsultation as any).doctorSpecialty || "Medicina General";
+          doctorProfileForPdf = {
+            ...user, // Base on current user for structure
+            uid: selectedHistoryConsultation.doctorId,
+            name: selectedHistoryConsultation.doctorName || "Doctor",
+            specialty: fallbackSpecialty,
+            specialties: [fallbackSpecialty],
+            role: 'doctor'
+          };
+        }
+      }
+
+      if (type === 'prescription') {
+        if (!consultationToPrint.prescriptionNumber) {
+          const prescriptionNumber = await generateUniquePrescriptionNumber();
+          if (consultationToPrint.id) {
+            const consRef = doc(db, 'consultations', consultationToPrint.id);
+            await updateDoc(consRef, { prescriptionNumber });
           }
+          consultationToPrint = { ...consultationToPrint, prescriptionNumber };
+          setSelectedHistoryConsultation(prev => prev ? ({ ...prev, prescriptionNumber }) : prev);
+        }
+        await generatePrescriptionPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+      } else if (type === 'labs') {
+        await generateExamsPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+      } else if (type === 'report') {
+        await generateNursingPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+      } else if (type === 'resonance_orders') {
+        await generateResonanceOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+      } else if (type === 'eeg_orders') {
+        await generateEegOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+      } else {
+        await generateFullFichaPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+      }
 
-          if (type === 'prescription') {
-              if (!consultationToPrint.prescriptionNumber) {
-                  const prescriptionNumber = await generateUniquePrescriptionNumber();
-                  if (consultationToPrint.id) {
-                      const consRef = doc(db, 'consultations', consultationToPrint.id);
-                      await updateDoc(consRef, { prescriptionNumber });
-                  }
-                  consultationToPrint = { ...consultationToPrint, prescriptionNumber };
-                  setSelectedHistoryConsultation(prev => prev ? ({ ...prev, prescriptionNumber }) : prev);
-              }
-              await generatePrescriptionPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
-          } else if (type === 'labs') {
-              await generateExamsPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
-          } else if (type === 'report') {
-              await generateNursingPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
-          } else if (type === 'resonance_orders') {
-              await generateResonanceOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
-          } else if (type === 'eeg_orders') {
-              await generateEegOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
-          } else {
-              await generateFullFichaPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
-          }
-
-          if (!isDoctor && (isNurse || isAdmin || isReceptionist) && selectedHistoryConsultation.status !== 'delivered') {
-              const printedKey =
-                type === 'prescription'
-                  ? 'prescription'
-                  : type === 'labs'
-                  ? 'labs'
-                  : type === 'report'
-                  ? 'report'
-                  : type === 'resonance_orders'
+      if (!isDoctor && (isNurse || isAdmin || isReceptionist) && selectedHistoryConsultation.status !== 'delivered') {
+        const printedKey =
+          type === 'prescription'
+            ? 'prescription'
+            : type === 'labs'
+              ? 'labs'
+              : type === 'report'
+                ? 'report'
+                : type === 'resonance_orders'
                   ? 'resonanceOrders'
                   : type === 'eeg_orders'
-                  ? 'eegOrders'
-                  : 'fullFicha';
-              const updatedPrintedDocs = { ...(selectedHistoryConsultation.printedDocs || {}), [printedKey]: true };
+                    ? 'eegOrders'
+                    : 'fullFicha';
+        const updatedPrintedDocs = { ...(selectedHistoryConsultation.printedDocs || {}), [printedKey]: true };
 
-              if (selectedHistoryConsultation.id) {
-                  const consRef = doc(db, 'consultations', selectedHistoryConsultation.id);
-                  await updateDoc(consRef, { printedDocs: updatedPrintedDocs });
-              }
+        if (selectedHistoryConsultation.id) {
+          const consRef = doc(db, 'consultations', selectedHistoryConsultation.id);
+          await updateDoc(consRef, { printedDocs: updatedPrintedDocs });
+        }
 
-              setSelectedHistoryConsultation(prev => prev ? ({ ...prev, printedDocs: updatedPrintedDocs }) : prev);
-          }
+        setSelectedHistoryConsultation(prev => prev ? ({ ...prev, printedDocs: updatedPrintedDocs }) : prev);
+      }
 
-          const label =
-            type === 'report'
-              ? 'reporte de enfermería'
-              : type === 'labs'
-              ? 'labs'
-              : type === 'resonance_orders'
+      const label =
+        type === 'report'
+          ? 'reporte de enfermería'
+          : type === 'labs'
+            ? 'labs'
+            : type === 'resonance_orders'
               ? 'órdenes de resonancia'
               : type === 'eeg_orders'
-              ? 'órdenes de EEG'
-              : type === 'full_ficha'
-              ? 'ficha completa'
-              : 'receta';
-          toast.success(`${action === 'print' ? 'Imprimiendo' : 'Descargando'} ${label}...`);
-      } catch (e) { 
-          console.error("Error al generar documento", e);
-          toast.error("Error al generar documento"); 
-      }
+                ? 'órdenes de EEG'
+                : type === 'full_ficha'
+                  ? 'ficha completa'
+                  : 'receta';
+      toast.success(`${action === 'print' ? 'Imprimiendo' : 'Descargando'} ${label}...`);
+    } catch (e) {
+      console.error("Error al generar documento", e);
+      toast.error("Error al generar documento");
+    }
   };
 
   const hasAllRequiredDocsPrinted = (consultation: Consultation | null) => {
-      if (!consultation || !consultation.printedDocs) return false;
-      const { prescription, labs, resonanceOrders, eegOrders } = consultation.printedDocs;
-      const basePrinted = !!prescription && !!labs;
-      const hasResonanceOrders = (consultation.resonanceOrders?.length || 0) > 0;
-      const hasEegOrders = (consultation.eegOrders?.length || 0) > 0;
-      const ordersPrinted = (!hasResonanceOrders || !!resonanceOrders) && (!hasEegOrders || !!eegOrders);
-      return basePrinted && ordersPrinted;
+    if (!consultation || !consultation.printedDocs) return false;
+    const { prescription, labs, resonanceOrders, eegOrders } = consultation.printedDocs;
+    const basePrinted = !!prescription && !!labs;
+    const hasResonanceOrders = (consultation.resonanceOrders?.length || 0) > 0;
+    const hasEegOrders = (consultation.eegOrders?.length || 0) > 0;
+    const ordersPrinted = (!hasResonanceOrders || !!resonanceOrders) && (!hasEegOrders || !!eegOrders);
+    return basePrinted && ordersPrinted;
   };
 
   const attemptFinalizeDelivery = () => {
-      if (hasAllRequiredDocsPrinted(selectedHistoryConsultation)) {
-          finalizeDeliveryProcess();
-      } else {
-          setShowDeliveryOverrideModal(true); 
-      }
+    if (hasAllRequiredDocsPrinted(selectedHistoryConsultation)) {
+      finalizeDeliveryProcess();
+    } else {
+      setShowDeliveryOverrideModal(true);
+    }
   };
 
   const finalizeDeliveryProcess = async (reason?: string) => {
-      if (!selectedHistoryConsultation) return;
-      setIsSaving(true);
-      try {
-          const consRef = doc(db, 'consultations', selectedHistoryConsultation.id!);
-          const updateData: any = {
-              status: 'delivered',
-              deliveredAt: Date.now(),
-              deliveredBy: user.name,
-          };
-          if (reason && reason.trim()) {
-              updateData.nonPrintReason = reason.trim();
-          }
-          await updateDoc(consRef, updateData);
-          if(reason && reason.trim()){
-            await logAuditAction( user.name, "Expediente Entregado", `El usuario ${user.name} ha entregado sus archivos correctamente al paciente ${historyPatient.fullName}, con archivos no impresos por la razón: ${reason.trim()}`);
-          } else {
-            await logAuditAction( user.name, "Expediente Entregado", `El usuario ${user.name} ha entregado sus archivos correctamente al paciente ${historyPatient.fullName}`);
-          }
+    if (!selectedHistoryConsultation) return;
+    setIsSaving(true);
+    try {
+      const consRef = doc(db, 'consultations', selectedHistoryConsultation.id!);
+      const updateData: any = {
+        status: 'delivered',
+        deliveredAt: Date.now(),
+        deliveredBy: user.name,
+      };
+      if (reason && reason.trim()) {
+        updateData.nonPrintReason = reason.trim();
+      }
+      await updateDoc(consRef, updateData);
+      if (reason && reason.trim()) {
+        await logAuditAction(user.name, "Expediente Entregado", `El usuario ${user.name} ha entregado sus archivos correctamente al paciente ${historyPatient.fullName}, con archivos no impresos por la razón: ${reason.trim()}`);
+      } else {
+        await logAuditAction(user.name, "Expediente Entregado", `El usuario ${user.name} ha entregado sus archivos correctamente al paciente ${historyPatient.fullName}`);
+      }
 
-          toast.success("Entregado correctamente");
-          setShowDeliveryOverrideModal(false);
-          setActiveView('history');
-      } catch (e) { toast.error("Error al finalizar"); } finally { setIsSaving(false); }
+      toast.success("Entregado correctamente");
+      setShowDeliveryOverrideModal(false);
+      setActiveView('history');
+    } catch (e) { toast.error("Error al finalizar"); } finally { setIsSaving(false); }
   };
 
   const filteredAppointments = todaysAppointments.filter(appt => {
@@ -795,7 +785,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     const haystack = normalizeSearch(`${appt.patientName || ''} ${appt.doctorName || ''}`);
     return haystack.includes(normalizedAgendaSearch);
   });
-  
+
   const totalPages = Math.ceil(searchedAppointments.length / AGENDA_PAGE_SIZE) || 1;
   const listAppointments = searchedAppointments.slice((agendaPage - 1) * AGENDA_PAGE_SIZE, agendaPage * AGENDA_PAGE_SIZE);
 
@@ -827,16 +817,16 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const handleOpenResidentIntake = async (appt: Appointment) => {
     try {
-        const patient = await getPatientByDPI(appt.patientId);
-        if (!patient) {
-            toast.error("No se encontró el paciente");
-            return;
-        }
-        setCurrentPatient(patient);
-        setSelectedAppointment(appt);
-        setShowResidentIntakeModal(true);
+      const patient = await getPatientByDPI(appt.patientId);
+      if (!patient) {
+        toast.error("No se encontró el paciente");
+        return;
+      }
+      setCurrentPatient(patient);
+      setSelectedAppointment(appt);
+      setShowResidentIntakeModal(true);
     } catch (error) {
-        toast.error("Error al cargar datos del paciente");
+      toast.error("Error al cargar datos del paciente");
     }
   };
 
@@ -869,7 +859,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const hasConsultationTimer = consultationDurationSeconds !== null && consultationRemainingSeconds !== null;
   const countdown = hasConsultationTimer ? formatCountdown(consultationRemainingSeconds!) : null;
-  
+
   const agendaPagination = {
     currentPage: agendaPage,
     totalPages,
@@ -891,19 +881,19 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
         // Pagination logic
         let startDoc = null;
         if (targetPage > 1) {
-            startDoc = patientLastDocs[targetPage - 1]; 
-            if (!startDoc) {
-                targetPage = 1;
-            }
+          startDoc = patientLastDocs[targetPage - 1];
+          if (!startDoc) {
+            targetPage = 1;
+          }
         }
 
         const { patients, lastDoc: newLastDoc, hasMore } = await patientService.getPaginated(20, startDoc);
         setPatientList(patients);
         setHasMorePatients(hasMore);
         setPatientPage(targetPage);
-        
+
         if (newLastDoc) {
-            setPatientLastDocs(prev => ({ ...prev, [targetPage]: newLastDoc }));
+          setPatientLastDocs(prev => ({ ...prev, [targetPage]: newLastDoc }));
         }
       }
     } catch (error) {
@@ -926,28 +916,28 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const handleNextPage = () => {
     if (hasMorePatients && !patientListLoading) {
-        loadPatientsList(undefined, patientPage + 1);
+      loadPatientsList(undefined, patientPage + 1);
     }
   };
 
   const handlePrevPage = () => {
     if (patientPage > 1 && !patientListLoading) {
-        loadPatientsList(undefined, patientPage - 1);
+      loadPatientsList(undefined, patientPage - 1);
     }
   };
 
   const handleCreatePatientClick = () => {
-      setSelectedPatient(null); 
-      setShowPatientModal(true);
+    setSelectedPatient(null);
+    setShowPatientModal(true);
   };
 
   const handlePatientSavedFromModal = (newPatient: Patient) => {
-      // Mostrar directamente al paciente nuevo en la lista para confirmación visual inmediata
-      setPatientSearchTerm(newPatient.fullName);
-      setPatientList([newPatient]);
-      setHasMorePatients(false);
-      setPatientPage(1);
-      toast.success("Paciente creado exitosamente");
+    // Mostrar directamente al paciente nuevo en la lista para confirmación visual inmediata
+    setPatientSearchTerm(newPatient.fullName);
+    setPatientList([newPatient]);
+    setHasMorePatients(false);
+    setPatientPage(1);
+    toast.success("Paciente creado exitosamente");
   };
 
   const handleSelectPatient = (patient: Patient) => {
@@ -961,822 +951,821 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   };
 
   return (
-    <MainLayout 
-        user={user} 
-        onLogout={onLogout} 
-        activeView={activeView === 'history_detail' ? 'history' : activeView === 'patient_detail' ? 'patients' : activeView} 
-        onViewChange={setActiveView} 
-        allowDoctorSelfManage={allowDoctorSelfManage}
-        currentTitle={
-            (currentPatient && activeView === 'dashboard') ? currentPatient.fullName : 
-            activeView === 'history_detail' ? `Expediente: ${selectedHistoryConsultation?.patientName}` :
+    <MainLayout
+      user={user}
+      onLogout={onLogout}
+      activeView={activeView === 'history_detail' ? 'history' : activeView === 'patient_detail' ? 'patients' : activeView}
+      onViewChange={setActiveView}
+      allowDoctorSelfManage={allowDoctorSelfManage}
+      currentTitle={
+        (currentPatient && activeView === 'dashboard') ? currentPatient.fullName :
+          activeView === 'history_detail' ? `Expediente: ${selectedHistoryConsultation?.patientName}` :
             activeView === 'patient_detail' ? `Paciente: ${selectedPatient?.fullName}` :
-            undefined
-        }
+              undefined
+      }
     >
-        <div className="p-4 lg:p-8" ref={topRef}>
-           {activeView === 'settings' ? (
-               <UserProfileSettings user={user} />
-           ) : activeView === 'admin' && isAdmin ? (
-               <AdminPanel user={user} />
-           ) : activeView === 'my_schedule' && isDoctor && allowDoctorSelfManage ? (
-               <DoctorScheduleAdmin currentUser={user} fixedDoctorId={user.uid} />
-           ) : activeView === 'history' ? (
-               <HistoryList user={user} onSelectConsultation={goToDetail} />
-           ) : activeView === 'history_detail' && selectedHistoryConsultation ? (
-               <ConsultationDetail 
-                   consultation={selectedHistoryConsultation}
-                   patient={historyPatient}
-                   receptionistName={receptionistName}
-                   user={user}
-                   onBack={() => setActiveView('history')}
-                   onPrint={handlePrintDoc}
-                   onDeliver={attemptFinalizeDelivery}
-                   isSaving={isSaving}
-                   onUpdate={(updated) => setSelectedHistoryConsultation(updated)}
-               />
-           ) : activeView === 'patients' ? (
-              <>
-               <PatientListView
-                   searchTerm={patientSearchTerm}
-                   onSearchTermChange={setPatientSearchTerm}
-                   onSearchSubmit={handlePatientSearchSubmit}
-                   onClearSearch={handleClearPatientSearch}
-                   patients={patientList}
-                   loading={patientListLoading}
-                   onSelectPatient={handleSelectPatient}
-                   onCreatePatient={handleCreatePatientClick}
-                   onNextPage={handleNextPage}
-                   onPrevPage={handlePrevPage}
-                   hasMore={hasMorePatients}
-                   page={patientPage}
-                   isFirstPage={patientPage === 1}
-               />
-               <PatientModal
-                   isOpen={showPatientModal}
-                   onClose={() => setShowPatientModal(false)}
-                   currentUser={user}
-                   onSaved={handlePatientSavedFromModal}
-               />
-               </>
-           ) : activeView === 'patient_detail' && selectedPatient ? (
-               <PatientDetailView
-                   patient={selectedPatient}
-                   currentUser={user}
-                   onBack={() => setActiveView('patients')}
-                   onPatientUpdated={handlePatientSaved}
-               />
-           ) : currentPatient ? (
-               /* --- WIZARD DE CONSULTA ACTIVA --- */
-               <div className="max-w-5xl mx-auto">
-                   <motion.div initial={{opacity:0, y:-10}} animate={{opacity:1, y:0}} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 mb-6 relative overflow-hidden">
-                        {isForeignPatient(currentPatient) && (
-                            <div className="absolute top-0 left-0 w-full bg-amber-400 text-amber-900 px-4 py-1 text-center text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2">
-                                <AlertTriangle className="w-3 h-3"/> Atención: Paciente Foráneo
-                            </div>
-                        )}
-                        <div className="flex items-center gap-6 pt-4">
-                            <div className="w-16 h-16 bg-slate-900 text-white rounded-full flex items-center justify-center text-2xl font-bold">
-                                {currentPatient.fullName.charAt(0)}
-                            </div>
-                            <div>
-                                <div className="flex items-center gap-2">
-                                    <h2 className="text-2xl font-bold text-slate-900">{currentPatient.fullName}</h2>
-                                    {currentModality === 'Virtual' ? (
-                                        <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded-full flex items-center gap-1 border border-purple-200">
-                                            <Video className="w-3 h-3" /> Virtual
-                                        </span>
-                                    ) : (
-                                        <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full flex items-center gap-1 border border-blue-200">
-                                            <Users className="w-3 h-3" /> Presencial
-                                        </span>
-                                    )}
-                                </div>
-                                <p className="text-slate-500 font-mono text-sm">{currentPatient.billingCode}</p>
-                            </div>
-                        </div>
-
-                       {hasConsultationTimer && consultationDurationLabel && (
-                            <div className="mt-5">
-                                {isConsultationDurationExceeded ? (
-                                    <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shadow-sm">
-                                            <AlertTriangle className="w-5 h-5" />
-                                        </div>
-                                        <div>
-                                            <p className="text-[11px] font-semibold tracking-[0.18em] uppercase text-red-500">
-                                                Tiempo estimado concluido
-                                            </p>
-                                            <p className="text-sm text-red-700 font-medium">
-                                                La duración estimada de {consultationDurationLabel} para esta consulta ya se ha cumplido.
-                                            </p>
-                                        </div>
-                                    </div>
-                                ) : countdown && (
-                                    <div className="rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 px-4 py-3 flex items-center justify-between gap-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/30">
-                                                <Clock className="w-5 h-5" />
-                                            </div>
-                                            <div>
-                                                <p className="text-[11px] font-semibold tracking-[0.18em] uppercase text-emerald-700">
-                                                    Contador de consulta
-                                                </p>
-                                                <p className="text-sm text-slate-600">
-                                                    Duración estimada:{' '}
-                                                    <span className="font-semibold text-slate-900">
-                                                        {consultationDurationLabel}
-                                                    </span>
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="font-mono text-2xl lg:text-3xl font-bold text-emerald-700 tabular-nums">
-                                            {countdown.hours}:{countdown.minutes}:{countdown.seconds}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                   </motion.div>
-
-                   {importantNoticesList.length > 0 && (
-                       <motion.div
-                         initial={{ opacity: 0, y: 10 }}
-                         animate={{ opacity: 1, y: 0 }}
-                         className="bg-white rounded-3xl border border-red-200 shadow-sm p-4 mb-6"
-                       >
-                         <div className="flex items-center justify-between mb-3">
-                           <div className="flex items-center gap-2">
-                             <AlertTriangle className="w-4 h-4 text-red-500" />
-                             <h3 className="text-sm font-bold text-red-700 uppercase tracking-wide">
-                               Avisos importantes de consultas anteriores
-                             </h3>
-                           </div>
-                           {hasUnseenImportantNotices && (
-                             <span className="text-[11px] font-bold text-red-600">
-                               Debe revisar todos los avisos antes de finalizar.
-                             </span>
-                           )}
-                         </div>
-
-                         <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                           {importantNoticesList.map(item => {
-                             const seenBy = (item as any).importantNoticesSeenBy as string[] | undefined;
-                             const isSeen = (seenBy || []).includes(user.uid);
-                             const dateLabel = new Date(item.date).toLocaleString('es-GT', {
-                               dateStyle: 'short',
-                               timeStyle: 'short',
-                               timeZone: 'America/Guatemala'
-                             });
-                             return (
-                               <div
-                                 key={item.id}
-                                 className="flex items-center justify-between gap-3 rounded-2xl border border-red-100 bg-red-50/40 px-3 py-2"
-                               >
-                                 <div className="flex items-center gap-3">
-                                   <span
-                                     className={`w-2 h-2 rounded-full ${
-                                       isSeen ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'
-                                     }`}
-                                   />
-                                   <div className="text-xs">
-                                     <p className="font-semibold text-red-800">
-                                       Aviso de consulta {dateLabel}
-                                     </p>
-                                     <p className="text-red-700/80">
-                                       por {item.doctorName || 'Médico desconocido'}
-                                     </p>
-                                   </div>
-                                 </div>
-                                 <button
-                                   type="button"
-                                   onClick={async () => {
-                                     setSelectedImportantNotice(item);
-                                     const currentSeen = (item as any).importantNoticesSeenBy as string[] | undefined;
-                                     if (!(currentSeen || []).includes(user.uid) && item.id) {
-                                       try {
-                                         const consRef = doc(db, 'consultations', item.id);
-                                         const updatedSeen = [ ...(currentSeen || []), user.uid];
-                                         await updateDoc(consRef, { importantNoticesSeenBy: updatedSeen });
-                                         const updatedList = importantNoticesList.map(c =>
-                                           c.id === item.id ? { ...c, importantNoticesSeenBy: updatedSeen } : c
-                                         );
-                                         setImportantNoticesList(updatedList);
-                                         refreshImportantNoticesState(updatedList);
-                                       } catch (error) {
-                                         console.error('Error al marcar aviso como visto', error);
-                                         toast.error('No se pudo marcar el aviso como visto');
-                                       }
-                                     }
-                                   }}
-                                   className="px-3 py-1 rounded-full text-[11px] font-bold border border-red-300 text-red-700 bg-white hover:bg-red-50 transition"
-                                 >
-                                   Ver aviso
-                                 </button>
-                               </div>
-                             );
-                           })}
-                         </div>
-                       </motion.div>
-                   )}
-
-                   {/* SECCIÓN CUADERNO - DESPLEGABLE */}
-                   <motion.div
-                     initial={{ opacity: 0, y: 10 }}
-                     animate={{ opacity: 1, y: 0 }}
-                     transition={{ delay: 0.2 }}
-                     className="mb-6"
-                   >
-                     <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                       <button
-                         type="button"
-                         onClick={() => setIsCuadernoExpanded(v => !v)}
-                         className="w-full px-4 py-3 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
-                       >
-                         <div className="flex items-center gap-2">
-                           <div className="p-2 bg-brand-100 text-brand-600 rounded-lg">
-                             <Book className="w-5 h-5" />
-                           </div>
-                           <span className="text-sm font-bold text-slate-800">
-                             Cuaderno del Paciente
-                           </span>
-                         </div>
-                         <motion.div
-                           animate={{ rotate: isCuadernoExpanded ? 180 : 0 }}
-                           transition={{ type: 'spring', stiffness: 260, damping: 20 }}
-                           className="text-slate-400"
-                         >
-                           <ChevronDown className="w-4 h-4" />
-                         </motion.div>
-                       </button>
-
-                       <AnimatePresence initial={false}>
-                         {isCuadernoExpanded && (
-                           <motion.div
-                             key="cuaderno-content"
-                             initial={{ height: 0, opacity: 0 }}
-                             animate={{ height: 'auto', opacity: 1 }}
-                             exit={{ height: 0, opacity: 0 }}
-                             transition={{ duration: 0.25 }}
-                             className="overflow-hidden"
-                           >
-                             <div className="px-4 pb-4 pt-2">
-                               <Cuaderno patient={currentPatient} currentUser={user} showHeader={false} />
-                             </div>
-                           </motion.div>
-                         )}
-                       </AnimatePresence>
-                     </div>
-                   </motion.div>
-
-                   <FormProvider {...methods}>
-                       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
-                           {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />}
-                          {step === 2 && <StepPrescription currentUser={user} />}
-                         {step === 3 && (
-                           <StepExams
-                             userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
-                             patient={currentPatient}
-                             appointmentType={currentConsultationType}
-                           />
-                         )}
-                          {step === 4 && <StepFinalize 
-                               currentUser={user}
-                                hasUnseenImportantNotices={hasUnseenImportantNotices}
-                                onFinish={methods.handleSubmit(async (d) => {
-                                if (isFollowUpMissing) {
-                                    toast.error('Debe completar la reconsulta antes de finalizar.');
-                                    return;
-                                }
-                                if (hasIncompleteOrders) {
-                                    toast.error('Complete todos los campos de las órdenes antes de finalizar.');
-                                    return;
-                                }
-                                setIsSaving(true);
-                                try {
-                                    const consultationRef = doc(db, 'consultations', currentConsultationId!);
-
-                                    const raw = d as any;
-                                    const specialtyFormId = raw.specialtyFormId as string | undefined;
-                                    const rawSpecialtyData = (raw.specialtyData || {}) as Record<string, any>;
-
-                                    let filteredSpecialtyData: Record<string, any> = rawSpecialtyData;
-                                    let specialtyFormName: string | undefined = raw.specialtyFormName;
-
-                                    if (specialtyFormId) {
-                                        try {
-                                            const forms = await specialtyFormsService.getAll();
-                                            const activeForm = forms.find(f => f.id === specialtyFormId);
-                                            if (activeForm) {
-                                                const allowedIds = activeForm.sections.flatMap(section =>
-                                                    section.fields.map(field => field.id)
-                                                );
-                                                const next: Record<string, any> = {};
-                                                for (const id of allowedIds) {
-                                                    const value = rawSpecialtyData[id];
-                                                    next[id] = value ?? null;
-                                                }
-                                                filteredSpecialtyData = next;
-                                                specialtyFormName = activeForm.name;
-                                            }
-                                        } catch (err) {
-                                            console.error("Error cargando fichas para filtrar specialtyData", err);
-                                        }
-                                    }
-
-                                    const { specialtyData, ...rest } = raw;
-
-                                    const finishedData: any = { 
-                                        status: 'finished' as const, 
-                                        ...rest,
-                                        specialtyFormId: specialtyFormId || null,
-                                        specialtyFormName: specialtyFormName || null,
-                                        specialtyData: filteredSpecialtyData || {},
-                                        printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
-                                    };
-
-                                    if (Array.isArray(finishedData.prescription) && finishedData.prescription.length > 0) {
-                                        finishedData.prescriptionNumber = await generateUniquePrescriptionNumber();
-                                    } else {
-                                        finishedData.prescriptionNumber = null;
-                                    }
-
-                                    // Sanitizar undefined a null para evitar errores de Firestore
-                                    Object.keys(finishedData).forEach(key => {
-                                        if (finishedData[key] === undefined) {
-                                            finishedData[key] = null;
-                                        }
-                                    });
-
-                                    await updateDoc(consultationRef, finishedData);
-
-                                    if (currentAppointmentId) {
-                                        try {
-                                            await appointmentService.completeAppointment(currentAppointmentId);
-                                            setTodaysAppointments(prev => prev.map(a => a.id === currentAppointmentId ? { ...a, status: 'completed' } : a));
-                                        } catch (err) {
-                                            console.error("Error al marcar cita como completada", err);
-                                        }
-                                    }
-
-                                    
-
-                                    // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
-                                    const notificationPayload = { 
-                                        ...finishedData, 
-                                        patientName: currentPatient.fullName,
-                                        id: currentConsultationId 
-                                    } as Consultation;
-                                    await notifyConsultationFinished(notificationPayload, user.name);
-
-                                    try {
-                                        if (finishedData.followUpRequired && finishedData.followUpDays && finishedData.followUpEstimatedDate) {
-                                            await notifyReceptionFollowUp(
-                                                { ...notificationPayload, followUpRequired: true } as Consultation,
-                                                user.name,
-                                                finishedData.followUpDays,
-                                                new Date(finishedData.followUpEstimatedDate)
-                                            );
-                                        } else {
-                                            const textSources: string[] = [];
-                                            if (finishedData.diagnosis) textSources.push(finishedData.diagnosis);
-                                            if (finishedData.followUpText) textSources.push(finishedData.followUpText);
-                                            if (finishedData.prescriptionNotes) textSources.push(finishedData.prescriptionNotes);
-                                            if (finishedData.followUpRequestText) textSources.push(finishedData.followUpRequestText);
-                                            const combinedText = textSources.join('\n\n');
-
-                                            if (combinedText.trim().length > 0) {
-                                                const { analyzeFollowUpIntent } = await import('../services/geminiService.ts');
-                                                const analysis = await analyzeFollowUpIntent(combinedText);
-                                                if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
-                                                    const baseDate = new Date(finishedData.date || Date.now());
-                                                    const followUpDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
-                                                    await notifyReceptionFollowUp(
-                                                        { ...notificationPayload, followUpRequired: true } as Consultation,
-                                                        user.name,
-                                                        analysis.days,
-                                                        followUpDate
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    } catch (aiError) {
-                                        console.error("Follow-up analysis error", aiError);
-                                    }
-                                    
-                                    setLastFinishedConsultation({ ...finishedData, patientName: currentPatient.fullName } as Consultation);
-                                    setCurrentPatient(null);
-                                    setCurrentConsultationType(undefined);
-                                    setCurrentModality(undefined);
-                                    setCurrentAppointmentId(null);
-                                    setStep(0);
-                                    methods.reset();
-                                    setShowSuccessModal(true);
-                                    
-                                    fetchAgendaPage(isResident);
-
-                                } catch (e) { 
-                                    console.error("Error CRÍTICO al guardar consulta:", e);
-                                    // Intenta mostrar detalles del error si es posible
-                                    if (e && typeof e === 'object' && 'code' in e) {
-                                        // Error de Firebase a veces tiene code
-                                        toast.error(`Error de base de datos: ${(e as any).code}`);
-                                    } else if (e instanceof Error) {
-                                        toast.error(`Error: ${e.message}`);
-                                    } else {
-                                        toast.error("Error al guardar (revise consola).");
-                                    }
-                                } finally { setIsSaving(false); }
-                           })} isSaving={isSaving} />}
-                           
-                           {nextDisabled && (
-                               <p className="mb-3 text-xs font-bold text-red-600">
-                                   {step === 2 && isFollowUpMissing && 'Debe completar la reconsulta para continuar.'}
-                                   {step === 3 && hasIncompleteOrders && 'Complete todos los campos de las órdenes para continuar.'}
-                               </p>
-                           )}
-                           <div className="mt-4 flex justify-between gap-4">
-                               <button onClick={() => {
-                                   if (step === 1) {
-                                       setCurrentPatient(null);
-                                       setCurrentConsultationType(undefined);
-                                       setCurrentModality(undefined);
-                                   } else {
-                                       setStep(s => s - 1);
-                                   }
-                               }} className="px-6 py-2 border rounded-xl font-bold hover:bg-slate-50 transition">Atrás</button>
-                               {step < 4 && (
-                                 <button
-                                   onClick={() => {
-                                     setStep(s => s + 1);
-                                     setIsCuadernoExpanded(false);
-                                   }}
-                                  disabled={nextDisabled}
-                                  className="px-8 py-2 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                 >
-                                   Siguiente
-                                 </button>
-                               )}
-                           </div>
-                       </motion.div>
-                   </FormProvider>
-               </div>
-           ) : (
-               /* --- AGENDA DEL DÍA (VISTA UNIFICADA) --- */
-               <div className="max-w-[1600px] mx-auto space-y-8">
-                   <motion.div 
-                     initial={{ opacity: 0, y: 20 }}
-                     animate={{ opacity: 1, y: 0 }}
-                     className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[600px] flex flex-col"
-                   >
-                       {/* HEADER COMÚN */}
-                       <div className="p-6 border-b flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/30">
-                           <div className="flex items-center gap-4">
-                               <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                                   <CalendarIcon className="w-5 h-5 text-brand-600" />
-                                   Agenda
-                               </h3>
-                               
-                               {/* SWITCHER DE VISTAS */}
-                              <div className="flex bg-slate-100 p-1 rounded-xl">
-                                    <button 
-                                        onClick={() => setAgendaViewMode('list')}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                                    >
-                                        <List className="w-4 h-4" /> Lista
-                                    </button>
-                                    <button 
-                                        onClick={() => setAgendaViewMode('calendar')}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'calendar' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                                    >
-                                        <LayoutGrid className="w-4 h-4" /> Calendario
-                                    </button>
-                                    <button 
-                                        onClick={() => setAgendaViewMode('availability')}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'availability' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                                    >
-                                        <Clock className="w-4 h-4" /> Disponibilidad
-                                    </button>
-                               </div>
-                           </div>
-                           
-                           <div className="flex items-center gap-3">
-                             {!isDoctor && (
-                               <DoctorDayScheduleDropdown />
-                             )}
-                             {canCreate && (
-                               <button 
-                                    onClick={() => setShowCreateAppointmentModal(true)}
-                                    className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition shadow-lg w-full md:w-auto justify-center"
-                               >
-                                    <Plus className="w-4 h-4" /> Nueva Cita
-                               </button>
-                             )}
-                           </div>
-                       </div>
-
-                       {/* CONTENIDO DE VISTAS */}
-                       <div className="flex-1 overflow-hidden">
-                          {agendaViewMode === 'list' ? (
-                              <AgendaListView
-                                appointments={listAppointments}
-                                isDoctor={isDoctor}
-                                isResident={isResident}
-                                isNurse={isNurse}
-                                isReceptionist={isReceptionist}
-                                isAdmin={isAdmin}
-                                isSaving={isSaving}
-                                onOpenDetails={(appt) => {
-                                  setSelectedAppointment(appt);
-                                  setShowAppointmentDetailsModal(true);
-                                }}
-                                onOpenNurseIntake={handleOpenResidentIntake}
-                                onOpenResidentClinical={handleOpenResidentClinical}
-                                onStartConsultation={handleStartConsultation}
-                                onToggleNurseFlow={handleToggleNurseFlow}
-                                onViewSummary={async (appt) => {
-                                  const startOfDay = new Date();
-                                  startOfDay.setHours(0, 0, 0, 0);
-
-                                  const q = query(
-                                    collection(db, 'consultations'),
-                                    where('patientId', '==', appt.patientId),
-                                    where('status', 'in', ['finished', 'delivered']),
-                                    where('date', '>=', startOfDay.getTime())
-                                  );
-                                  const snap = await getDocs(q);
-                                  if (!snap.empty) {
-                                    const doc = snap.docs[0];
-                                    goToDetail({ id: doc.id, ...doc.data() } as Consultation);
-                                  } else {
-                                    toast.error("No se encontró el detalle de la consulta de hoy");
-                                  }
-                                }}
-                                pagination={agendaPagination}
-                                searchTerm={agendaSearchTerm}
-                                onSearchTermChange={setAgendaSearchTerm}
-                                dateFilter={agendaDateFilter}
-                                onDateFilterChange={setAgendaDateFilter}
-                                onClearDateFilter={() => setAgendaDateFilter('')}
-                              />
-                           ) : agendaViewMode === 'calendar' ? (
-                               <div className="h-full p-4">
-                                   <AppointmentCalendar user={user} />
-                               </div>
-                           ) : (
-                               <AvailabilityView currentUser={user} doctors={allDoctors} />
-                           )}
-                       </div>
-                   </motion.div>
-               </div>
-           )}
-        </div>
-        
-        {/* MODALES */}
-        <CreateAppointmentModal 
-            isOpen={showCreateAppointmentModal}
-            onClose={() => {setShowCreateAppointmentModal(false); setPreSelectedPatientId(null);}}
-            onSubmit={handleCreateAppointment}
-            patients={allPatients}
-            doctors={allDoctors}
-            initialDate={new Date()}
-            onCreatePatientClick={() => {
-                setShowCreateAppointmentModal(false); 
-                setShowQuickPatientModal(true); 
-            }}
-            preSelectedPatientId={preSelectedPatientId}
-            existingAppointments={todaysAppointments}
-        />
-
-        <AnimatePresence>
-            {showQuickPatientModal && (
-                <QuickPatientModal 
-                    onClose={() => {
-                        setShowQuickPatientModal(false);
-                        setShowCreateAppointmentModal(true); 
-                    }} 
-                    currentUser={user}
-                    onSuccess={async (newPatientId: React.SetStateAction<string>) => {
-                        await loadModalData();
-                        setPreSelectedPatientId(newPatientId);
-                        setShowQuickPatientModal(false);
-                        setShowCreateAppointmentModal(true);
-                        toast.success("Paciente creado y seleccionado");
-                    }}
-                />
-            )}
-        </AnimatePresence>
-        
-        {/* Modales de Éxito y Entrega */}
-        <AnimatePresence>
-            {showSuccessModal && lastFinishedConsultation && (
-                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-4">
-                    <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-8 text-center max-w-sm w-full">
-                         <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                             <CheckCircle className="w-10 h-10" />
-                         </div>
-                         <h3 className="text-xl font-bold mb-2">Consulta Finalizada</h3>
-                         <p className="text-slate-500 mb-6">El expediente se ha guardado correctamente.</p>
-                         <div className="flex flex-col gap-3">
-                             <button 
-                                onClick={() => lastFinishedConsultation && goToDetail(lastFinishedConsultation)} 
-                                className="w-full py-3 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 transition flex items-center justify-center gap-2"
-                             >
-                                <FileText className="w-5 h-5" />
-                                Ver Detalles / Imprimir
-                             </button>
-                             <button 
-                                onClick={() => { setShowSuccessModal(false); setLastFinishedConsultation(null); }} 
-                                className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition"
-                             >
-                                Volver a Agenda
-                             </button>
-                         </div>
-                    </motion.div>
-                </div>
-            )}
-        </AnimatePresence>
-        
-        <AnimatePresence>
-             {showDeliveryOverrideModal && (
-                 <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-4">
-                     <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-[2.5rem] shadow-2xl p-10 w-full max-w-md text-center">
-                         <div className="w-20 h-20 bg-amber-100 text-amber-600 rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-3 shadow-lg shadow-amber-50">
-                             <AlertTriangle className="w-10 h-10"/>
-                         </div>
-                         <h3 className="text-xl font-bold text-slate-800 leading-tight">Documentos Faltantes</h3>
-                         <p className="text-slate-500 mt-2 mb-6 font-medium text-sm">Hay documentos pendientes de impresión. Si continúa, debe justificar por qué no se imprimieron.</p>
-                         <div className="text-left mb-6">
-                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Razón de No Impresión (Obligatorio)</label>
-                             <textarea required autoFocus className="w-full p-4 bg-slate-50 border rounded-2xl outline-none resize-none font-medium focus:ring-4 focus:ring-amber-100 border-slate-200 text-sm" rows={3} value={deliveryOverrideReason} onChange={e => setDeliveryOverrideReason(e.target.value)} placeholder="Ej: El paciente solicitó solo digital..." />
-                         </div>
-                         <div className="flex gap-4">
-                             <button type="button" onClick={() => { setShowDeliveryOverrideModal(false); setDeliveryOverrideReason(''); }} className="flex-1 py-4 font-bold text-slate-500 hover:bg-slate-50 rounded-2xl transition-all border border-slate-200">Cancelar</button>
-                             <button type="button" onClick={() => { if (!deliveryOverrideReason.trim()) { toast.error("Debe ingresar una razón."); return; } finalizeDeliveryProcess(deliveryOverrideReason); }} disabled={isSaving} className="flex-[1.5] py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-xl hover:bg-amber-600 transition-all flex justify-center items-center gap-2 active:scale-95">
-                                 {isSaving ? <Loader2 className="animate-spin w-5 h-5"/> : <CheckCircle className="w-5 h-5"/>} <span>Confirmar Entrega</span>
-                             </button>
-                         </div>
-                     </motion.div>
-                 </div>
-             )}
-         </AnimatePresence>
-
-         {/* Modal de Aviso Importante */}
-         <AnimatePresence>
-             {selectedImportantNotice && (
-                 <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[280] flex items-center justify-center p-4">
-                     <motion.div
-                         initial={{ scale: 0.9, opacity: 0, y: 10 }}
-                         animate={{ scale: 1, opacity: 1, y: 0 }}
-                         exit={{ scale: 0.9, opacity: 0, y: 10 }}
-                         className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 md:p-8 relative"
-                     >
-                         <button
-                             type="button"
-                             onClick={() => setSelectedImportantNotice(null)}
-                             className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors"
-                         >
-                             <X className="w-5 h-5" />
-                         </button>
-
-                         <div className="flex items-center gap-3 mb-4">
-                             <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
-                                 <AlertTriangle className="w-5 h-5" />
-                             </div>
-                             <div>
-                                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">
-                                     Aviso importante
-                                 </p>
-                                 <h3 className="text-lg font-bold text-slate-900">
-                                     Consulta anterior
-                                 </h3>
-                             </div>
-                         </div>
-
-                         <div className="mb-4 text-xs text-slate-500 space-y-1">
-                             <p>
-                                 Fecha:{' '}
-                                 <span className="font-semibold text-slate-800">
-                                     {new Date(selectedImportantNotice.date).toLocaleString('es-GT', {
-                                         dateStyle: 'full',
-                                         timeStyle: 'short',
-                                         timeZone: 'America/Guatemala'
-                                     })}
-                                 </span>
-                             </p>
-                             <p>
-                                 Médico:{' '}
-                                 <span className="font-semibold text-slate-800">
-                                     {selectedImportantNotice.doctorName || 'Médico desconocido'}
-                                 </span>
-                             </p>
-                         </div>
-
-                         <div className="mt-4 border border-red-100 rounded-2xl bg-red-50/40 p-4 max-h-60 overflow-y-auto">
-                             <p className="text-xs font-semibold text-red-500 uppercase tracking-wide mb-2">
-                                 Detalle del aviso
-                             </p>
-                             <p className="text-sm text-red-900 whitespace-pre-line">
-                                 {selectedImportantNotice.importantNotices}
-                             </p>
-                         </div>
-
-                         <div className="mt-6 flex justify-end">
-                             <button
-                                 type="button"
-                                 onClick={() => setSelectedImportantNotice(null)}
-                                 className="px-5 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 transition-colors"
-                             >
-                                 Cerrar
-                             </button>
-                         </div>
-                     </motion.div>
-                 </div>
-             )}
-         </AnimatePresence>
-
-        <AppointmentDetailsModal 
-            isOpen={showAppointmentDetailsModal}
-            onClose={() => {
-                setShowAppointmentDetailsModal(false);
-                setSelectedAppointment(null);
-            }}
-            appointment={selectedAppointment}
-            userRole={user.role}
-            currentUser={user}
-            users={allUsers}
-            onConfirmPhone={async (id, method) => {
-                await appointmentService.confirmByPhone(id, user.uid, method);
-                toast.success("Cita confirmada");
-                fetchAgendaPage(isResident);
-                setShowAppointmentDetailsModal(false);
-            }}
-            onRegisterPayment={async (id, receipt, amount) => {
-                await appointmentService.registerPayment(id, user.uid, receipt, amount);
-                toast.success("Pago registrado");
-                fetchAgendaPage(isResident);
-                setShowAppointmentDetailsModal(false);
-            }}
-           onCancel={async (id, reason) => {
-                if (reason === 'no_show_internal') {
-                    await appointmentService.markNoShow(id);
-                    toast.success("Marcada como no se presentó");
-                } else {
-                    await appointmentService.cancelAppointment(id, reason);
-                    toast.success("Cita cancelada");
-                }
-                fetchAgendaPage(isResident);
-                setShowAppointmentDetailsModal(false);
-            }}
-            onUpdateAppointment={async (id, updates) => {
-                try {
-                    await appointmentService.updateAppointment(id, updates, {
-                        editorId: user.uid,
-                        editorName: user.name,
-                    });
-                    toast.success("Cita actualizada");
-                    fetchAgendaPage(isResident);
-                    setShowAppointmentDetailsModal(false);
-                } catch (error) {
-                    console.error("Error al actualizar cita", error);
-                    toast.error("No se pudieron guardar los cambios de la cita. Verifique permisos.");
-                }
-            }}
-         />
-
-         {showResidentIntakeModal && currentPatient && (
-            <ResidentIntakeModal 
-                isOpen={showResidentIntakeModal}
-                onClose={() => {
-                    setShowResidentIntakeModal(false);
-                    setSelectedAppointment(null);
-                    setCurrentPatient(null);
-                }}
-                patient={currentPatient}
-                appointmentId={selectedAppointment?.id}
-                currentUser={user}
-                onSaveComplete={() => {
-                    toast.success("Evaluación de la enfermera guardada");
-                    fetchAgendaPage(isResident);
-                }}
+      <div className="p-4 lg:p-8" ref={topRef}>
+        {activeView === 'settings' ? (
+          <UserProfileSettings user={user} />
+        ) : activeView === 'admin' && isAdmin ? (
+          <AdminPanel user={user} />
+        ) : activeView === 'my_schedule' && isDoctor && allowDoctorSelfManage ? (
+          <DoctorScheduleAdmin currentUser={user} fixedDoctorId={user.uid} />
+        ) : activeView === 'history' ? (
+          <HistoryList user={user} onSelectConsultation={goToDetail} />
+        ) : activeView === 'history_detail' && selectedHistoryConsultation ? (
+          <ConsultationDetail
+            consultation={selectedHistoryConsultation}
+            patient={historyPatient}
+            receptionistName={receptionistName}
+            user={user}
+            onBack={() => setActiveView('history')}
+            onPrint={handlePrintDoc}
+            onDeliver={attemptFinalizeDelivery}
+            isSaving={isSaving}
+            onUpdate={(updated) => setSelectedHistoryConsultation(updated)}
+          />
+        ) : activeView === 'patients' ? (
+          <>
+            <PatientListView
+              searchTerm={patientSearchTerm}
+              onSearchTermChange={setPatientSearchTerm}
+              onSearchSubmit={handlePatientSearchSubmit}
+              onClearSearch={handleClearPatientSearch}
+              patients={patientList}
+              loading={patientListLoading}
+              onSelectPatient={handleSelectPatient}
+              onCreatePatient={handleCreatePatientClick}
+              onNextPage={handleNextPage}
+              onPrevPage={handlePrevPage}
+              hasMore={hasMorePatients}
+              page={patientPage}
+              isFirstPage={patientPage === 1}
             />
-         )}
-
-         {showResidentClinicalModal && residentClinicalAppointment && residentClinicalPatient && (
-            <ResidentClinicalFormModal
-              isOpen={showResidentClinicalModal}
-              onClose={() => {
-                setShowResidentClinicalModal(false);
-                setResidentClinicalAppointment(null);
-                setResidentClinicalPatient(null);
-              }}
-              appointment={residentClinicalAppointment}
-              patient={residentClinicalPatient}
+            <PatientModal
+              isOpen={showPatientModal}
+              onClose={() => setShowPatientModal(false)}
               currentUser={user}
-              onSaveComplete={handleResidentClinicalSaved}
+              onSaved={handlePatientSavedFromModal}
             />
-         )}
+          </>
+        ) : activeView === 'patient_detail' && selectedPatient ? (
+          <PatientDetailView
+            patient={selectedPatient}
+            currentUser={user}
+            onBack={() => setActiveView('patients')}
+            onPatientUpdated={handlePatientSaved}
+          />
+        ) : currentPatient ? (
+          /* --- WIZARD DE CONSULTA ACTIVA --- */
+          <div className="max-w-5xl mx-auto">
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 mb-6 relative overflow-hidden">
+              {isForeignPatient(currentPatient) && (
+                <div className="absolute top-0 left-0 w-full bg-amber-400 text-amber-900 px-4 py-1 text-center text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+                  <AlertTriangle className="w-3 h-3" /> Atención: Paciente Foráneo
+                </div>
+              )}
+              <div className="flex items-center gap-6 pt-4">
+                <div className="w-16 h-16 bg-slate-900 text-white rounded-full flex items-center justify-center text-2xl font-bold">
+                  {currentPatient.fullName.charAt(0)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-2xl font-bold text-slate-900">{currentPatient.fullName}</h2>
+                    {currentModality === 'Virtual' ? (
+                      <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded-full flex items-center gap-1 border border-purple-200">
+                        <Video className="w-3 h-3" /> Virtual
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full flex items-center gap-1 border border-blue-200">
+                        <Users className="w-3 h-3" /> Presencial
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-500 font-mono text-sm">{currentPatient.billingCode}</p>
+                </div>
+              </div>
+
+              {hasConsultationTimer && consultationDurationLabel && (
+                <div className="mt-5">
+                  {isConsultationDurationExceeded ? (
+                    <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shadow-sm">
+                        <AlertTriangle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold tracking-[0.18em] uppercase text-red-500">
+                          Tiempo estimado concluido
+                        </p>
+                        <p className="text-sm text-red-700 font-medium">
+                          La duración estimada de {consultationDurationLabel} para esta consulta ya se ha cumplido.
+                        </p>
+                      </div>
+                    </div>
+                  ) : countdown && (
+                    <div className="rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 px-4 py-3 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/30">
+                          <Clock className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-semibold tracking-[0.18em] uppercase text-emerald-700">
+                            Contador de consulta
+                          </p>
+                          <p className="text-sm text-slate-600">
+                            Duración estimada:{' '}
+                            <span className="font-semibold text-slate-900">
+                              {consultationDurationLabel}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="font-mono text-2xl lg:text-3xl font-bold text-emerald-700 tabular-nums">
+                        {countdown.hours}:{countdown.minutes}:{countdown.seconds}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </motion.div>
+
+            {importantNoticesList.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white rounded-3xl border border-red-200 shadow-sm p-4 mb-6"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-500" />
+                    <h3 className="text-sm font-bold text-red-700 uppercase tracking-wide">
+                      Avisos importantes de consultas anteriores
+                    </h3>
+                  </div>
+                  {hasUnseenImportantNotices && (
+                    <span className="text-[11px] font-bold text-red-600">
+                      Debe revisar todos los avisos antes de finalizar.
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {importantNoticesList.map(item => {
+                    const seenBy = (item as any).importantNoticesSeenBy as string[] | undefined;
+                    const isSeen = (seenBy || []).includes(user.uid);
+                    const dateLabel = new Date(item.date).toLocaleString('es-GT', {
+                      dateStyle: 'short',
+                      timeStyle: 'short',
+                      timeZone: 'America/Guatemala'
+                    });
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 rounded-2xl border border-red-100 bg-red-50/40 px-3 py-2"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`w-2 h-2 rounded-full ${isSeen ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'
+                              }`}
+                          />
+                          <div className="text-xs">
+                            <p className="font-semibold text-red-800">
+                              Aviso de consulta {dateLabel}
+                            </p>
+                            <p className="text-red-700/80">
+                              por {item.doctorName || 'Médico desconocido'}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setSelectedImportantNotice(item);
+                            const currentSeen = (item as any).importantNoticesSeenBy as string[] | undefined;
+                            if (!(currentSeen || []).includes(user.uid) && item.id) {
+                              try {
+                                const consRef = doc(db, 'consultations', item.id);
+                                const updatedSeen = [...(currentSeen || []), user.uid];
+                                await updateDoc(consRef, { importantNoticesSeenBy: updatedSeen });
+                                const updatedList = importantNoticesList.map(c =>
+                                  c.id === item.id ? { ...c, importantNoticesSeenBy: updatedSeen } : c
+                                );
+                                setImportantNoticesList(updatedList);
+                                refreshImportantNoticesState(updatedList);
+                              } catch (error) {
+                                console.error('Error al marcar aviso como visto', error);
+                                toast.error('No se pudo marcar el aviso como visto');
+                              }
+                            }
+                          }}
+                          className="px-3 py-1 rounded-full text-[11px] font-bold border border-red-300 text-red-700 bg-white hover:bg-red-50 transition"
+                        >
+                          Ver aviso
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
+            {/* SECCIÓN CUADERNO - DESPLEGABLE */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="mb-6"
+            >
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setIsCuadernoExpanded(v => !v)}
+                  className="w-full px-4 py-3 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-brand-100 text-brand-600 rounded-lg">
+                      <Book className="w-5 h-5" />
+                    </div>
+                    <span className="text-sm font-bold text-slate-800">
+                      Cuaderno del Paciente
+                    </span>
+                  </div>
+                  <motion.div
+                    animate={{ rotate: isCuadernoExpanded ? 180 : 0 }}
+                    transition={{ type: 'spring', stiffness: 260, damping: 20 }}
+                    className="text-slate-400"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </motion.div>
+                </button>
+
+                <AnimatePresence initial={false}>
+                  {isCuadernoExpanded && (
+                    <motion.div
+                      key="cuaderno-content"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-4 pb-4 pt-2">
+                        <Cuaderno patient={currentPatient} currentUser={user} showHeader={false} />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+
+            <FormProvider {...methods}>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
+                {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />}
+                {step === 2 && <StepPrescription currentUser={user} />}
+                {step === 3 && (
+                  <StepExams
+                    userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
+                    patient={currentPatient}
+                    appointmentType={currentConsultationType}
+                  />
+                )}
+                {step === 4 && <StepFinalize
+                  currentUser={user}
+                  hasUnseenImportantNotices={hasUnseenImportantNotices}
+                  onFinish={methods.handleSubmit(async (d) => {
+                    if (isFollowUpMissing) {
+                      toast.error('Debe completar la reconsulta antes de finalizar.');
+                      return;
+                    }
+                    if (hasIncompleteOrders) {
+                      toast.error('Complete todos los campos de las órdenes antes de finalizar.');
+                      return;
+                    }
+                    setIsSaving(true);
+                    try {
+                      const consultationRef = doc(db, 'consultations', currentConsultationId!);
+
+                      const raw = d as any;
+                      const specialtyFormId = raw.specialtyFormId as string | undefined;
+                      const rawSpecialtyData = (raw.specialtyData || {}) as Record<string, any>;
+
+                      let filteredSpecialtyData: Record<string, any> = rawSpecialtyData;
+                      let specialtyFormName: string | undefined = raw.specialtyFormName;
+
+                      if (specialtyFormId) {
+                        try {
+                          const forms = await specialtyFormsService.getAll();
+                          const activeForm = forms.find(f => f.id === specialtyFormId);
+                          if (activeForm) {
+                            const allowedIds = activeForm.sections.flatMap(section =>
+                              section.fields.map(field => field.id)
+                            );
+                            const next: Record<string, any> = {};
+                            for (const id of allowedIds) {
+                              const value = rawSpecialtyData[id];
+                              next[id] = value ?? null;
+                            }
+                            filteredSpecialtyData = next;
+                            specialtyFormName = activeForm.name;
+                          }
+                        } catch (err) {
+                          console.error("Error cargando fichas para filtrar specialtyData", err);
+                        }
+                      }
+
+                      const { specialtyData, ...rest } = raw;
+
+                      const finishedData: any = {
+                        status: 'finished' as const,
+                        ...rest,
+                        specialtyFormId: specialtyFormId || null,
+                        specialtyFormName: specialtyFormName || null,
+                        specialtyData: filteredSpecialtyData || {},
+                        printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
+                      };
+
+                      if (Array.isArray(finishedData.prescription) && finishedData.prescription.length > 0) {
+                        finishedData.prescriptionNumber = await generateUniquePrescriptionNumber();
+                      } else {
+                        finishedData.prescriptionNumber = null;
+                      }
+
+                      // Sanitizar undefined a null para evitar errores de Firestore
+                      Object.keys(finishedData).forEach(key => {
+                        if (finishedData[key] === undefined) {
+                          finishedData[key] = null;
+                        }
+                      });
+
+                      await updateDoc(consultationRef, finishedData);
+
+                      if (currentAppointmentId) {
+                        try {
+                          await appointmentService.completeAppointment(currentAppointmentId);
+                          setTodaysAppointments(prev => prev.map(a => a.id === currentAppointmentId ? { ...a, status: 'completed' } : a));
+                        } catch (err) {
+                          console.error("Error al marcar cita como completada", err);
+                        }
+                      }
+
+
+
+                      // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
+                      const notificationPayload = {
+                        ...finishedData,
+                        patientName: currentPatient.fullName,
+                        id: currentConsultationId
+                      } as Consultation;
+                      await notifyConsultationFinished(notificationPayload, user.name);
+
+                      try {
+                        if (finishedData.followUpRequired && finishedData.followUpDays && finishedData.followUpEstimatedDate) {
+                          await notifyReceptionFollowUp(
+                            { ...notificationPayload, followUpRequired: true } as Consultation,
+                            user.name,
+                            finishedData.followUpDays,
+                            new Date(finishedData.followUpEstimatedDate)
+                          );
+                        } else {
+                          const textSources: string[] = [];
+                          if (finishedData.diagnosis) textSources.push(finishedData.diagnosis);
+                          if (finishedData.followUpText) textSources.push(finishedData.followUpText);
+                          if (finishedData.prescriptionNotes) textSources.push(finishedData.prescriptionNotes);
+                          if (finishedData.followUpRequestText) textSources.push(finishedData.followUpRequestText);
+                          const combinedText = textSources.join('\n\n');
+
+                          if (combinedText.trim().length > 0) {
+                            const { analyzeFollowUpIntent } = await import('../services/geminiService.ts');
+                            const analysis = await analyzeFollowUpIntent(combinedText);
+                            if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
+                              const baseDate = new Date(finishedData.date || Date.now());
+                              const followUpDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
+                              await notifyReceptionFollowUp(
+                                { ...notificationPayload, followUpRequired: true } as Consultation,
+                                user.name,
+                                analysis.days,
+                                followUpDate
+                              );
+                            }
+                          }
+                        }
+                      } catch (aiError) {
+                        console.error("Follow-up analysis error", aiError);
+                      }
+
+                      setLastFinishedConsultation({ ...finishedData, patientName: currentPatient.fullName } as Consultation);
+                      setCurrentPatient(null);
+                      setCurrentConsultationType(undefined);
+                      setCurrentModality(undefined);
+                      setCurrentAppointmentId(null);
+                      setStep(0);
+                      methods.reset();
+                      setShowSuccessModal(true);
+
+                      fetchAgendaPage(isResident);
+
+                    } catch (e) {
+                      console.error("Error CRÍTICO al guardar consulta:", e);
+                      // Intenta mostrar detalles del error si es posible
+                      if (e && typeof e === 'object' && 'code' in e) {
+                        // Error de Firebase a veces tiene code
+                        toast.error(`Error de base de datos: ${(e as any).code}`);
+                      } else if (e instanceof Error) {
+                        toast.error(`Error: ${e.message}`);
+                      } else {
+                        toast.error("Error al guardar (revise consola).");
+                      }
+                    } finally { setIsSaving(false); }
+                  })} isSaving={isSaving} />}
+
+                {nextDisabled && (
+                  <p className="mb-3 text-xs font-bold text-red-600">
+                    {step === 2 && isFollowUpMissing && 'Debe completar la reconsulta para continuar.'}
+                    {step === 3 && hasIncompleteOrders && 'Complete todos los campos de las órdenes para continuar.'}
+                  </p>
+                )}
+                <div className="mt-4 flex justify-between gap-4">
+                  <button onClick={() => {
+                    if (step === 1) {
+                      setCurrentPatient(null);
+                      setCurrentConsultationType(undefined);
+                      setCurrentModality(undefined);
+                    } else {
+                      setStep(s => s - 1);
+                    }
+                  }} className="px-6 py-2 border rounded-xl font-bold hover:bg-slate-50 transition">Atrás</button>
+                  {step < 4 && (
+                    <button
+                      onClick={() => {
+                        setStep(s => s + 1);
+                        setIsCuadernoExpanded(false);
+                      }}
+                      disabled={nextDisabled}
+                      className="px-8 py-2 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Siguiente
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            </FormProvider>
+          </div>
+        ) : (
+          /* --- AGENDA DEL DÍA (VISTA UNIFICADA) --- */
+          <div className="max-w-[1600px] mx-auto space-y-8">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[600px] flex flex-col"
+            >
+              {/* HEADER COMÚN */}
+              <div className="p-6 border-b flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/30">
+                <div className="flex items-center gap-4">
+                  <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <CalendarIcon className="w-5 h-5 text-brand-600" />
+                    Agenda
+                  </h3>
+
+                  {/* SWITCHER DE VISTAS */}
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <button
+                      onClick={() => setAgendaViewMode('list')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      <List className="w-4 h-4" /> Lista
+                    </button>
+                    <button
+                      onClick={() => setAgendaViewMode('calendar')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'calendar' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      <LayoutGrid className="w-4 h-4" /> Calendario
+                    </button>
+                    <button
+                      onClick={() => setAgendaViewMode('availability')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${agendaViewMode === 'availability' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      <Clock className="w-4 h-4" /> Disponibilidad
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {!isDoctor && (
+                    <DoctorDayScheduleDropdown />
+                  )}
+                  {canCreate && (
+                    <button
+                      onClick={() => setShowCreateAppointmentModal(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition shadow-lg w-full md:w-auto justify-center"
+                    >
+                      <Plus className="w-4 h-4" /> Nueva Cita
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* CONTENIDO DE VISTAS */}
+              <div className="flex-1 overflow-hidden">
+                {agendaViewMode === 'list' ? (
+                  <AgendaListView
+                    appointments={listAppointments}
+                    isDoctor={isDoctor}
+                    isResident={isResident}
+                    isNurse={isNurse}
+                    isReceptionist={isReceptionist}
+                    isAdmin={isAdmin}
+                    isSaving={isSaving}
+                    onOpenDetails={(appt) => {
+                      setSelectedAppointment(appt);
+                      setShowAppointmentDetailsModal(true);
+                    }}
+                    onOpenNurseIntake={handleOpenResidentIntake}
+                    onOpenResidentClinical={handleOpenResidentClinical}
+                    onStartConsultation={handleStartConsultation}
+                    onToggleNurseFlow={handleToggleNurseFlow}
+                    onViewSummary={async (appt) => {
+                      const startOfDay = new Date();
+                      startOfDay.setHours(0, 0, 0, 0);
+
+                      const q = query(
+                        collection(db, 'consultations'),
+                        where('patientId', '==', appt.patientId),
+                        where('status', 'in', ['finished', 'delivered']),
+                        where('date', '>=', startOfDay.getTime())
+                      );
+                      const snap = await getDocs(q);
+                      if (!snap.empty) {
+                        const doc = snap.docs[0];
+                        goToDetail({ id: doc.id, ...doc.data() } as Consultation);
+                      } else {
+                        toast.error("No se encontró el detalle de la consulta de hoy");
+                      }
+                    }}
+                    pagination={agendaPagination}
+                    searchTerm={agendaSearchTerm}
+                    onSearchTermChange={setAgendaSearchTerm}
+                    dateFilter={agendaDateFilter}
+                    onDateFilterChange={setAgendaDateFilter}
+                    onClearDateFilter={() => setAgendaDateFilter('')}
+                  />
+                ) : agendaViewMode === 'calendar' ? (
+                  <div className="h-full p-4">
+                    <AppointmentCalendar user={user} />
+                  </div>
+                ) : (
+                  <AvailabilityView currentUser={user} doctors={allDoctors} />
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </div>
+
+      {/* MODALES */}
+      <CreateAppointmentModal
+        isOpen={showCreateAppointmentModal}
+        onClose={() => { setShowCreateAppointmentModal(false); setPreSelectedPatientId(null); }}
+        onSubmit={handleCreateAppointment}
+        patients={allPatients}
+        doctors={allDoctors}
+        initialDate={new Date()}
+        onCreatePatientClick={() => {
+          setShowCreateAppointmentModal(false);
+          setShowQuickPatientModal(true);
+        }}
+        preSelectedPatientId={preSelectedPatientId}
+        existingAppointments={todaysAppointments}
+      />
+
+      <AnimatePresence>
+        {showQuickPatientModal && (
+          <QuickPatientModal
+            onClose={() => {
+              setShowQuickPatientModal(false);
+              setShowCreateAppointmentModal(true);
+            }}
+            currentUser={user}
+            onSuccess={async (newPatientId: React.SetStateAction<string>) => {
+              await loadModalData();
+              setPreSelectedPatientId(newPatientId);
+              setShowQuickPatientModal(false);
+              setShowCreateAppointmentModal(true);
+              toast.success("Paciente creado y seleccionado");
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Modales de Éxito y Entrega */}
+      <AnimatePresence>
+        {showSuccessModal && lastFinishedConsultation && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-4">
+            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-8 text-center max-w-sm w-full">
+              <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle className="w-10 h-10" />
+              </div>
+              <h3 className="text-xl font-bold mb-2">Consulta Finalizada</h3>
+              <p className="text-slate-500 mb-6">El expediente se ha guardado correctamente.</p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => lastFinishedConsultation && goToDetail(lastFinishedConsultation)}
+                  className="w-full py-3 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 transition flex items-center justify-center gap-2"
+                >
+                  <FileText className="w-5 h-5" />
+                  Ver Detalles / Imprimir
+                </button>
+                <button
+                  onClick={() => { setShowSuccessModal(false); setLastFinishedConsultation(null); }}
+                  className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition"
+                >
+                  Volver a Agenda
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showDeliveryOverrideModal && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[300] flex items-center justify-center p-4">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-[2.5rem] shadow-2xl p-10 w-full max-w-md text-center">
+              <div className="w-20 h-20 bg-amber-100 text-amber-600 rounded-3xl flex items-center justify-center mx-auto mb-6 rotate-3 shadow-lg shadow-amber-50">
+                <AlertTriangle className="w-10 h-10" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-800 leading-tight">Documentos Faltantes</h3>
+              <p className="text-slate-500 mt-2 mb-6 font-medium text-sm">Hay documentos pendientes de impresión. Si continúa, debe justificar por qué no se imprimieron.</p>
+              <div className="text-left mb-6">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Razón de No Impresión (Obligatorio)</label>
+                <textarea required autoFocus className="w-full p-4 bg-slate-50 border rounded-2xl outline-none resize-none font-medium focus:ring-4 focus:ring-amber-100 border-slate-200 text-sm" rows={3} value={deliveryOverrideReason} onChange={e => setDeliveryOverrideReason(e.target.value)} placeholder="Ej: El paciente solicitó solo digital..." />
+              </div>
+              <div className="flex gap-4">
+                <button type="button" onClick={() => { setShowDeliveryOverrideModal(false); setDeliveryOverrideReason(''); }} className="flex-1 py-4 font-bold text-slate-500 hover:bg-slate-50 rounded-2xl transition-all border border-slate-200">Cancelar</button>
+                <button type="button" onClick={() => { if (!deliveryOverrideReason.trim()) { toast.error("Debe ingresar una razón."); return; } finalizeDeliveryProcess(deliveryOverrideReason); }} disabled={isSaving} className="flex-[1.5] py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-xl hover:bg-amber-600 transition-all flex justify-center items-center gap-2 active:scale-95">
+                  {isSaving ? <Loader2 className="animate-spin w-5 h-5" /> : <CheckCircle className="w-5 h-5" />} <span>Confirmar Entrega</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Aviso Importante */}
+      <AnimatePresence>
+        {selectedImportantNotice && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[280] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 10 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 md:p-8 relative"
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedImportantNotice(null)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">
+                    Aviso importante
+                  </p>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Consulta anterior
+                  </h3>
+                </div>
+              </div>
+
+              <div className="mb-4 text-xs text-slate-500 space-y-1">
+                <p>
+                  Fecha:{' '}
+                  <span className="font-semibold text-slate-800">
+                    {new Date(selectedImportantNotice.date).toLocaleString('es-GT', {
+                      dateStyle: 'full',
+                      timeStyle: 'short',
+                      timeZone: 'America/Guatemala'
+                    })}
+                  </span>
+                </p>
+                <p>
+                  Médico:{' '}
+                  <span className="font-semibold text-slate-800">
+                    {selectedImportantNotice.doctorName || 'Médico desconocido'}
+                  </span>
+                </p>
+              </div>
+
+              <div className="mt-4 border border-red-100 rounded-2xl bg-red-50/40 p-4 max-h-60 overflow-y-auto">
+                <p className="text-xs font-semibold text-red-500 uppercase tracking-wide mb-2">
+                  Detalle del aviso
+                </p>
+                <p className="text-sm text-red-900 whitespace-pre-line">
+                  {selectedImportantNotice.importantNotices}
+                </p>
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedImportantNotice(null)}
+                  className="px-5 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AppointmentDetailsModal
+        isOpen={showAppointmentDetailsModal}
+        onClose={() => {
+          setShowAppointmentDetailsModal(false);
+          setSelectedAppointment(null);
+        }}
+        appointment={selectedAppointment}
+        userRole={user.role}
+        currentUser={user}
+        users={allUsers}
+        onConfirmPhone={async (id, method) => {
+          await appointmentService.confirmByPhone(id, user.uid, method);
+          toast.success("Cita confirmada");
+          fetchAgendaPage(isResident);
+          setShowAppointmentDetailsModal(false);
+        }}
+        onRegisterPayment={async (id, receipt, amount) => {
+          await appointmentService.registerPayment(id, user.uid, receipt, amount);
+          toast.success("Pago registrado");
+          fetchAgendaPage(isResident);
+          setShowAppointmentDetailsModal(false);
+        }}
+        onCancel={async (id, reason) => {
+          if (reason === 'no_show_internal') {
+            await appointmentService.markNoShow(id);
+            toast.success("Marcada como no se presentó");
+          } else {
+            await appointmentService.cancelAppointment(id, reason);
+            toast.success("Cita cancelada");
+          }
+          fetchAgendaPage(isResident);
+          setShowAppointmentDetailsModal(false);
+        }}
+        onUpdateAppointment={async (id, updates) => {
+          try {
+            await appointmentService.updateAppointment(id, updates, {
+              editorId: user.uid,
+              editorName: user.name,
+            });
+            toast.success("Cita actualizada");
+            fetchAgendaPage(isResident);
+            setShowAppointmentDetailsModal(false);
+          } catch (error) {
+            console.error("Error al actualizar cita", error);
+            toast.error("No se pudieron guardar los cambios de la cita. Verifique permisos.");
+          }
+        }}
+      />
+
+      {showResidentIntakeModal && currentPatient && (
+        <ResidentIntakeModal
+          isOpen={showResidentIntakeModal}
+          onClose={() => {
+            setShowResidentIntakeModal(false);
+            setSelectedAppointment(null);
+            setCurrentPatient(null);
+          }}
+          patient={currentPatient}
+          appointmentId={selectedAppointment?.id}
+          currentUser={user}
+          onSaveComplete={() => {
+            toast.success("Evaluación de la enfermera guardada");
+            fetchAgendaPage(isResident);
+          }}
+        />
+      )}
+
+      {showResidentClinicalModal && residentClinicalAppointment && residentClinicalPatient && (
+        <ResidentClinicalFormModal
+          isOpen={showResidentClinicalModal}
+          onClose={() => {
+            setShowResidentClinicalModal(false);
+            setResidentClinicalAppointment(null);
+            setResidentClinicalPatient(null);
+          }}
+          appointment={residentClinicalAppointment}
+          patient={residentClinicalPatient}
+          currentUser={user}
+          onSaveComplete={handleResidentClinicalSaved}
+        />
+      )}
     </MainLayout>
   );
 };

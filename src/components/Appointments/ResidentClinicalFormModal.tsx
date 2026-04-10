@@ -145,9 +145,11 @@ export const ResidentClinicalFormModal: React.FC<ResidentClinicalFormModalProps>
         residentSpecialtyData: filteredSpecialtyData || {}
       };
 
-      if (appointment.consultationType === 'Nueva' && appointment.status === 'paid_checked_in') {
-        updates.status = 'resident_intake';
-      }
+      // FIX: No cambiar el status a 'resident_intake' aquí, ya que eso bloquea la
+      // evaluación de enfermería. La enfermería es quien debe pasar la cita a 'resident_intake'.
+      // if (appointment.consultationType === 'Nueva' && appointment.status === 'paid_checked_in') {
+      //   updates.status = 'resident_intake';
+      // }
 
       await appointmentService.updateAppointment(appointment.id, updates, {
         editorId: currentUser.uid,

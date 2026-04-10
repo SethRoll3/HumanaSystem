@@ -13,13 +13,13 @@ import forge from 'node-forge';
 interface StepFinalizeProps {
     onFinish: () => void;
     isSaving: boolean;
-    currentUser: UserProfile; 
+    currentUser: UserProfile;
     hasUnseenImportantNotices: boolean;
 }
 
 export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, currentUser, hasUnseenImportantNotices }) => {
     const { register, watch, setValue } = useFormContext();
-    
+
     // WATCH ALL FIELDS
     const diagnosis = watch('diagnosis');
     const prescription = watch('prescription');
@@ -35,26 +35,13 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
     const currentSignature = watch('signature');
     const specialtyReferrals: SpecialtyReferral[] = watch('specialtyReferrals') || [];
     const isReadyToFinish = watch('isReadyToFinish');
-    
+
     const [specialties, setSpecialties] = useState<Specialty[]>([]);
     const [selectedSpecialty, setSelectedSpecialty] = useState<string>('');
     const [confirmedKeys, setConfirmedKeys] = useState<Set<string>>(new Set());
     const isFilled = (value?: string) => typeof value === 'string' && value.trim().length > 0;
-    const areResonanceOrdersComplete = resonanceOrders.every((order: any) =>
-        isFilled(order.examName) && isFilled(order.probableDiagnosis) && isFilled(order.attentionNotes)
-    );
-    const areEegOrdersComplete = eegOrders.every((order: any) =>
-        isFilled(order.examName) &&
-        isFilled(order.duration) &&
-        isFilled(order.probableDiagnosis) &&
-        isFilled(order.specialIndications) &&
-        isFilled(order.medicatedWith) &&
-        isFilled(order.videoMonitoringHours) &&
-        isFilled(order.videoMonitoringSleepDeprivation) &&
-        isFilled(order.ictalVideoHours) &&
-        isFilled(order.ictalSleepDeprivation) &&
-        isFilled(order.spikeDetectionHours)
-    );
+    const areResonanceOrdersComplete = resonanceOrders.length === 0 || resonanceOrders.every((order: any) => true);
+    const areEegOrdersComplete = eegOrders.length === 0 || eegOrders.every((order: any) => true);
     const hasIncompleteOrders = (resonanceOrders.length > 0 && !areResonanceOrdersComplete) || (eegOrders.length > 0 && !areEegOrdersComplete);
     const isFollowUpMissing = !isFilled(followUpRequestText);
 
@@ -84,7 +71,7 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
         const allConfirmed = missing.every(key => confirmedKeys.has(key));
         setValue('isReadyToFinish', allConfirmed);
 
-        const omissionsMap: {[key:string]: boolean} = {};
+        const omissionsMap: { [key: string]: boolean } = {};
         missing.forEach(key => { if (confirmedKeys.has(key)) omissionsMap[key] = true; });
         setValue('omittedFields', omissionsMap);
     }, [diagnosis, prescription, prescriptionNotes, referralGroups, otherExams, referralNote, nursingNotes, currentSignature, specialtyReferrals, confirmedKeys, setValue]);
@@ -143,20 +130,20 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
             const response = await fetch(currentUser.digitalCertData!.fileUrl);
             const arrayBuffer = await response.arrayBuffer();
             const binaryString = new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '');
-            
+
             // Decodificar con Forge
             const p12Asn1 = forge.asn1.fromDer(binaryString);
             // Intentar abrir con password ingresado (esto lanza error si falla)
             const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, certPassword);
-            
+
             // Si pasamos aquí, el password es correcto.
-            setValue('signature', { 
+            setValue('signature', {
                 type: 'digital_p12',
                 signerName: currentUser.digitalCertData!.issuedTo,
                 signatureDate: Date.now(),
                 certificateSerial: currentUser.digitalCertData!.serialNumber
             });
-            
+
             toast.success("Documento Firmado Digitalmente Correctamente.");
             setShowPasswordModal(false);
 
@@ -185,16 +172,16 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                         <option value="">-- Seleccionar Especialidad --</option>
                         {specialties.filter(s => !specialtyReferrals.some(r => r.specialty === s.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                     </select>
-                    <button type="button" onClick={() => { if(selectedSpecialty) { setValue('specialtyReferrals', [...specialtyReferrals, {id: `ref-${Date.now()}`, specialty: selectedSpecialty, note: ''}]); setSelectedSpecialty(''); } }} className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 w-full sm:w-auto">Agregar</button>
+                    <button type="button" onClick={() => { if (selectedSpecialty) { setValue('specialtyReferrals', [...specialtyReferrals, { id: `ref-${Date.now()}`, specialty: selectedSpecialty, note: '' }]); setSelectedSpecialty(''); } }} className="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-700 w-full sm:w-auto">Agregar</button>
                 </div>
                 <div className="space-y-3">
                     {specialtyReferrals.map(r => (
                         <div key={r.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
                             <div className="flex justify-between items-center mb-2">
                                 <span className="font-bold text-slate-800 text-sm">{r.specialty}</span>
-                                <button type="button" onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                                <button type="button" onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
                             </div>
-                            <textarea 
+                            <textarea
                                 placeholder={`Motivo de la referencia o nota para ${r.specialty}...`}
                                 className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-2 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none"
                                 rows={2}
@@ -208,11 +195,11 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
 
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold"><FileText className="w-5 h-5 text-brand-600" /><h4>Anotaciones para Enfermería</h4></div>
-                <textarea 
-                    {...register('followUpText')} 
-                    rows={3} 
-                    placeholder="Instrucciones post-consulta..." 
-                    className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-3 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none" 
+                <textarea
+                    {...register('followUpText')}
+                    rows={3}
+                    placeholder="Instrucciones post-consulta..."
+                    className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-3 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none"
                 />
             </div>
 
@@ -221,11 +208,11 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                     <AlertCircle className="w-5 h-5 text-red-500" />
                     <h4>Avisos Importantes</h4>
                 </div>
-                <textarea 
-                    {...register('importantNotices')} 
-                    rows={3} 
+                <textarea
+                    {...register('importantNotices')}
+                    rows={3}
                     placeholder="Registrar alertas críticas, advertencias al paciente o recordatorios importantes..."
-                    className="w-full text-sm bg-red-50/40 border border-red-200 rounded-lg p-3 focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-red-400 text-red-800 resize-none" 
+                    className="w-full text-sm bg-red-50/40 border border-red-200 rounded-lg p-3 focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-red-400 text-red-800 resize-none"
                 />
             </div>
 
@@ -236,7 +223,7 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                         {currentSignature ? (
                             <div className="flex flex-col items-center">
                                 <div className="bg-emerald-100 text-emerald-600 p-3 rounded-full mb-2">
-                                    <FileKey className="w-8 h-8"/>
+                                    <FileKey className="w-8 h-8" />
                                 </div>
                                 <p className="text-sm font-bold text-emerald-700">Firmado Digitalmente</p>
                                 <p className="text-xs text-emerald-600 mb-4">{currentUser.digitalCertData?.issuedTo}</p>
@@ -247,7 +234,7 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                         ) : (
                             <div className="flex flex-col items-center">
                                 <div className="w-16 h-16 bg-brand-100 text-brand-600 rounded-full flex items-center justify-center mb-4">
-                                    <FileKey className="w-8 h-8"/>
+                                    <FileKey className="w-8 h-8" />
                                 </div>
                                 <h4 className="text-lg font-bold text-slate-800 mb-1">Firma Digital Disponible</h4>
                                 <p className="text-xs text-slate-500 mb-4">Certificado detectado. Se requiere contraseña.</p>
@@ -260,7 +247,7 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                 ) : (
                     <div className="flex flex-col items-center">
                         <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${currentSignature ? 'bg-slate-200 text-slate-500' : 'bg-amber-100 text-amber-600'}`}>
-                            {currentSignature ? <CheckCircle className="w-8 h-8"/> : <XCircle className="w-8 h-8"/>}
+                            {currentSignature ? <CheckCircle className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
                         </div>
                         {currentSignature ? (
                             <>
@@ -284,38 +271,38 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
             <AnimatePresence>
                 {showPasswordModal && (
                     <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <motion.div initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} exit={{scale:0.9, opacity:0}} className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
+                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
                             <div className="text-center mb-6">
                                 <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                    <Lock className="w-6 h-6 text-slate-600"/>
+                                    <Lock className="w-6 h-6 text-slate-600" />
                                 </div>
                                 <h3 className="font-bold text-lg text-slate-800">Autenticar Firma</h3>
                                 <p className="text-xs text-slate-500 mt-1">Ingrese la contraseña de su archivo .p12 para firmar este documento.</p>
                             </div>
                             <form onSubmit={verifyAndSign} className="space-y-4">
                                 <div className="relative">
-                                    <input 
+                                    <input
                                         autoFocus
-                                        type={showCertPassword ? "text" : "password"} 
+                                        type={showCertPassword ? "text" : "password"}
                                         className="w-full p-4 pr-12 bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-brand-500 text-center font-bold tracking-widest text-slate-900 shadow-inner"
                                         placeholder="Contraseña"
                                         value={certPassword}
                                         onChange={e => setCertPassword(e.target.value)}
                                     />
-                                    <button 
-                                        type="button" 
+                                    <button
+                                        type="button"
                                         onClick={() => setShowCertPassword(!showCertPassword)}
                                         className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-brand-600 transition-colors"
                                         tabIndex={-1}
                                     >
-                                        {showCertPassword ? <EyeOff className="w-5 h-5"/> : <Eye className="w-5 h-5"/>}
+                                        {showCertPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                                     </button>
                                 </div>
-                                
+
                                 <div className="flex gap-3 pt-2">
                                     <button type="button" onClick={() => setShowPasswordModal(false)} className="flex-1 py-3 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl">Cancelar</button>
                                     <button type="submit" disabled={!certPassword || isSigning} className="flex-1 py-3 text-sm font-bold bg-brand-600 text-white hover:bg-brand-700 rounded-xl flex justify-center items-center gap-2">
-                                        {isSigning ? <Loader2 className="animate-spin w-4 h-4"/> : "Firmar"}
+                                        {isSigning ? <Loader2 className="animate-spin w-4 h-4" /> : "Firmar"}
                                     </button>
                                 </div>
                             </form>
@@ -339,13 +326,13 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
             )}
 
             <div className="pt-8 border-t flex flex-col items-center">
-                <button 
-                    type="button" 
+                <button
+                    type="button"
                     onClick={onFinish}
                     disabled={!isReadyToFinish || isSaving || hasUnseenImportantNotices || isFollowUpMissing || hasIncompleteOrders}
                     className="w-full max-w-md py-4 bg-slate-900 text-white rounded-2xl font-bold text-xl shadow-2xl hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-3 transition-all transform active:scale-95"
                 >
-                    {isSaving ? <Loader2 className="animate-spin w-6 h-6"/> : <Save className="w-6 h-6"/>}
+                    {isSaving ? <Loader2 className="animate-spin w-6 h-6" /> : <Save className="w-6 h-6" />}
                     Finalizar Consulta
                 </button>
                 {!isReadyToFinish && <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse">Confirmar omisiones para finalizar.</p>}

@@ -66,21 +66,24 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
     if (!vitalsLine) return result;
     const parts = vitalsLine.split(/[|,]/).map(p => p.trim()).filter(Boolean);
     parts.forEach(part => {
-      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|Temp)[:\s]+(.+)/i);
+      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|SpO2|Temp|TEMP°C)[:\s]+(.+)/i);
       if (match) {
-        result[match[1].toLowerCase().replace('/', '_')] = match[2].trim();
+        let key = match[1].toLowerCase().replace('/', '_');
+        if (key === 'spo2') key = 'sat';
+        if (key === 'temp°c') key = 'temp';
+        result[key] = match[2].trim().replace(/(Lbs\.|Lbs|mmHg|xm|%|°C)/gi, '').trim();
       }
     });
     return result;
   };
 
   const vitalsConfig = [
-    { key: 'peso', label: 'Peso', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { key: 'p_a', label: 'P/A', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
-    { key: 'fr', label: 'FR', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
-    { key: 'fc', label: 'FC', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
-    { key: 'sat', label: 'SAT', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { key: 'temp', label: 'Temp', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
+    { key: 'peso', label: 'Peso', unit: 'Lbs.', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { key: 'p_a', label: 'P/A', unit: 'mmHg', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
+    { key: 'fr', label: 'FR', unit: 'xm', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
+    { key: 'fc', label: 'FC', unit: 'xm', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
+    { key: 'sat', label: 'SpO2', unit: '%', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { key: 'temp', label: 'Temp', unit: '°C', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
   ];
 
   const medicalHistoryEntries = useMemo(() => {
@@ -90,7 +93,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
       const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
       const headerLine = lines.find(line => line.startsWith('[Enfermería:')) || '';
       const vitalsLine = lines.find(line =>
-        /Peso:|P\/A:|FR:|FC:|SAT:|Temp:/i.test(line)
+        /Peso:|P\/A:|FR:|FC:|SAT:|SpO2:|Temp:|TEMP°C:/i.test(line)
       ) || '';
       const obsLine = lines.find(line => line.toLowerCase().startsWith('observaciones:')) || '';
       const otherLines = lines.filter(line => line !== headerLine && line !== vitalsLine && line !== obsLine);
@@ -411,7 +414,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                                   <div>
                                     <p className="font-semibold mb-1">Signos vitales</p>
                                     <p>Temperatura: {cons.vitals.temp} °C</p>
-                                    <p>Peso: {cons.vitals.weight} kg</p>
+                                    <p>Peso: {cons.vitals.weight} Lbs.</p>
                                     <p>Presión arterial: {cons.vitals.pressure}</p>
                                   </div>
                                 )}
@@ -525,7 +528,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                                                     <div key={vc.key} className={`${vc.bg} rounded-xl p-2 flex flex-col items-center gap-1 border border-slate-100`}>
                                                         <Icon className={`w-3.5 h-3.5 ${vc.color}`} />
                                                         <span className="text-[9px] font-bold text-slate-400 uppercase">{vc.label}</span>
-                                                        <span className="text-xs font-bold text-slate-800">{val}</span>
+                                                        <span className="text-xs font-bold text-slate-800">{val} {vc.unit}</span>
                                                     </div>
                                                 );
                                             })}
@@ -666,7 +669,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                                                               <div key={vc.key} className={`${vc.bg} rounded-xl p-2 flex flex-col items-center gap-1 border border-slate-100`}>
                                                                   <Icon className={`w-3.5 h-3.5 ${vc.color}`} />
                                                                   <span className="text-[9px] font-bold text-slate-400 uppercase">{vc.label}</span>
-                                                                  <span className="text-xs font-bold text-slate-800">{val}</span>
+                                                                  <span className="text-xs font-bold text-slate-800">{val} {vc.unit}</span>
                                                               </div>
                                                           );
                                                       })}

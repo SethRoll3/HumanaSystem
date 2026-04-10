@@ -177,20 +177,21 @@ const drawPatientInfo = (doc: any, patient: Patient, consultation: Consultation)
     doc.text("PACIENTE:", 14, startY);
     
     // Columna 2
-    doc.text("EDAD:", 110, startY);
-    doc.text("GÉNERO:", 150, startY);
+    doc.text("EDAD:", 135, startY);
+    doc.text("GÉNERO:", 165, startY);
 
     // Valores
     doc.setFontSize(10);
     doc.setTextColor(COLORS.TEXT_DARK[0], COLORS.TEXT_DARK[1], COLORS.TEXT_DARK[2]);
     doc.setFont("helvetica", "normal");
 
-    doc.text(patient.fullName.toUpperCase(), 38, startY);
-    doc.text(`${patient.age || 0} años`, 130, startY);
+    // Enable maxWidth so extremely long names don't overlap into EDAD
+    doc.text(patient.fullName.toUpperCase(), 35, startY, { maxWidth: 95 });
+    doc.text(`${patient.age || 0} años`, 147, startY);
     
     const genderStr = patient.gender ? patient.gender.toString().toLowerCase() : '';
     const isMale = genderStr === 'm' || genderStr.startsWith('masc');
-    doc.text(isMale ? 'Masculino' : 'Femenino', 170, startY);
+    doc.text(isMale ? 'Masculino' : 'Femenino', 183, startY);
 };
 
 // --- FIRMA (PROFESIONAL) ---

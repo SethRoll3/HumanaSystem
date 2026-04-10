@@ -203,7 +203,7 @@ export const generateReadableExcelReport = async (userEmail: string) => {
             ).join('\n') || '';
 
             const vitalsStr = c.vitals ? 
-                `Temp: ${c.vitals.temp || ''}, Peso: ${c.vitals.weight || ''}, P/A: ${c.vitals.pressure || ''}, FR: ${c.vitals.fr || ''}, FC: ${c.vitals.fc || ''}, SAT: ${c.vitals.sat || ''}` : '';
+                `TEMP°C: ${c.vitals.temp || ''}, Peso: ${c.vitals.weight || ''} Lbs., P/A: ${c.vitals.pressure || ''} mmHg, FR: ${c.vitals.fr || ''} xm, FC: ${c.vitals.fc || ''} xm, SpO2: ${c.vitals.sat || ''} %` : '';
 
             return {
                 "ID Consulta": d.id,

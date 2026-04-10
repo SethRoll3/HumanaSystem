@@ -112,7 +112,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                     where('createdAt', '>=', Timestamp.fromDate(yStart)),
                     where('createdAt', '<=', Timestamp.fromDate(yEnd))
                 ));
-                totalConsultations = consultSnap.size;
+                totalConsultations = consultSnap.docs.filter(d => ['finished', 'delivered'].includes(d.data().status)).length;
             } catch { totalConsultations = 0; }
 
             // 5. New patients yesterday
@@ -140,7 +140,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
 
                 const g = p.gender === 'M' || p.gender === 'masculino' ? 'Masculino'
                     : p.gender === 'F' || p.gender === 'femenino' ? 'Femenino'
-                    : 'Sin dato';
+                        : 'Sin dato';
                 genderBreakdown[g] = (genderBreakdown[g] || 0) + 1;
             }
 
@@ -326,7 +326,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Por Canal de Referencia</p>
                                         <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
                                             {Object.entries(summary.channelBreakdown)
-                                                .sort(([,a], [,b]) => b - a)
+                                                .sort(([, a], [, b]) => b - a)
                                                 .map(([channel, count]) => (
                                                     <div key={channel} className="flex justify-between items-center">
                                                         <span className="text-xs text-slate-600 truncate flex-1">{channel}</span>
@@ -341,7 +341,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Por Procedencia</p>
                                         <div className="space-y-2">
                                             {Object.entries(summary.centerBreakdown)
-                                                .sort(([,a], [,b]) => b - a)
+                                                .sort(([, a], [, b]) => b - a)
                                                 .map(([center, count]) => (
                                                     <div key={center} className="flex justify-between items-center">
                                                         <span className="text-xs text-slate-600">{center}</span>
@@ -356,7 +356,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Por Género</p>
                                         <div className="space-y-2">
                                             {Object.entries(summary.genderBreakdown)
-                                                .sort(([,a], [,b]) => b - a)
+                                                .sort(([, a], [, b]) => b - a)
                                                 .map(([gender, count]) => (
                                                     <div key={gender} className="flex justify-between items-center">
                                                         <span className="text-xs text-slate-600">{gender}</span>

@@ -41,21 +41,24 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
     if (!vitalsLine) return result;
     const parts = vitalsLine.split(/[|,]/).map(p => p.trim()).filter(Boolean);
     parts.forEach(part => {
-      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|Temp)[:\s]+(.+)/i);
+      const match = part.match(/^(Peso|P\/A|FR|FC|SAT|SpO2|Temp|TEMP°C)[:\s]+(.+)/i);
       if (match) {
-        result[match[1].toLowerCase().replace('/', '_')] = match[2].trim();
+        let key = match[1].toLowerCase().replace('/', '_');
+        if (key === 'spo2') key = 'sat';
+        if (key === 'temp°c') key = 'temp';
+        result[key] = match[2].trim().replace(/(Lbs\.|Lbs|mmHg|xm|%|°C)/gi, '').trim();
       }
     });
     return result;
   };
 
   const vitalsConfig = [
-    { key: 'peso', label: 'Peso', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { key: 'p_a', label: 'P/A', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
-    { key: 'fr', label: 'FR', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
-    { key: 'fc', label: 'FC', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
-    { key: 'sat', label: 'SAT', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { key: 'temp', label: 'Temp', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
+    { key: 'peso', label: 'Peso', unit: 'Lbs.', icon: Scale, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { key: 'p_a', label: 'P/A', unit: 'mmHg', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50' },
+    { key: 'fr', label: 'FR', unit: 'xm', icon: Wind, color: 'text-sky-600', bg: 'bg-sky-50' },
+    { key: 'fc', label: 'FC', unit: 'xm', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
+    { key: 'sat', label: 'SpO2', unit: '%', icon: Droplets, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { key: 'temp', label: 'Temp', unit: '°C', icon: Thermometer, color: 'text-orange-600', bg: 'bg-orange-50' },
   ];
 
   const parsedEntries = (() => {
@@ -64,7 +67,7 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
     return text.split(/\n{2,}/).map((block, idx) => {
       const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
       const headerLine = lines.find(l => l.startsWith('[Enfermería:')) || '';
-      const vitalsLine = lines.find(l => /Peso:|P\/A:|FR:|FC:|SAT:|Temp:/i.test(l)) || '';
+      const vitalsLine = lines.find(l => /Peso:|P\/A:|FR:|FC:|SAT:|SpO2:|Temp:|TEMP°C:/i.test(l)) || '';
       const obsLine = lines.find(l => l.toLowerCase().startsWith('observaciones:')) || '';
       const otherLines = lines.filter(l => l !== headerLine && l !== vitalsLine && l !== obsLine);
       const parsedVitals = parseVitals(vitalsLine);
@@ -104,12 +107,12 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
       const updates: any = {};
 
       const vitalsParts = [];
-      if (weight.trim()) vitalsParts.push(`Peso: ${weight.trim()}`);
-      if (bloodPressure.trim()) vitalsParts.push(`P/A: ${bloodPressure.trim()}`);
-      if (respiratoryRate.trim()) vitalsParts.push(`FR: ${respiratoryRate.trim()}`);
-      if (heartRate.trim()) vitalsParts.push(`FC: ${heartRate.trim()}`);
-      if (oxygenSaturation.trim()) vitalsParts.push(`SAT: ${oxygenSaturation.trim()}`);
-      if (temperature.trim()) vitalsParts.push(`Temp: ${temperature.trim()}`);
+      if (weight.trim()) vitalsParts.push(`Peso: ${weight.trim()} Lbs.`);
+      if (bloodPressure.trim()) vitalsParts.push(`P/A: ${bloodPressure.trim()} mmHg`);
+      if (respiratoryRate.trim()) vitalsParts.push(`FR: ${respiratoryRate.trim()} xm`);
+      if (heartRate.trim()) vitalsParts.push(`FC: ${heartRate.trim()} xm`);
+      if (oxygenSaturation.trim()) vitalsParts.push(`SpO2: ${oxygenSaturation.trim()} %`);
+      if (temperature.trim()) vitalsParts.push(`TEMP°C: ${temperature.trim()}`);
 
       if (observations.trim() || vitalsParts.length > 0) {
         const prefix = patient.medical_history ? patient.medical_history + '\n\n' : '';
@@ -214,10 +217,10 @@ export const ResidentIntakeModal: React.FC<ResidentIntakeModalProps> = ({
                               if (!val) return null;
                               const Icon = vc.icon;
                               return (
-                                <div key={vc.key} className={`${vc.bg} rounded-lg p-1.5 flex flex-col items-center gap-0.5 border border-slate-100`}>
-                                  <Icon className={`w-3 h-3 ${vc.color}`} />
-                                  <span className="text-[8px] font-bold text-slate-400 uppercase">{vc.label}</span>
-                                  <span className="text-[11px] font-bold text-slate-800">{val}</span>
+                                <div key={vc.key} className={`${vc.bg} rounded-xl p-2 flex flex-col items-center gap-1 border border-slate-100`}>
+                                  <Icon className={`w-3.5 h-3.5 ${vc.color}`} />
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase">{vc.label}</span>
+                                  <span className="text-xs font-bold text-slate-800">{val} {vc.unit}</span>
                                 </div>
                               );
                             })}
