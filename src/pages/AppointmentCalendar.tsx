@@ -210,6 +210,8 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   const isAdmin = user?.role === 'admin';
   const isReceptionist = user?.role === 'receptionist';
   const isResident = user?.role === 'resident';
+  // DESACTIVACION TEMPORAL: enfermeria/residente.
+  const ENABLE_NURSE_RESIDENT_FLOW = false;
 
   const canCreate = isAdmin || isReceptionist;
 
@@ -786,11 +788,11 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
         onConfirmPhone={handleConfirmPhone}
         onRegisterPayment={handleRegisterPayment}
         onCancel={handleCancelAppointment}
-        onOpenResidentIntake={user?.role === 'nurse' ? handleOpenResidentIntake : undefined}
+        onOpenResidentIntake={ENABLE_NURSE_RESIDENT_FLOW && user?.role === 'nurse' ? handleOpenResidentIntake : undefined}
         onUpdateAppointment={handleUpdateAppointment}
       />
 
-      {user?.role === 'nurse' && user && residentAppointment && residentPatient && (
+      {ENABLE_NURSE_RESIDENT_FLOW && user?.role === 'nurse' && user && residentAppointment && residentPatient && (
         <ResidentIntakeModal
           isOpen={showResidentIntakeModal}
           onClose={() => setShowResidentIntakeModal(false)}

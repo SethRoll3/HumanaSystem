@@ -1,12 +1,13 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { collection, query, getDocs, where, Timestamp } from 'firebase/firestore';
+import { collection, query, getDocs, where, Timestamp, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { logAuditAction } from '../../services/auditService';
 import { UserProfile, Patient } from '../../types';
-import { ShieldCheck, AlertTriangle, Users, CalendarCheck, ClipboardList, BarChart3, CheckCircle2, Loader2 } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, Users, CheckCircle2, Loader2, Eye, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { toast } from 'sonner';
 
 interface DataQualityReportProps {
     isOpen: boolean;
@@ -21,12 +22,10 @@ interface QualityAlert {
 }
 
 interface DailySummary {
-    totalAppointmentsYesterday: number;
-    totalConsultationsYesterday: number;
-    newPatientsYesterday: number;
-    channelBreakdown: Record<string, number>;
-    centerBreakdown: Record<string, number>;
-    genderBreakdown: Record<string, number>;
+    totalCasesToday: number;
+    criticalToday: number;
+    alertToday: number;
+    reviewedToday: number;
 }
 
 const TODAY_START = () => {
@@ -45,13 +44,26 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
     const [loading, setLoading] = useState(true);
     const [confirming, setConfirming] = useState(false);
     const [qualityAlerts, setQualityAlerts] = useState<QualityAlert[]>([]);
+    const [selectedAlert, setSelectedAlert] = useState<QualityAlert | null>(null);
+    const [savingCase, setSavingCase] = useState(false);
+    const [bitacora, setBitacora] = useState('');
+    const [reviewedCaseIds, setReviewedCaseIds] = useState<string[]>([]);
+    const [editForm, setEditForm] = useState({
+        fullName: '',
+        dpi: '',
+        billingCode: '',
+        phone: '',
+        gender: '',
+        referralChannel: '',
+        birthDate: '',
+        age: '',
+        department: ''
+    });
     const [summary, setSummary] = useState<DailySummary>({
-        totalAppointmentsYesterday: 0,
-        totalConsultationsYesterday: 0,
-        newPatientsYesterday: 0,
-        channelBreakdown: {},
-        centerBreakdown: {},
-        genderBreakdown: {},
+        totalCasesToday: 0,
+        criticalToday: 0,
+        alertToday: 0,
+        reviewedToday: 0,
     });
 
     useEffect(() => {
@@ -65,13 +77,15 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
             const yStart = TODAY_START();
             const yEnd = TODAY_END();
 
-            // 1. Fetch all patients for quality analysis
-            const patientsSnap = await getDocs(collection(db, 'patients'));
+            const patientsSnap = await getDocs(query(
+                collection(db, 'patients'),
+                where('createdAt', '>=', Timestamp.fromDate(yStart)),
+                where('createdAt', '<=', Timestamp.fromDate(yEnd))
+            ));
             const patients = patientsSnap.docs
                 .map(d => ({ id: d.id, ...d.data() } as Patient))
                 .filter(p => (p as any).isActive !== false);
 
-            // 2. Quality alerts
             const alerts: QualityAlert[] = [];
             for (const p of patients) {
                 const missing: string[] = [];
@@ -88,69 +102,15 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                     alerts.push({ patient: p, missingFields: missing, severity });
                 }
             }
-            // Sort by severity
             const severityOrder = { high: 0, medium: 1, low: 2 };
             alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
             setQualityAlerts(alerts);
 
-            // 3. Yesterday's appointments
-            let totalAppointments = 0;
-            try {
-                const apptSnap = await getDocs(query(
-                    collection(db, 'appointments'),
-                    where('date', '>=', Timestamp.fromDate(yStart)),
-                    where('date', '<=', Timestamp.fromDate(yEnd))
-                ));
-                totalAppointments = apptSnap.size;
-            } catch { totalAppointments = 0; }
-
-            // 4. Yesterday's consultations
-            let totalConsultations = 0;
-            try {
-                const consultSnap = await getDocs(query(
-                    collection(db, 'consultations'),
-                    where('createdAt', '>=', Timestamp.fromDate(yStart)),
-                    where('createdAt', '<=', Timestamp.fromDate(yEnd))
-                ));
-                totalConsultations = consultSnap.docs.filter(d => ['finished', 'delivered'].includes(d.data().status)).length;
-            } catch { totalConsultations = 0; }
-
-            // 5. New patients yesterday
-            let newPatientsYesterday = 0;
-            try {
-                const newPSnap = await getDocs(query(
-                    collection(db, 'patients'),
-                    where('createdAt', '>=', Timestamp.fromDate(yStart)),
-                    where('createdAt', '<=', Timestamp.fromDate(yEnd))
-                ));
-                newPatientsYesterday = newPSnap.size;
-            } catch { newPatientsYesterday = 0; }
-
-            // 6. Breakdowns from ALL patients
-            const channelBreakdown: Record<string, number> = {};
-            const centerBreakdown: Record<string, number> = {};
-            const genderBreakdown: Record<string, number> = {};
-
-            for (const p of patients) {
-                const ch = p.referralChannel || 'SIN DATO';
-                channelBreakdown[ch] = (channelBreakdown[ch] || 0) + 1;
-
-                const cc = p.careCenter || 'SIN DATO';
-                centerBreakdown[cc] = (centerBreakdown[cc] || 0) + 1;
-
-                const g = p.gender === 'M' || p.gender === 'masculino' ? 'Masculino'
-                    : p.gender === 'F' || p.gender === 'femenino' ? 'Femenino'
-                        : 'Sin dato';
-                genderBreakdown[g] = (genderBreakdown[g] || 0) + 1;
-            }
-
             setSummary({
-                totalAppointmentsYesterday: totalAppointments,
-                totalConsultationsYesterday: totalConsultations,
-                newPatientsYesterday,
-                channelBreakdown,
-                centerBreakdown,
-                genderBreakdown,
+                totalCasesToday: patients.length,
+                criticalToday: alerts.filter(a => a.severity === 'high').length,
+                alertToday: alerts.filter(a => a.severity === 'medium').length,
+                reviewedToday: reviewedCaseIds.length,
             });
         } catch (error) {
             console.error('Error loading quality report:', error);
@@ -159,26 +119,110 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
         }
     };
 
-    const handleConfirm = async () => {
-        setConfirming(true);
+    const openCase = (alert: QualityAlert) => {
+        setSelectedAlert(alert);
+        setReviewedCaseIds(prev => {
+            const id = alert.patient.id;
+            if (!id || prev.includes(id)) return prev;
+            return [...prev, id];
+        });
+        setEditForm({
+            fullName: alert.patient.fullName || '',
+            dpi: alert.patient.dpi || '',
+            billingCode: alert.patient.billingCode || '',
+            phone: alert.patient.phone || '',
+            gender: alert.patient.gender || '',
+            referralChannel: alert.patient.referralChannel || '',
+            birthDate: alert.patient.birthDate || '',
+            age: alert.patient.age ? String(alert.patient.age) : '',
+            department: alert.patient.address?.department || ''
+        });
+    };
+
+    const handleSavePatient = async () => {
+        if (!selectedAlert?.patient?.id) return;
+        setSavingCase(true);
         try {
-            // Save to localStorage
-            const todayStr = new Date().toISOString().split('T')[0];
+            const patientRef = doc(db, 'patients', selectedAlert.patient.id);
+            await updateDoc(patientRef, {
+                fullName: editForm.fullName.trim(),
+                dpi: editForm.dpi.trim(),
+                billingCode: editForm.billingCode.trim(),
+                phone: editForm.phone.trim(),
+                gender: editForm.gender || null,
+                referralChannel: editForm.referralChannel.trim(),
+                birthDate: editForm.birthDate || null,
+                age: editForm.age ? Number(editForm.age) : null,
+                'address.department': editForm.department.trim(),
+            });
+            toast.success('Caso actualizado');
+            await loadReportData();
+        } catch (error) {
+            console.error('Error saving patient quality review data', error);
+            toast.error('No se pudo guardar el caso');
+        } finally {
+            setSavingCase(false);
+        }
+    };
+
+    const handleConfirm = async () => {
+        const bitacoraText = bitacora.trim();
+        if (!bitacoraText) {
+            toast.error('Debes registrar la bitácora diaria');
+            return;
+        }
+
+        setConfirming(true);
+
+        try {
+            const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
             localStorage.setItem(`qualityReport_lastReviewed`, todayStr);
             localStorage.setItem(`qualityReport_lastReviewedBy`, currentUser.email || currentUser.name);
 
-            // Log audit action
             const alertCount = qualityAlerts.length;
             const highCount = qualityAlerts.filter(a => a.severity === 'high').length;
+            const mediumCount = qualityAlerts.filter(a => a.severity === 'medium').length;
+            const payload = {
+                dateKey: todayStr,
+                reviewerEmail: currentUser.email || '',
+                reviewerName: currentUser.name || '',
+                totalCasesToday: summary.totalCasesToday,
+                criticalToday: highCount,
+                alertToday: mediumCount,
+                reviewedCaseIds,
+                reviewedCasesCount: reviewedCaseIds.length,
+                bitacora: bitacoraText,
+                createdAt: serverTimestamp()
+            };
+
+            let persisted = true;
+            try {
+                await addDoc(collection(db, 'quality_reviews'), payload);
+            } catch (error) {
+                persisted = false;
+                localStorage.setItem(`qualityReport_pending_${todayStr}`, JSON.stringify({
+                    ...payload,
+                    createdAt: Date.now()
+                }));
+                console.error('Error saving quality review in Firestore:', error);
+            }
+
             await logAuditAction(
                 currentUser.email || 'admin@humana.com',
                 'REVISION_CALIDAD_DATOS',
-                `${currentUser.name} revisó el reporte diario de calidad. Pacientes con datos incompletos: ${alertCount} (${highCount} críticos). Citas ayer: ${summary.totalAppointmentsYesterday}, Consultas ayer: ${summary.totalConsultationsYesterday}, Pacientes nuevos ayer: ${summary.newPatientsYesterday}`
+                `${currentUser.name} revisó calidad del día. Casos del día: ${summary.totalCasesToday}. Alertas: ${alertCount} (${highCount} críticos, ${mediumCount} alerta). Revisados manualmente: ${reviewedCaseIds.length}. Bitácora: ${bitacoraText}`
             );
+
+            if (persisted) {
+                toast.success('Revisión registrada correctamente');
+            } else {
+                toast.warning('No se pudo guardar en servidor, pero se marcó la revisión localmente');
+            }
 
             onConfirm();
         } catch (error) {
             console.error('Error confirming quality report:', error);
+            toast.error('No se pudo confirmar la revisión');
         } finally {
             setConfirming(false);
         }
@@ -211,7 +255,6 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                 animate={{ scale: 1, opacity: 1 }}
                 className="bg-white rounded-[2rem] shadow-2xl w-full max-w-5xl flex flex-col max-h-[95vh] overflow-hidden"
             >
-                {/* Header */}
                 <div className="p-6 md:p-8 border-b bg-gradient-to-r from-slate-900 to-slate-800 text-white shrink-0">
                     <div className="flex items-center gap-4">
                         <div className="p-3 bg-white/10 rounded-2xl">
@@ -226,7 +269,6 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                     </div>
                 </div>
 
-                {/* Body */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-8 space-y-8 bg-slate-50">
                     {loading ? (
                         <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -235,40 +277,45 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                         </div>
                     ) : (
                         <>
-                            {/* SECTION A: Yesterday Summary */}
                             <div>
                                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                    <CalendarCheck className="w-4 h-4" /> Resumen del Día
+                                    <Users className="w-4 h-4" /> Indicadores clave del día
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                                     <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
                                         <div className="w-12 h-12 mx-auto bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mb-3">
-                                            <CalendarCheck className="w-6 h-6" />
+                                            <Users className="w-6 h-6" />
                                         </div>
-                                        <p className="text-3xl font-bold text-slate-800">{summary.totalAppointmentsYesterday}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Citas Agendadas</p>
+                                        <p className="text-3xl font-bold text-slate-800">{summary.totalCasesToday}</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Casos Ingresados</p>
+                                    </div>
+                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
+                                        <div className="w-12 h-12 mx-auto bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-3">
+                                            <AlertTriangle className="w-6 h-6" />
+                                        </div>
+                                        <p className="text-3xl font-bold text-slate-800">{summary.criticalToday}</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Críticos</p>
+                                    </div>
+                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
+                                        <div className="w-12 h-12 mx-auto bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mb-3">
+                                            <AlertTriangle className="w-6 h-6" />
+                                        </div>
+                                        <p className="text-3xl font-bold text-slate-800">{summary.alertToday}</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Alertas</p>
                                     </div>
                                     <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
                                         <div className="w-12 h-12 mx-auto bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3">
-                                            <ClipboardList className="w-6 h-6" />
+                                            <CheckCircle2 className="w-6 h-6" />
                                         </div>
-                                        <p className="text-3xl font-bold text-slate-800">{summary.totalConsultationsYesterday}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Consultas Realizadas</p>
-                                    </div>
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
-                                        <div className="w-12 h-12 mx-auto bg-violet-50 text-violet-600 rounded-full flex items-center justify-center mb-3">
-                                            <Users className="w-6 h-6" />
-                                        </div>
-                                        <p className="text-3xl font-bold text-slate-800">{summary.newPatientsYesterday}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Pacientes Nuevos</p>
+                                        <p className="text-3xl font-bold text-slate-800">{reviewedCaseIds.length}</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Revisados</p>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* SECTION B: Quality Alerts */}
                             <div>
                                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                    <AlertTriangle className="w-4 h-4" /> Alertas de Calidad — Pacientes con Datos Incompletos
+                                    <AlertTriangle className="w-4 h-4" /> Casos con estado crítico o alerta
                                     <span className="ml-auto px-3 py-1 bg-slate-200 text-slate-700 rounded-full text-xs font-bold">{qualityAlerts.length} pacientes</span>
                                 </h3>
                                 {qualityAlerts.length === 0 ? (
@@ -285,6 +332,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                                         <th className="p-3 pl-5">Severidad</th>
                                                         <th className="p-3">Paciente</th>
                                                         <th className="p-3">Campos Faltantes</th>
+                                                        <th className="p-3">Revisión</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100">
@@ -306,6 +354,15 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                                                     ))}
                                                                 </div>
                                                             </td>
+                                                            <td className="p-3">
+                                                                <button
+                                                                    onClick={() => openCase(alert)}
+                                                                    className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
+                                                                >
+                                                                    <Eye className="w-3 h-3" />
+                                                                    Ver caso
+                                                                </button>
+                                                            </td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
@@ -315,68 +372,27 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                 )}
                             </div>
 
-                            {/* SECTION C: Management Summary */}
                             <div>
-                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                    <BarChart3 className="w-4 h-4" /> Resumen Gerencial (Base de Datos Completa)
-                                </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    {/* Channel Breakdown */}
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Por Canal de Referencia</p>
-                                        <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
-                                            {Object.entries(summary.channelBreakdown)
-                                                .sort(([, a], [, b]) => b - a)
-                                                .map(([channel, count]) => (
-                                                    <div key={channel} className="flex justify-between items-center">
-                                                        <span className="text-xs text-slate-600 truncate flex-1">{channel}</span>
-                                                        <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-full ml-2">{count}</span>
-                                                    </div>
-                                                ))}
-                                        </div>
-                                    </div>
-
-                                    {/* Center Breakdown */}
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Por Procedencia</p>
-                                        <div className="space-y-2">
-                                            {Object.entries(summary.centerBreakdown)
-                                                .sort(([, a], [, b]) => b - a)
-                                                .map(([center, count]) => (
-                                                    <div key={center} className="flex justify-between items-center">
-                                                        <span className="text-xs text-slate-600">{center}</span>
-                                                        <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-full">{count}</span>
-                                                    </div>
-                                                ))}
-                                        </div>
-                                    </div>
-
-                                    {/* Gender Breakdown */}
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Por Género</p>
-                                        <div className="space-y-2">
-                                            {Object.entries(summary.genderBreakdown)
-                                                .sort(([, a], [, b]) => b - a)
-                                                .map(([gender, count]) => (
-                                                    <div key={gender} className="flex justify-between items-center">
-                                                        <span className="text-xs text-slate-600">{gender}</span>
-                                                        <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-full">{count}</span>
-                                                    </div>
-                                                ))}
-                                        </div>
-                                    </div>
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">Log y bitácora diaria</h3>
+                                <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                                    <p className="text-xs text-slate-500 mb-3">Registra qué revisaste hoy y observaciones.</p>
+                                    <textarea
+                                        value={bitacora}
+                                        onChange={(e) => setBitacora(e.target.value)}
+                                        className="w-full min-h-[100px] rounded-xl border border-slate-300 p-3 text-sm text-slate-700"
+                                        placeholder="Ejemplo: Revisé 8 casos, corregí DPI/teléfono en 3, dejé pendientes 2 críticos por confirmar con expediente."
+                                    />
                                 </div>
                             </div>
                         </>
                     )}
                 </div>
 
-                {/* Footer */}
                 <div className="p-6 md:p-8 border-t bg-white shrink-0">
                     <div className="flex flex-col md:flex-row items-center gap-4">
                         <div className="flex-1 text-center md:text-left">
                             <p className="text-xs text-slate-400">
-                                Al confirmar, se registrará en auditoría que <strong className="text-slate-600">{currentUser.name}</strong> revisó este reporte.
+                                Al confirmar, se registra evidencia diaria de revisión con bitácora y casos revisados por <strong className="text-slate-600">{currentUser.name}</strong>.
                             </p>
                         </div>
                         <button
@@ -393,6 +409,47 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                         </button>
                     </div>
                 </div>
+
+                {selectedAlert && (
+                    <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center p-4">
+                        <div className="w-full max-w-3xl bg-white rounded-2xl border border-slate-200 p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+                            <div className="flex items-center justify-between">
+                                <h4 className="font-bold text-slate-800">Revisión de caso</h4>
+                                <button className="text-xs font-bold text-slate-500" onClick={() => setSelectedAlert(null)}>Cerrar</button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Nombre" value={editForm.fullName} onChange={e => setEditForm(prev => ({ ...prev, fullName: e.target.value }))} />
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="DPI" value={editForm.dpi} onChange={e => setEditForm(prev => ({ ...prev, dpi: e.target.value }))} />
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Código facturación" value={editForm.billingCode} onChange={e => setEditForm(prev => ({ ...prev, billingCode: e.target.value }))} />
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Teléfono" value={editForm.phone} onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))} />
+                                <select className="rounded-xl border border-slate-300 p-3 text-sm" value={editForm.gender} onChange={e => setEditForm(prev => ({ ...prev, gender: e.target.value }))}>
+                                    <option value="">Género</option>
+                                    <option value="M">Masculino</option>
+                                    <option value="F">Femenino</option>
+                                </select>
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Canal de referencia" value={editForm.referralChannel} onChange={e => setEditForm(prev => ({ ...prev, referralChannel: e.target.value }))} />
+                                <input type="date" className="rounded-xl border border-slate-300 p-3 text-sm" value={editForm.birthDate} onChange={e => setEditForm(prev => ({ ...prev, birthDate: e.target.value }))} />
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Edad" value={editForm.age} onChange={e => setEditForm(prev => ({ ...prev, age: e.target.value }))} />
+                                <input className="rounded-xl border border-slate-300 p-3 text-sm md:col-span-2" placeholder="Departamento" value={editForm.department} onChange={e => setEditForm(prev => ({ ...prev, department: e.target.value }))} />
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <div className="flex flex-wrap gap-1">
+                                    {selectedAlert.missingFields.map(field => (
+                                        <span key={field} className="px-2 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold">{field}</span>
+                                    ))}
+                                </div>
+                                <button
+                                    onClick={handleSavePatient}
+                                    disabled={savingCase}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                    {savingCase ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                    Guardar cambios
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </motion.div>
         </div>
     );

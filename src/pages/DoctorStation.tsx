@@ -96,6 +96,10 @@ const generateUniquePrescriptionNumber = async (): Promise<string> => {
 };
 
 const AGENDA_PAGE_SIZE = 12;
+// DESACTIVACION TEMPORAL solicitada por operacion:
+// flujo de enfermeria/residente fuera de uso.
+// Para reactivarlo en el futuro, cambiar a `true`.
+const ENABLE_NURSE_RESIDENT_FLOW = false;
 
 interface DoctorStationProps {
   user: UserProfile;
@@ -179,6 +183,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   // ESTADO PARA MODAL DE ÉXITO (FINALIZAR)
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastFinishedConsultation, setLastFinishedConsultation] = useState<Consultation | null>(null);
+  const [lastFinishedPatient, setLastFinishedPatient] = useState<Patient | null>(null);
 
   // ESTADOS PARA CREAR CITA Y PACIENTE
   const [showCreateAppointmentModal, setShowCreateAppointmentModal] = useState(false);
@@ -412,9 +417,11 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   // --- INICIAR CONSULTA (MÁQUINA DE ESTADOS) ---
   const handleStartConsultation = async (appt: Appointment) => {
     const isNewConsultation = appt.consultationType === 'Nueva';
-    const requiresResidentFicha = isNewConsultation;
+    // Flujo original: toda "Nueva" requiere ficha de residente.
+    // Temporalmente se desactiva con ENABLE_NURSE_RESIDENT_FLOW = false.
+    const requiresResidentFicha = ENABLE_NURSE_RESIDENT_FLOW && isNewConsultation;
     const residentFichaCompleted = appt.residentClinicalCompleted === true;
-    const canSkipNurse = appt.consultationType === 'Reconsulta' && appt.goToNurse === false;
+    const canSkipNurse = !ENABLE_NURSE_RESIDENT_FLOW || (appt.consultationType === 'Reconsulta' && appt.goToNurse === false);
     const statusAllowsStart = appt.status === 'resident_intake' || appt.status === 'in_progress' || (canSkipNurse && appt.status === 'paid_checked_in');
 
     if (requiresResidentFicha && !residentFichaCompleted) {
@@ -510,7 +517,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
         methods.reset(baseForm);
       }
 
-      setStep(1);
+      // setStep(1); // COMENTADO: Anteriormente iniciaba en Diagnóstico
+      setStep(2); // NUEVO: Inicia directamente en Receta (que ahora incluye diagnóstico)
       setIsCuadernoExpanded(true);
 
     } catch (e) {
@@ -556,6 +564,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     try {
       await appointmentService.createAppointment({
         ...data,
+        // Temporal: toda cita pasa directo al doctor luego de pago.
+        // No eliminamos el campo para facilitar reactivacion futura.
+        goToNurse: ENABLE_NURSE_RESIDENT_FLOW ? data.goToNurse : false,
         createdBy: user.uid
       });
       toast.success("Cita agendada correctamente");
@@ -724,6 +735,29 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     }
   };
 
+  const handlePreviewLastPrescription = async () => {
+    if (!lastFinishedConsultation || !lastFinishedPatient) {
+      toast.error("No hay datos suficientes para visualizar la receta.");
+      return;
+    }
+    try {
+      let consultationToPreview = lastFinishedConsultation;
+      if (!consultationToPreview.prescriptionNumber) {
+        const prescriptionNumber = await generateUniquePrescriptionNumber();
+        if (consultationToPreview.id) {
+          const consRef = doc(db, 'consultations', consultationToPreview.id);
+          await updateDoc(consRef, { prescriptionNumber });
+        }
+        consultationToPreview = { ...consultationToPreview, prescriptionNumber };
+        setLastFinishedConsultation(consultationToPreview);
+      }
+      await generatePrescriptionPDF(consultationToPreview, lastFinishedPatient, user, 'preview');
+    } catch (e) {
+      console.error("Error al previsualizar receta", e);
+      toast.error("No se pudo abrir la receta en vista previa.");
+    }
+  };
+
   const hasAllRequiredDocsPrinted = (consultation: Consultation | null) => {
     if (!consultation || !consultation.printedDocs) return false;
     const { prescription, labs, resonanceOrders, eegOrders } = consultation.printedDocs;
@@ -770,7 +804,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const filteredAppointments = todaysAppointments.filter(appt => {
     if (isDoctor) return appt.status === 'resident_intake' || appt.status === 'in_progress' || appt.status === 'paid_checked_in';
-    if (isNurse) return appt.status === 'paid_checked_in' || appt.status === 'in_progress' || appt.status === 'completed';
+    // Temporal: deshabilitamos bandeja operativa de enfermeria.
+    if (isNurse) return ENABLE_NURSE_RESIDENT_FLOW && (appt.status === 'paid_checked_in' || appt.status === 'in_progress' || appt.status === 'completed');
     if (isReceptionist || isAdmin) return true;
     return false;
   });
@@ -778,7 +813,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const normalizeSearch = (value: string) =>
     value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 
-  const baseAppointments = isResident ? residentAppointments : filteredAppointments;
+  const baseAppointments = (ENABLE_NURSE_RESIDENT_FLOW && isResident) ? residentAppointments : filteredAppointments;
   const normalizedAgendaSearch = normalizeSearch(agendaSearchTerm);
   const searchedAppointments = baseAppointments.filter(appt => {
     if (!normalizedAgendaSearch) return true;
@@ -790,6 +825,10 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const listAppointments = searchedAppointments.slice((agendaPage - 1) * AGENDA_PAGE_SIZE, agendaPage * AGENDA_PAGE_SIZE);
 
   const handleToggleNurseFlow = async (appt: Appointment) => {
+    if (!ENABLE_NURSE_RESIDENT_FLOW) {
+      toast.info("Flujo de enfermería deshabilitado temporalmente.");
+      return;
+    }
     if (!appt.id) return;
     if (appt.consultationType !== 'Reconsulta') return;
     if (appt.status !== 'scheduled' && appt.status !== 'confirmed_phone') {
@@ -1221,9 +1260,158 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
             <FormProvider {...methods}>
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
-                {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />}
-                {step === 2 && <StepPrescription currentUser={user} />}
-                {step === 3 && (
+                {/* {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />} */}
+                {step === 2 && (
+                  <StepPrescription 
+                    currentUser={user} 
+                    isSaving={isSaving}
+                    onFinish={methods.handleSubmit(async (d) => {
+                      // EL SIGUIENTE CÓDIGO ES EL MISMO QUE ESTABA EN STEPFINALIZE
+                      if (hasIncompleteOrders) {
+                        toast.error('Complete todos los campos de las órdenes antes de finalizar.');
+                        return;
+                      }
+                      setIsSaving(true);
+                      try {
+                        const consultationRef = doc(db, 'consultations', currentConsultationId!);
+
+                        const raw = d as any;
+                        const specialtyFormId = raw.specialtyFormId as string | undefined;
+                        const rawSpecialtyData = (raw.specialtyData || {}) as Record<string, any>;
+
+                        let filteredSpecialtyData: Record<string, any> = rawSpecialtyData;
+                        let specialtyFormName: string | undefined = raw.specialtyFormName;
+
+                        if (specialtyFormId) {
+                          try {
+                            const forms = await specialtyFormsService.getAll();
+                            const activeForm = forms.find(f => f.id === specialtyFormId);
+                            if (activeForm) {
+                              const allowedIds = activeForm.sections.flatMap(section =>
+                                section.fields.map(field => field.id)
+                              );
+                              const next: Record<string, any> = {};
+                              for (const id of allowedIds) {
+                                const value = rawSpecialtyData[id];
+                                next[id] = value ?? null;
+                              }
+                              filteredSpecialtyData = next;
+                              specialtyFormName = activeForm.name;
+                            }
+                          } catch (err) {
+                            console.error("Error cargando fichas para filtrar specialtyData", err);
+                          }
+                        }
+
+                        const { specialtyData, ...rest } = raw;
+
+                        const finishedData: any = {
+                          status: 'finished' as const,
+                          ...rest,
+                          specialtyFormId: specialtyFormId || null,
+                          specialtyFormName: specialtyFormName || null,
+                          specialtyData: filteredSpecialtyData || {},
+                          // MARCAMOS ESTOS CAMPOS COMO DESACTIVADOS
+                          exams: [], 
+                          referralGroups: [],
+                          specialtyReferrals: [],
+                          followUpText: 'Sección desactivada temporalmente',
+                          printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
+                        };
+
+                        if (Array.isArray(finishedData.prescription) && finishedData.prescription.length > 0) {
+                          finishedData.prescriptionNumber = await generateUniquePrescriptionNumber();
+                        } else {
+                          finishedData.prescriptionNumber = null;
+                        }
+
+                        // Sanitizar undefined a null para evitar errores de Firestore
+                        Object.keys(finishedData).forEach(key => {
+                          if (finishedData[key] === undefined) {
+                            finishedData[key] = null;
+                          }
+                        });
+
+                        await updateDoc(consultationRef, finishedData);
+
+                        if (currentAppointmentId) {
+                          try {
+                            await appointmentService.completeAppointment(currentAppointmentId);
+                            setTodaysAppointments(prev => prev.map(a => a.id === currentAppointmentId ? { ...a, status: 'completed' } : a));
+                          } catch (err) {
+                            console.error("Error al marcar cita como completada", err);
+                          }
+                        }
+
+                        // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
+                        const notificationPayload = {
+                          ...finishedData,
+                          patientName: currentPatient!.fullName,
+                          id: currentConsultationId
+                        } as Consultation;
+                        await notifyConsultationFinished(notificationPayload, user.name);
+
+                        try {
+                          if (finishedData.followUpRequired && finishedData.followUpDays && finishedData.followUpEstimatedDate) {
+                            await notifyReceptionFollowUp(
+                              { ...notificationPayload, followUpRequired: true } as Consultation,
+                              user.name,
+                              finishedData.followUpDays,
+                              new Date(finishedData.followUpEstimatedDate)
+                            );
+                          } else {
+                            const textSources: string[] = [];
+                            if (finishedData.diagnosis) textSources.push(finishedData.diagnosis);
+                            if (finishedData.followUpText) textSources.push(finishedData.followUpText);
+                            if (finishedData.prescriptionNotes) textSources.push(finishedData.prescriptionNotes);
+                            if (finishedData.followUpRequestText) textSources.push(finishedData.followUpRequestText);
+                            const combinedText = textSources.join('\n\n');
+
+                            if (combinedText.trim().length > 0) {
+                              const { analyzeFollowUpIntent } = await import('../services/geminiService.ts');
+                              const analysis = await analyzeFollowUpIntent(combinedText);
+                              if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
+                                const baseDate = new Date(finishedData.date || Date.now());
+                                const followUpDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
+                                await notifyReceptionFollowUp(
+                                  { ...notificationPayload, followUpRequired: true } as Consultation,
+                                  user.name,
+                                  analysis.days,
+                                  followUpDate
+                                );
+                              }
+                            }
+                          }
+                        } catch (aiError) {
+                          console.error("Follow-up analysis error", aiError);
+                        }
+
+                        setLastFinishedConsultation({ ...finishedData, patientName: currentPatient!.fullName } as Consultation);
+                        setLastFinishedPatient(currentPatient);
+                        setCurrentPatient(null);
+                        setCurrentConsultationType(undefined);
+                        setCurrentModality(undefined);
+                        setCurrentAppointmentId(null);
+                        setStep(0);
+                        methods.reset();
+                        setShowSuccessModal(true);
+
+                        fetchAgendaPage(isResident);
+
+                      } catch (e) {
+                        console.error("Error CRÍTICO al guardar consulta:", e);
+                        if (e && typeof e === 'object' && 'code' in e) {
+                          toast.error(`Error de base de datos: ${(e as any).code}`);
+                        } else if (e instanceof Error) {
+                          toast.error(`Error: ${e.message}`);
+                        } else {
+                          toast.error("Error al guardar (revise consola).");
+                        }
+                      } finally { setIsSaving(false); }
+                    })}
+                  />
+                )}
+                {/* {step === 3 && (
                   <StepExams
                     userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
                     patient={currentPatient}
@@ -1234,152 +1422,11 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                   currentUser={user}
                   hasUnseenImportantNotices={hasUnseenImportantNotices}
                   onFinish={methods.handleSubmit(async (d) => {
-                    if (isFollowUpMissing) {
-                      toast.error('Debe completar la reconsulta antes de finalizar.');
-                      return;
-                    }
-                    if (hasIncompleteOrders) {
-                      toast.error('Complete todos los campos de las órdenes antes de finalizar.');
-                      return;
-                    }
-                    setIsSaving(true);
-                    try {
-                      const consultationRef = doc(db, 'consultations', currentConsultationId!);
+                    // Logic already moved up
+                  })} isSaving={isSaving} />} */}
 
-                      const raw = d as any;
-                      const specialtyFormId = raw.specialtyFormId as string | undefined;
-                      const rawSpecialtyData = (raw.specialtyData || {}) as Record<string, any>;
-
-                      let filteredSpecialtyData: Record<string, any> = rawSpecialtyData;
-                      let specialtyFormName: string | undefined = raw.specialtyFormName;
-
-                      if (specialtyFormId) {
-                        try {
-                          const forms = await specialtyFormsService.getAll();
-                          const activeForm = forms.find(f => f.id === specialtyFormId);
-                          if (activeForm) {
-                            const allowedIds = activeForm.sections.flatMap(section =>
-                              section.fields.map(field => field.id)
-                            );
-                            const next: Record<string, any> = {};
-                            for (const id of allowedIds) {
-                              const value = rawSpecialtyData[id];
-                              next[id] = value ?? null;
-                            }
-                            filteredSpecialtyData = next;
-                            specialtyFormName = activeForm.name;
-                          }
-                        } catch (err) {
-                          console.error("Error cargando fichas para filtrar specialtyData", err);
-                        }
-                      }
-
-                      const { specialtyData, ...rest } = raw;
-
-                      const finishedData: any = {
-                        status: 'finished' as const,
-                        ...rest,
-                        specialtyFormId: specialtyFormId || null,
-                        specialtyFormName: specialtyFormName || null,
-                        specialtyData: filteredSpecialtyData || {},
-                        printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
-                      };
-
-                      if (Array.isArray(finishedData.prescription) && finishedData.prescription.length > 0) {
-                        finishedData.prescriptionNumber = await generateUniquePrescriptionNumber();
-                      } else {
-                        finishedData.prescriptionNumber = null;
-                      }
-
-                      // Sanitizar undefined a null para evitar errores de Firestore
-                      Object.keys(finishedData).forEach(key => {
-                        if (finishedData[key] === undefined) {
-                          finishedData[key] = null;
-                        }
-                      });
-
-                      await updateDoc(consultationRef, finishedData);
-
-                      if (currentAppointmentId) {
-                        try {
-                          await appointmentService.completeAppointment(currentAppointmentId);
-                          setTodaysAppointments(prev => prev.map(a => a.id === currentAppointmentId ? { ...a, status: 'completed' } : a));
-                        } catch (err) {
-                          console.error("Error al marcar cita como completada", err);
-                        }
-                      }
-
-
-
-                      // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
-                      const notificationPayload = {
-                        ...finishedData,
-                        patientName: currentPatient.fullName,
-                        id: currentConsultationId
-                      } as Consultation;
-                      await notifyConsultationFinished(notificationPayload, user.name);
-
-                      try {
-                        if (finishedData.followUpRequired && finishedData.followUpDays && finishedData.followUpEstimatedDate) {
-                          await notifyReceptionFollowUp(
-                            { ...notificationPayload, followUpRequired: true } as Consultation,
-                            user.name,
-                            finishedData.followUpDays,
-                            new Date(finishedData.followUpEstimatedDate)
-                          );
-                        } else {
-                          const textSources: string[] = [];
-                          if (finishedData.diagnosis) textSources.push(finishedData.diagnosis);
-                          if (finishedData.followUpText) textSources.push(finishedData.followUpText);
-                          if (finishedData.prescriptionNotes) textSources.push(finishedData.prescriptionNotes);
-                          if (finishedData.followUpRequestText) textSources.push(finishedData.followUpRequestText);
-                          const combinedText = textSources.join('\n\n');
-
-                          if (combinedText.trim().length > 0) {
-                            const { analyzeFollowUpIntent } = await import('../services/geminiService.ts');
-                            const analysis = await analyzeFollowUpIntent(combinedText);
-                            if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
-                              const baseDate = new Date(finishedData.date || Date.now());
-                              const followUpDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
-                              await notifyReceptionFollowUp(
-                                { ...notificationPayload, followUpRequired: true } as Consultation,
-                                user.name,
-                                analysis.days,
-                                followUpDate
-                              );
-                            }
-                          }
-                        }
-                      } catch (aiError) {
-                        console.error("Follow-up analysis error", aiError);
-                      }
-
-                      setLastFinishedConsultation({ ...finishedData, patientName: currentPatient.fullName } as Consultation);
-                      setCurrentPatient(null);
-                      setCurrentConsultationType(undefined);
-                      setCurrentModality(undefined);
-                      setCurrentAppointmentId(null);
-                      setStep(0);
-                      methods.reset();
-                      setShowSuccessModal(true);
-
-                      fetchAgendaPage(isResident);
-
-                    } catch (e) {
-                      console.error("Error CRÍTICO al guardar consulta:", e);
-                      // Intenta mostrar detalles del error si es posible
-                      if (e && typeof e === 'object' && 'code' in e) {
-                        // Error de Firebase a veces tiene code
-                        toast.error(`Error de base de datos: ${(e as any).code}`);
-                      } else if (e instanceof Error) {
-                        toast.error(`Error: ${e.message}`);
-                      } else {
-                        toast.error("Error al guardar (revise consola).");
-                      }
-                    } finally { setIsSaving(false); }
-                  })} isSaving={isSaving} />}
-
-                {nextDisabled && (
+                {/* COMENTADO: Navegación de múltiples pasos desactivada temporalmente */}
+                {/* {nextDisabled && (
                   <p className="mb-3 text-xs font-bold text-red-600">
                     {step === 2 && isFollowUpMissing && 'Debe completar la reconsulta para continuar.'}
                     {step === 3 && hasIncompleteOrders && 'Complete todos los campos de las órdenes para continuar.'}
@@ -1407,6 +1454,18 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                       Siguiente
                     </button>
                   )}
+                </div> */}
+                
+                {/* BOTÓN ATRÁS SIMPLIFICADO PARA SALIR DE LA CONSULTA */}
+                <div className="mt-4 flex justify-start">
+                  <button onClick={() => {
+                      setCurrentPatient(null);
+                      setCurrentConsultationType(undefined);
+                      setCurrentModality(undefined);
+                      setStep(0);
+                  }} className="px-6 py-2 border rounded-xl font-bold hover:bg-slate-50 transition text-slate-500">
+                    Cancelar / Salir
+                  </button>
                 </div>
               </motion.div>
             </FormProvider>
@@ -1508,6 +1567,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                     dateFilter={agendaDateFilter}
                     onDateFilterChange={setAgendaDateFilter}
                     onClearDateFilter={() => setAgendaDateFilter('')}
+                    enableNurseResidentFlow={ENABLE_NURSE_RESIDENT_FLOW}
                   />
                 ) : agendaViewMode === 'calendar' ? (
                   <div className="h-full p-4">
@@ -1576,7 +1636,14 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                   Ver Detalles / Imprimir
                 </button>
                 <button
-                  onClick={() => { setShowSuccessModal(false); setLastFinishedConsultation(null); }}
+                  onClick={handlePreviewLastPrescription}
+                  className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition flex items-center justify-center gap-2"
+                >
+                  <FileText className="w-5 h-5" />
+                  Ver Receta
+                </button>
+                <button
+                  onClick={() => { setShowSuccessModal(false); setLastFinishedConsultation(null); setLastFinishedPatient(null); }}
                   className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition"
                 >
                   Volver a Agenda
@@ -1732,9 +1799,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
             toast.error("No se pudieron guardar los cambios de la cita. Verifique permisos.");
           }
         }}
+        // Temporal: no abrir modal de enfermeria desde detalle mientras el flujo este desactivado.
+        onOpenResidentIntake={ENABLE_NURSE_RESIDENT_FLOW && user.role === 'nurse' && selectedAppointment
+          ? () => handleOpenResidentIntake(selectedAppointment)
+          : undefined}
       />
 
-      {showResidentIntakeModal && currentPatient && (
+      {ENABLE_NURSE_RESIDENT_FLOW && showResidentIntakeModal && currentPatient && (
         <ResidentIntakeModal
           isOpen={showResidentIntakeModal}
           onClose={() => {
@@ -1752,7 +1823,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
         />
       )}
 
-      {showResidentClinicalModal && residentClinicalAppointment && residentClinicalPatient && (
+      {ENABLE_NURSE_RESIDENT_FLOW && showResidentClinicalModal && residentClinicalAppointment && residentClinicalPatient && (
         <ResidentClinicalFormModal
           isOpen={showResidentClinicalModal}
           onClose={() => {

@@ -30,6 +30,7 @@ interface AgendaListViewProps {
   dateFilter?: string;
   onDateFilterChange?: (value: string) => void;
   onClearDateFilter?: () => void;
+  enableNurseResidentFlow?: boolean;
 }
 
 export const AgendaListView: React.FC<AgendaListViewProps> = ({
@@ -51,7 +52,8 @@ export const AgendaListView: React.FC<AgendaListViewProps> = ({
   onSearchTermChange,
   dateFilter,
   onDateFilterChange,
-  onClearDateFilter
+  onClearDateFilter,
+  enableNurseResidentFlow = true
 }) => {
   const showPagination = !!pagination;
   const showSearch = typeof searchTerm === 'string' && !!onSearchTermChange;
@@ -119,10 +121,12 @@ export const AgendaListView: React.FC<AgendaListViewProps> = ({
             const dateLabel = appointmentDate.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
             const isReadyForDoctor = appt.status === 'resident_intake';
             const isInProgress = appt.status === 'in_progress';
-            const canStartFromPaid = appt.status === 'paid_checked_in' && appt.consultationType === 'Reconsulta' && appt.goToNurse === false;
+            // Flujo temporal sin enfermeria/residente: pago -> doctor.
+            // Flujo original se conserva con enableNurseResidentFlow=true.
+            const canStartFromPaid = appt.status === 'paid_checked_in' && (!enableNurseResidentFlow || (appt.consultationType === 'Reconsulta' && appt.goToNurse === false));
             const showDoctorButton = isDoctor && (isReadyForDoctor || isInProgress || canStartFromPaid);
-            const isLocked = isDoctor && ((appt.consultationType === 'Nueva' && !appt.residentClinicalCompleted) || (!isReadyForDoctor && !isInProgress && !canStartFromPaid));
-            const canEditResidentFicha = isResident && appt.consultationType === 'Nueva' && !['in_progress', 'completed', 'cancelled', 'no_show'].includes(appt.status);
+            const isLocked = isDoctor && ((enableNurseResidentFlow && appt.consultationType === 'Nueva' && !appt.residentClinicalCompleted) || (!isReadyForDoctor && !isInProgress && !canStartFromPaid));
+            const canEditResidentFicha = enableNurseResidentFlow && isResident && appt.consultationType === 'Nueva' && !['in_progress', 'completed', 'cancelled', 'no_show'].includes(appt.status);
             const residentStatusLabel = isResident && appt.consultationType === 'Nueva' && appt.status === 'resident_intake';
 
             return (
@@ -157,7 +161,7 @@ export const AgendaListView: React.FC<AgendaListViewProps> = ({
                       </span>
                     </div>
                   )}
-                  {(isReceptionist || isAdmin) && appt.consultationType === 'Reconsulta' && (
+                  {enableNurseResidentFlow && (isReceptionist || isAdmin) && appt.consultationType === 'Reconsulta' && (
                     <div className="mt-2 flex items-center gap-2">
                       <span className="text-[10px] text-slate-500 font-medium">
                         Paso por enfermería:
@@ -186,7 +190,7 @@ export const AgendaListView: React.FC<AgendaListViewProps> = ({
                     </button>
                   )}
 
-                  {isNurse && appt.status === 'paid_checked_in' && (
+                  {enableNurseResidentFlow && isNurse && appt.status === 'paid_checked_in' && (
                     <button
                       onClick={() => onOpenNurseIntake(appt)}
                       className="px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-bold hover:bg-amber-700 transition shadow-md flex items-center gap-2 ml-auto"
@@ -195,7 +199,7 @@ export const AgendaListView: React.FC<AgendaListViewProps> = ({
                     </button>
                   )}
 
-                  {isNurse && appt.status === 'completed' && (
+                  {enableNurseResidentFlow && isNurse && appt.status === 'completed' && (
                     <button
                       onClick={() => onViewSummary(appt)}
                       className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-md flex items-center gap-2 ml-auto"

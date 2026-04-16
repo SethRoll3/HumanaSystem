@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useFormContext, useFieldArray } from 'react-hook-form';
-import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote, Filter } from 'lucide-react';
+import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote, Filter, Save, Loader2, FileText } from 'lucide-react';
 import { getAllMedicines, saveExternalMedicine } from '../../services/inventoryService.ts';
 import { parsePrescriptionWithAI, analyzeExternalMedicine, analyzeFollowUpIntent } from '../../services/geminiService.ts';
 import { Medicine, UserProfile } from '../../../types.ts';
@@ -12,413 +12,557 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 interface StepPrescriptionProps {
     currentUser: UserProfile;
+    onFinish?: () => void;
+    isSaving?: boolean;
 }
 
-export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser }) => {
-  const { register, control, setValue, watch } = useFormContext();
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: "prescription"
-  });
-
-  const [searchTerm, setSearchTerm] = useState('');
-  const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
-  const [searchResults, setSearchResults] = useState<Medicine[]>([]);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [filterSource, setFilterSource] = useState<'all' | 'external' | 'inventory'>('all');
-  const [loading, setLoading] = useState(true);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [followUpTouched, setFollowUpTouched] = useState(false);
-  const followUpRequestText = watch('followUpRequestText');
-  const followUpEstimatedDate = watch('followUpEstimatedDate');
-  const followUpDays = watch('followUpDays');
-
-  // Load all medicines on mount
-  useEffect(() => {
-      const load = async () => {
-          setLoading(true);
-          const res = await getAllMedicines();
-          setAllMedicines(res);
-          setSearchResults(res);
-          setLoading(false);
-      };
-      load();
-  }, []);
-
-  useEffect(() => {
-      const handleClickOutside = (e: MouseEvent) => {
-          const el = containerRef.current;
-          if (!el) return;
-          if (e.target instanceof Node && !el.contains(e.target)) {
-              setShowDropdown(false);
-          }
-      };
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-          document.removeEventListener('mousedown', handleClickOutside);
-      };
-  }, []);
-  // Local filtering logic
-  const performLocalSearch = (term: string, source: 'all' | 'external' | 'inventory') => {
-      let filtered = allMedicines;
-      
-      // 1. Filter by Source
-      if (source === 'external') {
-          filtered = filtered.filter(m => m.isExternal);
-      } else if (source === 'inventory') {
-          filtered = filtered.filter(m => !m.isExternal);
-      }
-
-      // 2. Filter by Term
-      if (term.trim()) {
-          const lower = term.toLowerCase();
-          filtered = filtered.filter(m => 
-              m.name.toLowerCase().includes(lower) || 
-              (m.brandName && m.brandName.toLowerCase().includes(lower)) ||
-              (m.activeIngredient && m.activeIngredient.toLowerCase().includes(lower))
-          );
-      }
-
-      setSearchResults(filtered);
-      setShowDropdown(true);
-  };
-
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setSearchTerm(val);
-      performLocalSearch(val, filterSource);
-  };
-
-  const handleSourceChange = (source: 'all' | 'external' | 'inventory') => {
-      setFilterSource(source);
-      performLocalSearch(searchTerm, source);
-  };
-
-  const handleFocus = () => {
-      performLocalSearch(searchTerm, filterSource);
-  };
-
-  const addMedicine = (med: Medicine) => {
-    append({
-      medId: med.id,
-      name: med.name,
-      quantity: 1, // Default safe value
-      dosage: '',
-      duration_days: '', // REMOVED DEFAULT "3 días". Let AI calculate or user type.
-      isExternal: med.isExternal || false,
-      units_per_box: med.units_per_box || 1,
-      presentation: med.presentation
+export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser, onFinish, isSaving }) => {
+    const { register, control, setValue, watch, setFocus, formState: { errors } } = useFormContext();
+    const { fields, prepend, remove } = useFieldArray({
+        control,
+        name: "prescription"
     });
-    setSearchTerm('');
-    setShowDropdown(false);
-  };
 
-  const addManualExternal = async () => {
-      if(!searchTerm) return;
-      const medName = searchTerm;
-      
-      // CHECK: Does it exist in the current search results (exact match, case insensitive)?
-      const existingInSearch = searchResults.find(r => r.name.toLowerCase() === medName.toLowerCase());
+    const [searchTerm, setSearchTerm] = useState('');
+    const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
+    const [searchResults, setSearchResults] = useState<Medicine[]>([]);
+    const [showDropdown, setShowDropdown] = useState(false);
+    const [filterSource, setFilterSource] = useState<'all' | 'external' | 'inventory'>('all');
+    const [loading, setLoading] = useState(true);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const dropdownPanelRef = useRef<HTMLUListElement>(null);
+    const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+    const [followUpTouched, setFollowUpTouched] = useState(false);
+    const followUpRequestText = watch('followUpRequestText');
+    const followUpEstimatedDate = watch('followUpEstimatedDate');
+    const followUpDays = watch('followUpDays');
+    const diagnosis = watch('diagnosis');
 
-      if (existingInSearch) {
-          // If found, treat as selecting existing (no new AI call, no new DB entry)
-          addMedicine(existingInSearch);
-          return;
-      }
+    // Load all medicines on mount
+    useEffect(() => {
+        const load = async () => {
+            setLoading(true);
+            const res = await getAllMedicines();
+            setAllMedicines(res);
+            setSearchResults(res);
+            setLoading(false);
+        };
+        load();
+    }, []);
 
-      setSearchTerm('');
-      setShowDropdown(false);
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            const container = containerRef.current;
+            const dropdown = dropdownPanelRef.current;
+            if (e.target instanceof Node && container && container.contains(e.target)) return;
+            if (e.target instanceof Node && dropdown && dropdown.contains(e.target)) return;
+            if (e.target instanceof Node) {
+                setShowDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
+    // Local filtering logic
+    const performLocalSearch = (term: string, source: 'all' | 'external' | 'inventory') => {
+        let filtered = allMedicines;
 
-      append({
-          medId: `ext-${Date.now()}`,
-          name: medName,
-          quantity: 1,
-          dosage: '',
-          duration_days: '', // REMOVED DEFAULT "3 días"
-          isExternal: true,
-          units_per_box: 1,
-          presentation: 'Externo'
-      });
+        // 1. Filter by Source
+        if (source === 'external') {
+            filtered = filtered.filter(m => m.isExternal);
+        } else if (source === 'inventory') {
+            filtered = filtered.filter(m => !m.isExternal);
+        }
 
-      // Background AI analysis for DB (Silent) - Only for NEW externals
-      try {
-          const aiAnalysis = await analyzeExternalMedicine(medName);
-          await saveExternalMedicine(medName, aiAnalysis);
-          
-          // Refresh list to include new external med
-          const updatedMeds = await getAllMedicines();
-          setAllMedicines(updatedMeds);
+        // 2. Filter by Term
+        if (term.trim()) {
+            const lower = term.toLowerCase();
+            filtered = filtered.filter(m =>
+                m.name.toLowerCase().includes(lower) ||
+                (m.brandName && m.brandName.toLowerCase().includes(lower)) ||
+                (m.activeIngredient && m.activeIngredient.toLowerCase().includes(lower))
+            );
+        }
 
-          // --- AUDITORÍA AGREGADA ---
-          await logAuditAction(currentUser.email, "REGISTRO_MEDICAMENTO_EXTERNO", `Nuevo medicamento registrado manualmente: ${medName}`);
-      } catch (e) {
-          console.error("Error saving external:", e);
-      }
-  };
+        setSearchResults(filtered);
+        setShowDropdown(true);
+    };
 
-  // Logic to fill hidden fields based on text
-  const handleCalculateRow = async (index: number) => {
-      const rowData = watch(`prescription.${index}`);
-      if (!rowData.dosage) return;
+    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setSearchTerm(val);
+        performLocalSearch(val, filterSource);
+    };
 
-      // Now we pass units_per_box to the AI service.
-      const unitsPerBox = rowData.units_per_box || 0;
+    const handleSourceChange = (source: 'all' | 'external' | 'inventory') => {
+        setFilterSource(source);
+        performLocalSearch(searchTerm, source);
+    };
 
-      try {
-          const result = await parsePrescriptionWithAI(rowData.name, rowData.dosage, unitsPerBox);
-          
-          // Only update if AI returns valid numbers
-          if(result) {
-              setValue(`prescription.${index}.quantity`, result.quantity);
-              setValue(`prescription.${index}.duration_days`, result.duration);
-          }
-      } catch (e) {
-          // Fallback handled in service
-      }
-  };
+    const handleFocus = () => {
+        performLocalSearch(searchTerm, filterSource);
+        const input = searchInputRef.current;
+        if (input) {
+            input.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            setTimeout(() => {
+                updateDropdownPosition();
+            }, 220);
+        }
+    };
 
-  const handleFollowUpBlur = async (value: string) => {
-      const trimmed = value.trim();
-      if (!trimmed) {
-          setValue('followUpRequired', false);
-          setValue('followUpDays', undefined);
-          setValue('followUpEstimatedDate', undefined);
-          return;
-      }
-      try {
-          const analysis = await analyzeFollowUpIntent(trimmed);
-          if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
-              const baseDate = new Date();
-              const estimatedDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
-              setValue('followUpRequired', true);
-              setValue('followUpDays', analysis.days);
-              setValue('followUpEstimatedDate', estimatedDate.getTime());
-          } else {
-              setValue('followUpRequired', false);
-              setValue('followUpDays', undefined);
-              setValue('followUpEstimatedDate', undefined);
-          }
-      } catch (e) {
-          setValue('followUpRequired', false);
-          setValue('followUpDays', undefined);
-          setValue('followUpEstimatedDate', undefined);
-      }
-  };
+    const updateDropdownPosition = () => {
+        const input = searchInputRef.current;
+        if (!input) return;
+        const rect = input.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const margin = 14;
+        const isMobile = viewportWidth < 768;
+        const sideGap = 12;
 
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-8 pb-10">
-      <div className="space-y-6 bg-emerald-50/60 border border-emerald-200 rounded-2xl p-5">
-          <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <div className="bg-emerald-600 text-white p-1.5 rounded-lg ring-2 ring-emerald-300 ring-offset-2 ring-offset-emerald-50 shadow-[0_0_0_3px_rgba(16,185,129,0.15)]">
-                    <Pill className="w-4 h-4"/>
-                </div>
-                <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-200">1. Receta de Medicamentos</span>
-          </h4>
+        // El máximo ancho que puede tener sin tocar el input:
+        const availableSpaceLeft = rect.left - margin - sideGap;
 
-          <div className="relative z-20 space-y-3" ref={containerRef}>
-              {/* FILTROS DE ORIGEN */}
-              <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl w-fit">
-                  <button 
-                    type="button"
-                    onClick={() => handleSourceChange('all')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filterSource === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                      Todos
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => handleSourceChange('inventory')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${filterSource === 'inventory' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                      <Pill className="w-3 h-3" /> Farmacia
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => handleSourceChange('external')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${filterSource === 'external' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                      <ExternalLink className="w-3 h-3" /> Externos
-                  </button>
-              </div>
+        const width = isMobile
+            ? Math.max(300, viewportWidth - margin * 2)
+            : Math.max(250, Math.min(350, availableSpaceLeft));
 
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                    <Search className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
-                    <input 
-                        type="text" 
-                        value={searchTerm}
-                        onChange={handleSearchChange}
-                        onFocus={handleFocus}
-                        disabled={loading}
-                        placeholder={loading ? "Cargando catálogo..." : "Buscar por nombre, marca o principio activo..."}
-                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm bg-white text-slate-900 text-sm md:text-base disabled:bg-slate-50 disabled:text-slate-400"
-                        autoComplete="off"
-                    />
-                    <AnimatePresence>
-                      {showDropdown && (
-                          <motion.ul 
-                            initial={{ opacity: 0, y: -10 }} 
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                            className="absolute w-full bg-white border border-slate-200 rounded-lg mt-1 shadow-xl max-h-80 overflow-y-auto z-50 custom-scrollbar"
-                          >
-                          {searchResults.length > 0 ? searchResults.map(med => (
-                              <li 
-                              key={med.id} 
-                              onMouseDown={(e) => { e.preventDefault(); addMedicine(med); }}
-                              className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 flex justify-between group items-center"
-                              >
-                                  <div>
-                                      <span className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-emerald-700 text-sm">
-                                          {med.name}
-                                          {med.isExternal && (
-                                              <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
-                                                  <ExternalLink className="w-3 h-3" /> Externo
-                                              </span>
-                                          )}
-                                      </span>
-                                      <span className="text-xs text-slate-400 block">
-                                          {med.presentation}
-                                          {med.brandName && ` • Marca: ${med.brandName}`}
-                                          {med.activeIngredient && ` • Principio activo: ${med.activeIngredient}`}
-                                      </span>
-                                  </div>
-                                  <div className="text-right">
-                                      {(!med.isExternal && med.stock !== undefined) && (
-                                          <span className={`text-xs font-bold px-2 py-1 rounded ${med.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                              Stock: {med.stock}
-                                          </span>
-                                      )}
-                                  </div>
-                              </li>
-                          )) : (
-                              <li className="p-4 text-center text-slate-400 italic text-sm">
-                                  No se encontraron medicamentos con ese criterio.
-                              </li>
-                          )}
-                          </motion.ul>
-                      )}
-                    </AnimatePresence>
-                </div>
-                <button 
-                    type="button"
-                    onClick={addManualExternal}
-                    className="bg-slate-900 text-white px-4 rounded-xl hover:bg-slate-800 transition shadow-lg shadow-slate-900/20 flex items-center gap-2"
-                    title="Agregar manual como externo"
-                >
-                    <Plus className="w-5 h-5" />
-                </button>
-              </div>
-          </div>
+        const desiredLeft = isMobile ? margin : rect.left - width - sideGap;
+        const maxLeft = Math.max(margin, viewportWidth - width - margin);
+        const left = Math.max(margin, Math.min(desiredLeft, maxLeft));
+        const desiredTop = isMobile ? rect.bottom + 8 : rect.top;
+        const maxHeightByViewport = Math.max(260, Math.min(560, Math.floor(viewportHeight * 0.62)));
+        const panelHeight = Math.max(260, maxHeightByViewport);
+        const maxTop = Math.max(margin, viewportHeight - panelHeight - margin);
+        const top = Math.max(margin, Math.min(desiredTop, maxTop));
+        setDropdownStyle({
+            top,
+            left,
+            width,
+            height: panelHeight,
+            maxHeight: panelHeight
+        });
+    };
 
-          <div className="space-y-3">
-            <AnimatePresence>
-            {fields.map((field: any, index) => {
-                const isExternal = watch(`prescription.${index}.isExternal`);
-                
-                return (
-                  <motion.div 
-                    key={field.id}
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    className={`p-4 rounded-xl border shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center overflow-hidden ${isExternal ? 'bg-amber-50/50 border-amber-200' : 'bg-white border-slate-200'}`}
-                  >
-                    {/* NAME SECTION */}
-                    <div className="w-full md:w-1/3">
-                        <div className="font-bold text-slate-800 flex items-center gap-2 text-base leading-tight">
-                            {isExternal && <ExternalLink className="w-4 h-4 text-amber-500 shrink-0"/>}
-                            {field.name}
-                        </div>
-                        <p className="text-xs text-slate-400 mt-1">{isExternal ? 'Medicamento Externo' : field.presentation}</p>
+    useEffect(() => {
+        if (!showDropdown) return;
+        updateDropdownPosition();
+        const onReposition = () => updateDropdownPosition();
+        window.addEventListener('resize', onReposition);
+        window.addEventListener('scroll', onReposition, true);
+        return () => {
+            window.removeEventListener('resize', onReposition);
+            window.removeEventListener('scroll', onReposition, true);
+        };
+    }, [showDropdown, searchTerm, filterSource]);
+
+    const addMedicine = (med: Medicine) => {
+        prepend({
+            medId: med.id,
+            name: med.name,
+            quantity: 1, // Default safe value
+            dosage: '',
+            duration_days: '', // REMOVED DEFAULT "3 días". Let AI calculate or user type.
+            isExternal: med.isExternal || false,
+            units_per_box: med.units_per_box || 1,
+            presentation: med.presentation
+        });
+        setSearchTerm('');
+        setShowDropdown(false);
+    };
+
+    const addManualExternal = async () => {
+        if (!searchTerm) return;
+        const medName = searchTerm;
+
+        // CHECK: Does it exist in the current search results (exact match, case insensitive)?
+        const existingInSearch = searchResults.find(r => r.name.toLowerCase() === medName.toLowerCase());
+
+        if (existingInSearch) {
+            // If found, treat as selecting existing (no new AI call, no new DB entry)
+            addMedicine(existingInSearch);
+            return;
+        }
+
+        setSearchTerm('');
+        setShowDropdown(false);
+
+        prepend({
+            medId: `ext-${Date.now()}`,
+            name: medName,
+            quantity: 1,
+            dosage: '',
+            duration_days: '', // REMOVED DEFAULT "3 días"
+            isExternal: true,
+            units_per_box: 1,
+            presentation: 'Externo'
+        });
+
+        // Background AI analysis for DB (Silent) - Only for NEW externals
+        try {
+            const aiAnalysis = await analyzeExternalMedicine(medName);
+            await saveExternalMedicine(medName, aiAnalysis);
+
+            // Refresh list to include new external med
+            const updatedMeds = await getAllMedicines();
+            setAllMedicines(updatedMeds);
+
+            // --- AUDITORÍA AGREGADA ---
+            await logAuditAction(currentUser.email, "REGISTRO_MEDICAMENTO_EXTERNO", `Nuevo medicamento registrado manualmente: ${medName}`);
+        } catch (e) {
+            console.error("Error saving external:", e);
+        }
+    };
+
+    // Logic to fill hidden fields based on text
+    const handleCalculateRow = async (index: number) => {
+        const rowData = watch(`prescription.${index}`);
+        if (!rowData.dosage) return;
+
+        // Now we pass units_per_box to the AI service.
+        const unitsPerBox = rowData.units_per_box || 0;
+
+        try {
+            const result = await parsePrescriptionWithAI(rowData.name, rowData.dosage, unitsPerBox);
+
+            // Only update if AI returns valid numbers
+            if (result) {
+                setValue(`prescription.${index}.quantity`, result.quantity);
+                setValue(`prescription.${index}.duration_days`, result.duration);
+            }
+        } catch (e) {
+            // Fallback handled in service
+        }
+    };
+
+    const handleFollowUpBlur = async (value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            setValue('followUpRequired', false);
+            setValue('followUpDays', undefined);
+            setValue('followUpEstimatedDate', undefined);
+            return;
+        }
+        try {
+            const analysis = await analyzeFollowUpIntent(trimmed);
+            if (analysis.hasFollowUp && analysis.days && analysis.days > 0) {
+                const baseDate = new Date();
+                const estimatedDate = new Date(baseDate.getTime() + analysis.days * 24 * 60 * 60 * 1000);
+                setValue('followUpRequired', true);
+                setValue('followUpDays', analysis.days);
+                setValue('followUpEstimatedDate', estimatedDate.getTime());
+            } else {
+                setValue('followUpRequired', false);
+                setValue('followUpDays', undefined);
+                setValue('followUpEstimatedDate', undefined);
+            }
+        } catch (e) {
+            setValue('followUpRequired', false);
+            setValue('followUpDays', undefined);
+            setValue('followUpEstimatedDate', undefined);
+        }
+    };
+
+    const goToField = (field: 'diagnosis' | 'followUpRequestText') => {
+        const elementId = field === 'diagnosis' ? 'diagnosis-input' : 'follow-up-request-input';
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        if (field === 'followUpRequestText') {
+            setFollowUpTouched(true);
+        }
+        setTimeout(() => setFocus(field), 120);
+    };
+
+    return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-8 pb-10">
+
+            {/* 0. DIAGNÓSTICO MÉDICO - MANDATORY */}
+            <div className="space-y-4 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm">
+                <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <div className="bg-slate-900 text-white p-1.5 rounded-lg">
+                        <FileText className="w-4 h-4" />
                     </div>
-                    
-                    {/* SINGLE INPUT: INDICACIONES (Old School Style) */}
-                    <div className="flex-1 w-full flex items-center gap-2">
-                        <div className="flex-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Indicaciones / Dosis / Duración</label>
+                    <span className="bg-white text-slate-800 px-2 py-0.5 rounded-lg border border-slate-200">1. Diagnóstico Médico</span>
+                </h4>
+
+                <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block">
+                        Resumen de diagnóstico (Obligatorio)
+                    </label>
+                    <textarea
+                        id="diagnosis-input"
+                        rows={3}
+                        {...register('diagnosis', { required: true })}
+                        placeholder="Escriba el diagnóstico principal de la consulta..."
+                        className={`w-full text-sm bg-white border rounded-xl p-4 focus:ring-2 focus:border-transparent placeholder:text-slate-400 text-slate-900 shadow-sm resize-none ${errors.diagnosis ? 'border-red-300 focus:ring-red-200' : 'border-slate-300 focus:ring-emerald-500'}`}
+                    />
+                    {errors.diagnosis && (
+                        <p className="text-[10px] text-red-500 mt-1 font-bold">Este campo es obligatorio para finalizar la consulta.</p>
+                    )}
+                </div>
+            </div>
+
+            <div className="space-y-6 bg-emerald-50/60 border border-emerald-200 rounded-2xl p-5">
+                <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <div className="bg-emerald-600 text-white p-1.5 rounded-lg ring-2 ring-emerald-300 ring-offset-2 ring-offset-emerald-50 shadow-[0_0_0_3px_rgba(16,185,129,0.15)]">
+                        <Pill className="w-4 h-4" />
+                    </div>
+                    <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-200">2. Receta de Medicamentos</span>
+                </h4>
+
+                <div className="relative z-20 space-y-3" ref={containerRef}>
+                    {/* FILTROS DE ORIGEN */}
+                    <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl w-fit">
+                        <button
+                            type="button"
+                            onClick={() => handleSourceChange('all')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filterSource === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Todos
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleSourceChange('inventory')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${filterSource === 'inventory' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            <Pill className="w-3 h-3" /> Farmacia
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleSourceChange('external')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${filterSource === 'external' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            <ExternalLink className="w-3 h-3" /> Externos
+                        </button>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
                             <input
+                                ref={searchInputRef}
                                 type="text"
-                                {...register(`prescription.${index}.dosage`, { required: true })}
-                                placeholder="Ej: 1 tableta cada 8 horas..."
-                                className="w-full px-3 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 bg-white"
-                                onBlur={() => handleCalculateRow(index)} 
+                                value={searchTerm}
+                                onChange={handleSearchChange}
+                                onFocus={handleFocus}
+                                disabled={loading}
+                                placeholder={loading ? "Cargando catálogo..." : "Buscar por nombre, marca o principio activo..."}
+                                className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm bg-white text-slate-900 text-sm md:text-base disabled:bg-slate-50 disabled:text-slate-400"
                                 autoComplete="off"
                             />
-                            
-                            {/* HIDDEN INPUTS FOR DATA CONSISTENCY */}
-                            <input type="hidden" {...register(`prescription.${index}.quantity`)} />
-                            <input type="hidden" {...register(`prescription.${index}.duration_days`)} />
                         </div>
-                        <motion.button 
-                            whileHover={{ scale: 1.1 }}
-                            whileTap={{ scale: 0.9 }}
-                            type="button" 
-                            onClick={() => remove(index)}
-                            className="p-3 mt-4 md:mt-0 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition"
-                            title="Eliminar"
+                        <button
+                            type="button"
+                            onClick={addManualExternal}
+                            className="bg-slate-900 text-white px-4 rounded-xl hover:bg-slate-800 transition shadow-lg shadow-slate-900/20 flex items-center gap-2"
+                            title="Agregar manual como externo"
                         >
-                            <Trash2 className="w-5 h-5" />
-                        </motion.button>
+                            <Plus className="w-5 h-5" />
+                        </button>
                     </div>
-                  </motion.div>
-                );
-            })}
-            </AnimatePresence>
-            {fields.length === 0 && (
-              <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 text-sm">
-                 Busque un medicamento para agregarlo a la receta.
-              </div>
-            )}
-          </div>
-      </div>
-
-      <div className="border-t pt-6">
-          <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
-                <div className="bg-yellow-500 text-white p-1.5 rounded-lg">
-                    <StickyNote className="w-4 h-4"/>
                 </div>
-                2. Observaciones y Recomendaciones
-          </h4>
-          
-          <div>
-             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block flex items-center gap-2">
-                 <StickyNote className="w-3 h-3 text-yellow-600"/> Nota para el Paciente / Cuidados Generales (Opcional)
-             </label>
-             <textarea 
-                rows={4}
-                {...register('prescriptionNotes')} 
-                placeholder="Especifique reposo, dieta, cuidados de heridas, uso de compresas, signos de alarma..."
-                className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-xl p-4 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-yellow-900 shadow-sm resize-none"
-             />
-             <p className="text-[10px] text-slate-400 mt-2 ml-1">Estas observaciones aparecerán impresas en la receta médica.</p>
-          </div>
+                <AnimatePresence>
+                    {showDropdown && (
+                        <motion.ul
+                            ref={dropdownPanelRef}
+                            style={dropdownStyle}
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            className="fixed bg-white border border-slate-200 rounded-xl shadow-2xl overflow-y-auto z-[120] [scrollbar-width:auto] [scrollbar-color:#94a3b8_#e2e8f0] [&::-webkit-scrollbar]:w-4 [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:bg-slate-500 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-slate-200"
+                        >
+                            {searchResults.length > 0 ? searchResults.map(med => (
+                                <li
+                                    key={med.id}
+                                    onMouseDown={(e) => { e.preventDefault(); addMedicine(med); }}
+                                    className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 flex justify-between group items-center"
+                                >
+                                    <div>
+                                        <span className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-emerald-700 text-sm">
+                                            {med.name}
+                                            {med.isExternal && (
+                                                <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
+                                                    <ExternalLink className="w-3 h-3" /> Externo
+                                                </span>
+                                            )}
+                                        </span>
+                                        <span className="text-xs text-slate-400 block">
+                                            {med.presentation}
+                                            {med.brandName && ` • Marca: ${med.brandName}`}
+                                            {med.activeIngredient && ` • Principio activo: ${med.activeIngredient}`}
+                                        </span>
+                                    </div>
+                                    <div className="text-right">
+                                        {(!med.isExternal && med.stock !== undefined) && (
+                                            <span className={`text-xs font-bold px-2 py-1 rounded ${med.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                Stock: {med.stock}
+                                            </span>
+                                        )}
+                                    </div>
+                                </li>
+                            )) : (
+                                <li className="p-4 text-center text-slate-400 italic text-sm">
+                                    No se encontraron medicamentos con ese criterio.
+                                </li>
+                            )}
+                        </motion.ul>
+                    )}
+                </AnimatePresence>
 
-          <div className="mt-5">
-             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block flex items-center gap-2">
-                 <StickyNote className="w-3 h-3 text-yellow-600"/> Reconsulta / Próxima cita (Opcional)
-             </label>
-             <input
-                type="text"
-                {...register('followUpRequestText')}
-                placeholder='Ej: Reconsulta en 2 semanas, en 6 meses, verlo en 10 días...'
-                className={`w-full text-sm bg-white border rounded-xl p-3 focus:ring-2 focus:border-transparent placeholder:text-slate-400 text-slate-800 shadow-sm ${
-                    followUpTouched && !followUpRequestText?.trim()
-                        ? 'border-red-300 focus:ring-red-200'
-                        : 'border-slate-200 focus:ring-brand-200'
-                }`}
-                onBlur={(e) => {
-                    setFollowUpTouched(true);
-                    handleFollowUpBlur(e.target.value);
-                }}
-              />
-             {followUpEstimatedDate && (
-                <p className="text-[10px] text-slate-400 mt-2 ml-1">
-                    Fecha estimada: {new Date(followUpEstimatedDate).toLocaleDateString('es-GT')} {followUpDays ? `(aprox. ${followUpDays} días)` : ''}
-                </p>
-             )}
-          </div>
-      </div>
-    </motion.div>
-  );
+                <div className="space-y-3">
+                    <AnimatePresence>
+                        {fields.map((field: any, index) => {
+                            const isExternal = watch(`prescription.${index}.isExternal`);
+
+                            return (
+                                <motion.div
+                                    key={field.id}
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                                    className={`p-4 rounded-xl border shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center overflow-hidden ${isExternal ? 'bg-amber-50/50 border-amber-200' : 'bg-white border-slate-200'}`}
+                                >
+                                    {/* NAME SECTION */}
+                                    <div className="w-full md:w-1/3">
+                                        <div className="font-bold text-slate-800 flex items-center gap-2 text-base leading-tight">
+                                            {isExternal && <ExternalLink className="w-4 h-4 text-amber-500 shrink-0" />}
+                                            {field.name}
+                                        </div>
+                                        <p className="text-xs text-slate-400 mt-1">{isExternal ? 'Medicamento Externo' : field.presentation}</p>
+                                    </div>
+
+                                    {/* SINGLE INPUT: INDICACIONES (Old School Style) */}
+                                    <div className="flex-1 w-full flex items-center gap-2">
+                                        <div className="flex-1">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Indicaciones / Dosis / Duración</label>
+                                            <input
+                                                type="text"
+                                                {...register(`prescription.${index}.dosage`, { required: true })}
+                                                placeholder="Ej: 1 tableta cada 8 horas..."
+                                                className="w-full px-3 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none text-slate-900 bg-white"
+                                                onBlur={() => handleCalculateRow(index)}
+                                                autoComplete="off"
+                                            />
+
+                                            {/* HIDDEN INPUTS FOR DATA CONSISTENCY */}
+                                            <input type="hidden" {...register(`prescription.${index}.quantity`)} />
+                                            <input type="hidden" {...register(`prescription.${index}.duration_days`)} />
+                                        </div>
+                                        <motion.button
+                                            whileHover={{ scale: 1.1 }}
+                                            whileTap={{ scale: 0.9 }}
+                                            type="button"
+                                            onClick={() => remove(index)}
+                                            className="p-3 mt-4 md:mt-0 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition"
+                                            title="Eliminar"
+                                        >
+                                            <Trash2 className="w-5 h-5" />
+                                        </motion.button>
+                                    </div>
+                                </motion.div>
+                            );
+                        })}
+                    </AnimatePresence>
+                    {fields.length === 0 && (
+                        <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 text-sm">
+                            Busque un medicamento para agregarlo a la receta.
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="border-t pt-6">
+                <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                    <div className="bg-yellow-500 text-white p-1.5 rounded-lg">
+                        <StickyNote className="w-4 h-4" />
+                    </div>
+                    2. Observaciones y Recomendaciones
+                </h4>
+
+                <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block flex items-center gap-2">
+                        <StickyNote className="w-3 h-3 text-yellow-600" /> Nota para el Paciente / Cuidados Generales (Opcional)
+                    </label>
+                    <textarea
+                        rows={4}
+                        {...register('prescriptionNotes')}
+                        placeholder="Especifique reposo, dieta, cuidados de heridas, uso de compresas, signos de alarma..."
+                        className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-xl p-4 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-yellow-900 shadow-sm resize-none"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-2 ml-1">Estas observaciones aparecerán impresas en la receta médica.</p>
+                </div>
+
+                <div className="mt-5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block flex items-center gap-2">
+                        <StickyNote className="w-3 h-3 text-yellow-600" /> Reconsulta / Próxima cita
+                    </label>
+                    <input
+                        id="follow-up-request-input"
+                        type="text"
+                        {...register('followUpRequestText', { required: true })}
+                        placeholder='Ej: Reconsulta en 2 semanas, en 6 meses, verlo en 10 días...'
+                        className={`w-full text-sm bg-white border rounded-xl p-3 focus:ring-2 focus:border-transparent placeholder:text-slate-400 text-slate-800 shadow-sm ${followUpTouched && !followUpRequestText?.trim()
+                            ? 'border-red-300 focus:ring-red-200'
+                            : 'border-slate-200 focus:ring-brand-200'
+                            }`}
+                        onBlur={(e) => {
+                            setFollowUpTouched(true);
+                            handleFollowUpBlur(e.target.value);
+                        }}
+                    />
+                    {followUpTouched && !followUpRequestText?.trim() && (
+                        <p className="text-[10px] text-red-500 mt-1 font-bold">La reconsulta / próxima cita es obligatoria.</p>
+                    )}
+                    {followUpEstimatedDate && (
+                        <p className="text-[10px] text-slate-400 mt-2 ml-1">
+                            Fecha estimada: {new Date(followUpEstimatedDate).toLocaleDateString('es-GT')} {followUpDays ? `(aprox. ${followUpDays} días)` : ''}
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            {onFinish && (
+                <div className="pt-8 border-t flex flex-col items-center">
+                    <button
+                        type="button"
+                        onClick={onFinish}
+                        disabled={isSaving || !diagnosis?.trim() || !followUpRequestText?.trim()}
+                        className="w-full max-w-md py-4 bg-slate-900 text-white rounded-2xl font-bold text-xl shadow-2xl hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-3 transition-all transform active:scale-95"
+                    >
+                        {isSaving ? <Loader2 className="animate-spin w-6 h-6" /> : <Save className="w-6 h-6" />}
+                        Finalizar Consulta
+                    </button>
+                    {!diagnosis?.trim() && (
+                        <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse flex items-center gap-2">
+                            Debe ingresar un diagnóstico para finalizar.
+                            <button
+                                type="button"
+                                onClick={() => goToField('diagnosis')}
+                                className="px-2 py-0.5 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-200 transition"
+                            >
+                                Ir
+                            </button>
+                        </p>
+                    )}
+                    {diagnosis?.trim() && !followUpRequestText?.trim() && (
+                        <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse flex items-center gap-2">
+                            Debe ingresar la reconsulta / próxima cita para finalizar.
+                            <button
+                                type="button"
+                                onClick={() => goToField('followUpRequestText')}
+                                className="px-2 py-0.5 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-200 transition"
+                            >
+                                Ir
+                            </button>
+                        </p>
+                    )}
+                </div>
+            )}
+        </motion.div>
+    );
 };

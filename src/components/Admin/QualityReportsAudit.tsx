@@ -34,6 +34,16 @@ export const QualityReportsAudit: React.FC = () => {
         return () => unsub();
     }, []);
 
+    const toDateKeyGT = (value: any) => {
+        const date = value?.toDate ? value.toDate() : new Date(value);
+        if (isNaN(date.getTime())) return '';
+        return date.toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
+    };
+
+    const getLogUser = (log: any) => {
+        return log.userName || log.userEmail || log.user || 'Sin usuario';
+    };
+
     const handleSaveTime = async () => {
         try {
             await doctorScheduleService.updateGlobalSettings({ qualityReportTime: reportTime });
@@ -46,8 +56,9 @@ export const QualityReportsAudit: React.FC = () => {
     const handleDownloadExcel = async (timestampObj: any) => {
         const date = timestampObj?.toDate ? timestampObj.toDate() : new Date(timestampObj);
         if (isNaN(date.getTime())) return toast.error("Fecha inválida");
-        
-        const dateStr = date.toISOString().split('T')[0];
+
+        const dateStr = toDateKeyGT(date);
+        if (!dateStr) return toast.error("Fecha inválida");
         const toastId = toast.loading(`Generando Excel del ${dateStr}...`);
         
         try {
@@ -73,15 +84,13 @@ export const QualityReportsAudit: React.FC = () => {
 
         if (searchTerm) {
             const s = searchTerm.toLowerCase();
-            matchesSearch = log.userEmail?.toLowerCase().includes(s) || log.details?.toLowerCase().includes(s);
+            const userText = getLogUser(log).toLowerCase();
+            matchesSearch = userText.includes(s) || log.details?.toLowerCase().includes(s);
         }
 
         if (filterDate) {
-            const logDate = log.timestamp?.toDate ? log.timestamp.toDate() : new Date(log.timestamp);
-            if (!isNaN(logDate.getTime())) {
-                const dateStr = logDate.toISOString().split('T')[0];
-                matchesDate = dateStr === filterDate;
-            }
+            const dateStr = toDateKeyGT(log.timestamp);
+            matchesDate = dateStr === filterDate;
         }
 
         return matchesSearch && matchesDate;
@@ -135,7 +144,7 @@ export const QualityReportsAudit: React.FC = () => {
                                     return (
                                         <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50 last:border-0 group">
                                             <td className="p-4 font-bold text-slate-700 whitespace-nowrap">{d.toLocaleString()}</td>
-                                            <td className="p-4 text-slate-600">{log.userEmail}</td>
+                                            <td className="p-4 text-slate-600">{getLogUser(log)}</td>
                                             <td className="p-4 text-slate-500 text-sm">{log.details}</td>
                                             <td className="p-4 text-center">
                                                 <button onClick={() => handleDownloadExcel(log.timestamp)} className="inline-flex items-center justify-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:bg-blue-100">

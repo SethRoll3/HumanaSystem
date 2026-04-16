@@ -156,5 +156,9 @@ service cloud.firestore {
       allow read: if esPersonal();
       allow write: if esAdmin();
     }
+
+    match /quality_reviews/{reviewId} {
+      allow read, write: if esAdmin();
+    }
   }
 }

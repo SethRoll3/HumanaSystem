@@ -79,6 +79,9 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
   preSelectedPatientId,
   existingAppointments = []
 }) => {
+  // DESACTIVACION TEMPORAL: enfermeria/residente fuera de flujo.
+  // Cambiar a `true` cuando se quiera reactivar.
+  const ENABLE_NURSE_RESIDENT_FLOW = false;
   const { register, handleSubmit, formState: { errors }, reset, setValue, watch } = useForm<FormData>({
     resolver: zodResolver(appointmentFormSchema),
     defaultValues: {
@@ -89,7 +92,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
     }
   });
 
-  const [goToNurse, setGoToNurse] = useState(true);
+  const [goToNurse, setGoToNurse] = useState(false);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [patientSearchTerm, setPatientSearchTerm] = useState('');
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
@@ -269,7 +272,9 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
       duration: durationMinutes,
       consultationType: data.consultationType,
       modality: data.modality,
-      goToNurse: data.consultationType === 'Reconsulta' ? goToNurse : true,
+      // Temporalmente toda cita va directo con doctor tras pago.
+      // Se conserva el campo para reactivar luego.
+      goToNurse: ENABLE_NURSE_RESIDENT_FLOW ? (data.consultationType === 'Reconsulta' ? goToNurse : true) : false,
       isIGSS: data.isIGSS
     };
     if (data.isIGSS && data.igssType) {
@@ -508,7 +513,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
             </div>
           )}
 
-          {consultationType === 'Reconsulta' && (
+          {consultationType === 'Reconsulta' && ENABLE_NURSE_RESIDENT_FLOW && (
             <div className="space-y-1">
               <label className="block text-sm font-medium text-slate-700">Paso por enfermería</label>
               <div className="flex gap-4">
@@ -534,6 +539,12 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
               <p className="text-[11px] text-slate-500">
                 Solo aplica para reconsultas y define si se pasa por enfermería.
               </p>
+            </div>
+          )}
+          {consultationType === 'Reconsulta' && !ENABLE_NURSE_RESIDENT_FLOW && (
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-slate-700">Ruta de atención</label>
+              <p className="text-sm text-emerald-700 font-semibold">Directo con doctor (temporal)</p>
             </div>
           )}
 

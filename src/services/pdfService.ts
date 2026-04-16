@@ -56,9 +56,14 @@ const loadPdfLibs = async () => {
   return { jsPDF, autoTable };
 };
 
-const handlePdfOutput = (doc: any, filename: string, action: 'download' | 'print') => {
+type PdfOutputAction = 'download' | 'print' | 'preview';
+
+const handlePdfOutput = (doc: any, filename: string, action: PdfOutputAction) => {
     if (action === 'print') {
         doc.autoPrint();
+        const blob = doc.output('bloburl');
+        window.open(blob, '_blank');
+    } else if (action === 'preview') {
         const blob = doc.output('bloburl');
         window.open(blob, '_blank');
     } else {
@@ -276,7 +281,7 @@ export const generateNursingPDF = async (
     consultation: Consultation,
     patient: Patient,
     doctor: UserProfile,
-    action: 'download' | 'print' = 'download'
+    action: PdfOutputAction = 'download'
 ) => {
     try {
         const { jsPDF, autoTable } = await loadPdfLibs();
@@ -501,7 +506,7 @@ export const generateFullFichaPDF = async (
     consultation: Consultation,
     patient: Patient,
     doctor: UserProfile,
-    action: 'download' | 'print' = 'download'
+    action: PdfOutputAction = 'download'
 ) => {
     try {
         const { jsPDF, autoTable } = await loadPdfLibs();
@@ -640,7 +645,7 @@ export const generatePrescriptionPDF = async (
     consultation: Consultation, 
     patient: Patient, 
     doctor: UserProfile, 
-    action: 'download' | 'print' = 'download'
+    action: PdfOutputAction = 'download'
 ) => {
   try {
     const { jsPDF, autoTable } = await loadPdfLibs();
@@ -702,8 +707,8 @@ export const generatePrescriptionPDF = async (
                     valign: 'middle',
                 },
                 headStyles: { 
-                    fillColor: COLORS.PRIMARY, 
-                    textColor: [255, 255, 255],
+                    fillColor: [226, 232, 240],
+                    textColor: COLORS.PRIMARY,
                     fontStyle: 'bold',
                     fontSize: 9,
                     halign: 'left',
@@ -774,7 +779,7 @@ export const generateExamsPDF = async (
     consultation: Consultation,
     patient: Patient,
     doctor: UserProfile,
-    action: 'download' | 'print' = 'download'
+    action: PdfOutputAction = 'download'
 ) => {
     try {
         const { jsPDF, autoTable } = await loadPdfLibs();
@@ -869,7 +874,7 @@ export const generateResonanceOrdersPDF = async (
     consultation: Consultation,
     patient: Patient,
     doctor: UserProfile,
-    action: 'download' | 'print' = 'download'
+    action: PdfOutputAction = 'download'
 ) => {
     try {
         const orders = (consultation.resonanceOrders || []) as ResonanceOrder[];
@@ -1001,7 +1006,7 @@ export const generateEegOrdersPDF = async (
     consultation: Consultation,
     patient: Patient,
     doctor: UserProfile,
-    action: 'download' | 'print' = 'download'
+    action: PdfOutputAction = 'download'
 ) => {
     try {
         const orders = (consultation.eegOrders || []) as EegOrder[];
