@@ -145,7 +145,28 @@ const drawHeader = (doc: any, doctor: UserProfile, consultation: Consultation) =
     }
 
     // 3. Información de Fecha y Ubicación (Derecha)
-    const guateDate = new Date(consultation.date).toLocaleString('es-GT', { 
+    let validDate = new Date();
+    if (consultation.date) {
+        if (typeof consultation.date === 'object' && 'toDate' in (consultation.date as any)) {
+            validDate = (consultation.date as any).toDate();
+        } else {
+            validDate = new Date(consultation.date);
+        }
+    } else if ((consultation as any).createdAt) {
+        let ca = (consultation as any).createdAt;
+        if (typeof ca === 'object' && 'toDate' in ca) {
+            validDate = ca.toDate();
+        } else {
+            validDate = new Date(ca);
+        }
+    }
+    
+    // Fallback if Date is invalid
+    if (isNaN(validDate.getTime())) {
+        validDate = new Date();
+    }
+
+    const guateDate = validDate.toLocaleString('es-GT', { 
         timeZone: 'America/Guatemala',
         year: 'numeric',
         month: 'long',
