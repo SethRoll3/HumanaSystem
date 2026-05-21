@@ -247,13 +247,12 @@ export const getPatientImportantNotices = async (patientId: string): Promise<Con
     try {
         const q = query(
             collection(db, 'consultations'),
-            where('patientId', '==', patientId),
-            where('status', 'in', ['finished', 'delivered'])
+            where('patientId', '==', patientId)
         );
         const snap = await getDocs(q);
         return snap.docs
             .map(doc => ({ ...(doc.data() as any), id: doc.id } as Consultation))
-            .filter(c => c.importantNotices && c.importantNotices.trim().length > 0)
+            .filter(c => (c.status === 'finished' || c.status === 'delivered') && c.importantNotices && c.importantNotices.trim().length > 0)
             .sort((a, b) => a.date - b.date);
     } catch (error) {
         console.error("Error fetching patient important notices:", error);

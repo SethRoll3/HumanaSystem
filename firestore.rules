@@ -105,7 +105,8 @@ service cloud.firestore {
     match /audit_logs/{logId} {
       allow create: if esPersonal();
       allow read: if esAdmin();
-      allow update, delete: if false; 
+      allow update: if esAdmin(); 
+      allow delete: if false; 
     }
 
     // 8. CONFIGURACIÓN DEL SISTEMA (system_settings)
@@ -158,6 +159,14 @@ service cloud.firestore {
     }
 
     match /quality_reviews/{reviewId} {
+      allow read, write: if esAdmin();
+    }
+
+    // 13. REPORTES DE FARMACIA (pharmacy_sales_reports)
+    match /pharmacy_sales_reports/{reportId} {
+      allow read, write: if esAdmin();
+    }
+    match /pharmacy_sales_reports/{reportId}/rows/{rowId} {
       allow read, write: if esAdmin();
     }
   }

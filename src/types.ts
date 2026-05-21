@@ -3,18 +3,27 @@ export interface UserProfile {
   uid: string;
   email: string;
   role: 'doctor' | 'licenciado' | 'admin' | 'receptionist' | 'nurse' | 'resident';
-  name: string; 
+  name: string;
   specialty?: string;
   specialties?: string[];
   isActive?: boolean; // New field for soft delete
   signatureUrl?: string; // URL of the uploaded signature image
   digitalCertData?: {
-      fileUrl: string; // La URL del .p12 en Storage
-      issuedBy: string; // Entidad emisora (ej. Avosi, Camara de Comercio)
-      issuedTo: string; // Nombre en el certificado
-      serialNumber: string; // Serial único
-      expiryDate: string; // Fecha vencimiento
-  }; 
+    fileUrl: string; // La URL del .p12 en Storage
+    issuedBy: string; // Entidad emisora (ej. Avosi, Camara de Comercio)
+    issuedTo: string; // Nombre en el certificado
+    serialNumber: string; // Serial único
+    expiryDate: string; // Fecha vencimiento
+  };
+  weeklySchedule?: DoctorWeeklySchedule; // NUEVO: Patrón de horario semanal fijo
+}
+
+export interface DoctorWeeklySchedule {
+  [dayOfWeek: number]: {
+    mode: 'available' | 'unavailable';
+    startTime?: string;
+    endTime?: string;
+  };
 }
 
 export enum PatientOrigin {
@@ -34,24 +43,30 @@ export interface Patient {
   id: string; // Firebase ID
   dpi?: string;
   billingCode?: string; // "Código del sistema de facturación"
-  
+
   fullName: string;
   occupation?: string; // New Occupation Field
   photoUrl?: string;
-  
+
   // New Contact Fields
   phone?: string;
   email?: string;
   responsibleName?: string; // "No hay" if check is true
   responsiblePhone?: string;
   responsibleEmail?: string;
+  
+  // Emergency Contact & Audit
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  createdByEmail?: string;
+  creatorName?: string;
 
   // Address Fields
   address?: {
-      country: string;
-      department?: string;
-      municipality?: string;
-      zone?: string;
+    country: string;
+    department?: string;
+    municipality?: string;
+    zone?: string;
   };
 
   // Context Fields
@@ -63,11 +78,11 @@ export interface Patient {
   // Legacy fields made optional for the new "Quick Create" flow
   age?: number;
   birthDate?: string; // NUEVO: Fecha de nacimiento (ISO string YYYY-MM-DD)
-  gender?: 'M' | 'F' | 'masculino' | 'femenino'; 
+  gender?: 'M' | 'F' | 'masculino' | 'femenino';
   origin?: PatientOrigin | string;
   protocol_code?: string;
   medical_history?: string;
-  
+
   // NEW: Attached files for medical history
   historyFiles?: PatientFile[];
 
@@ -80,8 +95,8 @@ export interface Medicine {
   name: string;
   brandName?: string;
   activeIngredient?: string;
-  stock: number; 
-  units_per_box: number; 
+  stock: number;
+  units_per_box: number;
   price: number; // Precio Público
   cost?: number; // NUEVO: Costo interno
   presentation: string; // "Medida" en el Excel
@@ -91,12 +106,12 @@ export interface Medicine {
 
 // NUEVO: Interfaz para el Catálogo de Laboratorios
 export interface LaboratoryItem {
-    id: string;
-    code?: string; // LAB0001
-    name: string; // Descripcion
-    measure?: string; // Medida (U)
-    cost?: number;
-    price: number;
+  id: string;
+  code?: string; // LAB0001
+  name: string; // Descripcion
+  measure?: string; // Medida (U)
+  cost?: number;
+  price: number;
 }
 
 export interface PrescriptionItem {
@@ -132,17 +147,17 @@ export interface Clinic {
 
 // --- UPDATED REFERRAL GROUP ---
 export interface ReferralGroup {
-    id: string; // Unique ID for keying
-    pathology: string; // The selected pathology name
-    exams: string[];
-    note?: string; // Specific note for this pathology
+  id: string; // Unique ID for keying
+  pathology: string; // The selected pathology name
+  exams: string[];
+  note?: string; // Specific note for this pathology
 }
 
 // --- SPECIALTY REFERRAL ---
 export interface SpecialtyReferral {
-    id: string;
-    specialty: string;
-    note?: string;
+  id: string;
+  specialty: string;
+  note?: string;
 }
 
 export interface ResonanceOrder {
@@ -175,12 +190,12 @@ export interface EegOrder {
 }
 
 export interface Consultation {
-  id?: string; 
+  id?: string;
   status: 'waiting' | 'in_progress' | 'finished' | 'delivered'; // Workflow Status Updated
   paymentReceipt?: string; // Boleta de Pago
   paymentAmount?: number; // NUEVO: Valor de la boleta para contabilidad
   consultationType?: 'Nueva' | 'Reconsulta';
-  
+
   receptionistId?: string; // Who created the check-in
   doctorId?: string; // Who is attending
   patientId: string;
@@ -188,9 +203,9 @@ export interface Consultation {
   patientIsForeign?: boolean; // NEW: Indica si el paciente es foráneo (no del depto Guatemala)
   doctorName?: string;
   doctorSpecialty?: string;
-  date: number; 
+  date: number;
   appointmentId?: string;
-  
+
   // Clinical Data (Can be null initially)
   vitals?: {
     temp: number;
@@ -198,21 +213,21 @@ export interface Consultation {
     pressure: string;
   };
   diagnosis?: string;
-  
+
   // Referral Section - Updated
-  referralGroups?: ReferralGroup[]; 
-  referralNote?: string; 
-  
+  referralGroups?: ReferralGroup[];
+  referralNote?: string;
+
   // Step 4: Referrals to Specialists
   specialtyReferrals?: SpecialtyReferral[];
-  
+
   mentalHealthObservation?: string;
 
   prescription?: PrescriptionItem[];
   prescriptionNotes?: string; // New field for general prescription observations
   prescriptionNumber?: string;
-  exams?: string[]; 
-  
+  exams?: string[];
+
   signature?: {
     type: 'biometric' | 'digital_token' | 'image' | 'manual' | 'digital_p12';
     url?: string;
@@ -221,7 +236,7 @@ export interface Consultation {
     signatureDate?: number;
     certificateSerial?: string;
   };
-  
+
   followUpRequired?: boolean;
   followUpText?: string;
   followUpRequestText?: string;
@@ -270,7 +285,7 @@ export interface AppNotification {
 
 // --- MODULE 2: APPOINTMENTS SYSTEM ---
 
-export type AppointmentStatus = 
+export type AppointmentStatus =
   | 'scheduled'        // Cita agendada (Gris)
   | 'confirmed_phone'  // Confirmada por teléfono (Amarillo)
   | 'paid_checked_in'  // Pagada en caja / En sala (Verde) - Esperando residente
@@ -292,26 +307,26 @@ export interface Appointment {
   residentSpecialtyFormId?: string | null;
   residentSpecialtyFormName?: string | null;
   residentSpecialtyData?: Record<string, any>;
-  
+
   // Timeframe
   date: any; // Timestamp (Fecha y hora de inicio)
   endDate: any; // Timestamp (Fecha y hora de fin estimada)
-  
+
   status: AppointmentStatus;
   reason?: string; // Motivo / observaciones de la cita (campo legacy, se mantiene por compatibilidad)
   reasonForConsultation?: string; // NUEVO: Razón de consulta (Especialidad)
   modality?: 'Virtual' | 'Presencial'; // NUEVO: Modalidad de la cita
   isIGSS?: boolean;
   igssType?: 'Consulta normal' | 'Evaluación básica' | 'Evaluación avanzada' | 'Evaluación prequirúrgica';
-  
+
   // CRM Tracking
   createdAt: any;
   createdBy: string; // User ID
-  
+
   confirmedAt?: any;
   confirmedBy?: string; // Recepcionista que llamó
   confirmationMethod?: 'En Persona' | 'Por Teléfono' | 'Por WhatsApp'; // NUEVO CAMPO
-  
+
   paymentReceipt?: string; // Número de boleta (Requisito para pasar a consulta)
   paymentAmount?: number;
   paidAt?: any;

@@ -360,15 +360,41 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
       const q = query(collection(db, 'appointments'), ...baseConstraints);
       const snapshot = await getDocs(q);
 
-      const processedApps = snapshot.docs.map(docSnap => {
+      const processedApps = await Promise.all(snapshot.docs.map(async docSnap => {
         const app = { id: docSnap.id, ...docSnap.data() } as Appointment;
+        let pName = app.patientName;
+        
+        // Si el nombre es desconocido, intentar resolverlo
+        if ((!pName || pName === 'Desconocido') && app.patientId) {
+            try {
+                // Primero ver si lo tenemos en la lista cargada (si existe)
+                const inList = allPatients.find(p => p.id === app.patientId);
+                if (inList) {
+                    pName = inList.fullName;
+                    // Arreglar en BD
+                    appointmentService.resolveAndFixPatientName(app.id!, app.patientId);
+                } else {
+                    // Si no, buscarlo directamente (getPatientByDPI maneja varios fallbacks)
+                    const p = await getPatientByDPI(app.patientId);
+                    if (p) {
+                        pName = p.fullName;
+                        // Arreglar en BD
+                        appointmentService.resolveAndFixPatientName(app.id!, app.patientId);
+                    }
+                }
+            } catch (e) {
+                console.error("Error resolving patient name in agenda:", e);
+            }
+        }
+
         return {
           ...app,
+          patientName: pName || 'Desconocido',
           date: app.date instanceof Timestamp ? app.date.toDate() : new Date(app.date),
           endDate: app.endDate instanceof Timestamp ? app.endDate.toDate() : new Date(app.endDate),
           createdAt: app.createdAt instanceof Timestamp ? app.createdAt.toDate() : app.createdAt
         };
-      });
+      }));
 
       if (useResidentList) {
         setResidentAppointments(processedApps);
@@ -1262,8 +1288,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
                 {/* {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />} */}
                 {step === 2 && (
-                  <StepPrescription 
-                    currentUser={user} 
+                  <StepPrescription
+                    currentUser={user}
                     isSaving={isSaving}
                     onFinish={methods.handleSubmit(async (d) => {
                       // EL SIGUIENTE CÓDIGO ES EL MISMO QUE ESTABA EN STEPFINALIZE
@@ -1312,7 +1338,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                           specialtyFormName: specialtyFormName || null,
                           specialtyData: filteredSpecialtyData || {},
                           // MARCAMOS ESTOS CAMPOS COMO DESACTIVADOS
-                          exams: [], 
+                          exams: [],
                           referralGroups: [],
                           specialtyReferrals: [],
                           followUpText: 'Sección desactivada temporalmente',
@@ -1455,14 +1481,14 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                     </button>
                   )}
                 </div> */}
-                
+
                 {/* BOTÓN ATRÁS SIMPLIFICADO PARA SALIR DE LA CONSULTA */}
                 <div className="mt-4 flex justify-start">
                   <button onClick={() => {
-                      setCurrentPatient(null);
-                      setCurrentConsultationType(undefined);
-                      setCurrentModality(undefined);
-                      setStep(0);
+                    setCurrentPatient(null);
+                    setCurrentConsultationType(undefined);
+                    setCurrentModality(undefined);
+                    setStep(0);
                   }} className="px-6 py-2 border rounded-xl font-bold hover:bg-slate-50 transition text-slate-500">
                     Cancelar / Salir
                   </button>
@@ -1763,27 +1789,58 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
         currentUser={user}
         users={allUsers}
         onConfirmPhone={async (id, method) => {
-          await appointmentService.confirmByPhone(id, user.uid, method);
-          toast.success("Cita confirmada");
-          fetchAgendaPage(isResident);
-          setShowAppointmentDetailsModal(false);
+          const loadingToast = toast.loading("Confirmando...");
+          try {
+            await Promise.race([
+              appointmentService.confirmByPhone(id, user.uid, method),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout-Firebase')), 5000))
+            ]);
+            toast.success("Cita confirmada", { id: loadingToast });
+            fetchAgendaPage(isResident);
+            setShowAppointmentDetailsModal(false);
+          } catch (e: any) {
+            console.error(e);
+            const errMsg = e?.message || '';
+            toast.error(errMsg.includes('Quota') || errMsg.includes('Timeout') ? "Error: Cuota excedida o red lenta." : "Error al confirmar cita", { id: loadingToast });
+          }
         }}
         onRegisterPayment={async (id, receipt, amount) => {
-          await appointmentService.registerPayment(id, user.uid, receipt, amount);
-          toast.success("Pago registrado");
-          fetchAgendaPage(isResident);
-          setShowAppointmentDetailsModal(false);
+          const loadingToast = toast.loading("Registrando pago...");
+          try {
+            await Promise.race([
+              appointmentService.registerPayment(id, user.uid, receipt, amount),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout-Firebase')), 5000))
+            ]);
+            toast.success("Pago registrado", { id: loadingToast });
+            fetchAgendaPage(isResident);
+            setShowAppointmentDetailsModal(false);
+          } catch (e: any) {
+            console.error(e);
+            const errMsg = e?.message || '';
+            toast.error(errMsg.includes('Quota') || errMsg.includes('Timeout') ? "Error: Cuota excedida o red lenta." : "Error al registrar pago", { id: loadingToast });
+          }
         }}
         onCancel={async (id, reason) => {
-          if (reason === 'no_show_internal') {
-            await appointmentService.markNoShow(id);
-            toast.success("Marcada como no se presentó");
-          } else {
-            await appointmentService.cancelAppointment(id, reason);
-            toast.success("Cita cancelada");
+          const loadingToast = toast.loading("Cancelando...");
+          try {
+            await Promise.race([
+              (async () => {
+                if (reason === 'no_show_internal') {
+                  await appointmentService.markNoShow(id);
+                } else {
+                  await appointmentService.cancelAppointment(id, reason);
+                }
+              })(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout-Firebase')), 5000))
+            ]);
+            toast.success(reason === 'no_show_internal' ? "Marcada como no se presentó" : "Cita cancelada", { id: loadingToast });
+            fetchAgendaPage(isResident);
+            setShowAppointmentDetailsModal(false);
+          } catch (e: any) {
+            console.error(e);
+            const errMsg = e?.message || '';
+            toast.error(errMsg.includes('Quota') || errMsg.includes('Timeout') ? "Error: Cuota excedida o red lenta." : "Error al cancelar cita", { id: loadingToast });
           }
-          fetchAgendaPage(isResident);
-          setShowAppointmentDetailsModal(false);
         }}
         onUpdateAppointment={async (id, updates) => {
           try {

@@ -162,9 +162,9 @@ export const PatientEditModal: React.FC<PatientEditModalProps> = ({
       }
 
       const duplicateCheck = await checkPatientDuplicates({
-        fullName: finalPayload.fullName,
-        billingCode: finalPayload.billingCode,
-        dpi: finalPayload.dpi,
+        fullName: finalPayload.fullName !== patient.fullName ? finalPayload.fullName : undefined,
+        billingCode: finalPayload.billingCode !== patient.billingCode ? finalPayload.billingCode : undefined,
+        dpi: finalPayload.dpi !== patient.dpi ? finalPayload.dpi : undefined,
         excludeId: patient.id
       });
       if (duplicateCheck.billingCodeMatch) {
@@ -479,18 +479,38 @@ export const PatientEditModal: React.FC<PatientEditModalProps> = ({
               <input type="checkbox" className="w-5 h-5" checked={isNoResponsible} onChange={e => setIsNoResponsible(e.target.checked)} />
               <label className="text-xs font-bold text-slate-500 uppercase">EL PACIENTE VE POR SU PROPIA SALUD</label>
             </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label>
-              <input disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleName || ''} onChange={e => setFormValues({ ...formValues, responsibleName: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label>
-              <input disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsiblePhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setFormValues({ ...formValues, responsiblePhone: numeric }); }} />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label>
-              <input type="email" disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : formValues.responsibleEmail || ''} onChange={e => setFormValues({ ...formValues, responsibleEmail: e.target.value })} />
-            </div>
+            {!isNoResponsible && (
+              <>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label>
+                  <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.responsibleName || ""} onChange={e => setFormValues({ ...formValues, responsibleName: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label>
+                  <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.responsiblePhone || ""} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ""); setFormValues({ ...formValues, responsiblePhone: numeric }); }} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label>
+                  <input type="email" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.responsibleEmail || ""} onChange={e => setFormValues({ ...formValues, responsibleEmail: e.target.value })} />
+                </div>
+              </>
+            )}
+
+            {isNoResponsible && (
+              <>
+                <div className="md:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 font-semibold">
+                  ⚠️ El paciente es autónomo. Complete el contacto de emergencia.
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-2 block">Nombre Contacto de Emergencia</label>
+                  <input className="w-full p-4 bg-white border border-amber-300 rounded-2xl outline-none focus:ring-2 focus:ring-amber-400" value={formValues.emergencyContactName || ""} onChange={e => setFormValues({ ...formValues, emergencyContactName: e.target.value })} placeholder="Ej: María García" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-2 block">Teléfono Contacto de Emergencia</label>
+                  <input className="w-full p-4 bg-white border border-amber-300 rounded-2xl outline-none focus:ring-2 focus:ring-amber-400" value={formValues.emergencyContactPhone || ""} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ""); setFormValues({ ...formValues, emergencyContactPhone: numeric }); }} placeholder="1234 5678" inputMode="numeric" />
+                </div>
+              </>
+            )}
 
             <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Historial Clínico y Archivos</div>
             <div className="md:col-span-2">

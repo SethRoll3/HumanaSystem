@@ -6,7 +6,6 @@
     "source": "functions"
   },
   "hosting": {
-    "target": "clinica-asociacion-humana-sys",
     "public": "dist",
     "ignore": [
       "firebase.json",

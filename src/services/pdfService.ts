@@ -11,7 +11,7 @@ import type { SpecialtyFormDefinition } from '../components/Wizard/SpecialtyForm
 
 // --- CONFIGURACIÓN DE COLORES (PROFESSIONAL WARM NEUTRAL) ---
 // Paleta Neutra Cálida: Gris Carbón + Bronce Suave. Sin tonos morados/azules.
-const COLORS = {
+const COLORS: Record<string, [number, number, number]> = {
     PRIMARY: [51, 51, 51],      // #333333 - Gris Carbón Neutro (Elegante)
     ACCENT: [166, 124, 82],     // #A67C52 - Bronce/Cafe Suave (Cálido y Profesional)
     HEADER_BG: [255, 253, 250], // #FFFDFA - Blanco Crema (Muy sutil)
@@ -43,17 +43,29 @@ const drawClinicLogo = (doc: any, x: number, y: number, w: number, h: number) =>
     if (logo) doc.addImage(logo, 'PNG', x, y, w, h);
 };
 
-// Helper to lazy load PDF libraries
+// Helper to load PDF libraries dynamically to avoid bundle size and initialization issues
 const loadPdfLibs = async () => {
-  const { jsPDF } = await import('jspdf');
-  let autoTable;
   try {
-    const mod = await import('jspdf-autotable');
-    autoTable = mod.default || mod;
-  } catch (e) {
-    console.warn("AutoTable failed to load dynamically", e);
+    const jspdfModule = await import('jspdf');
+    const jsPDF = jspdfModule.default || jspdfModule.jsPDF;
+    
+    let autoTable;
+    try {
+      const autoTableModule = await import('jspdf-autotable');
+      autoTable = autoTableModule.default || autoTableModule;
+    } catch (e) {
+      console.warn("AutoTable failed to load dynamically", e);
+    }
+    
+    return { jsPDF, autoTable };
+  } catch (error) {
+    console.error("Error loading jsPDF dynamically:", error);
+    // Si falla por problemas de caché/chunk, forzamos recarga de la página si es un error de importación dinámica
+    if (error instanceof TypeError && error.message.includes('dynamically imported module')) {
+      window.location.reload();
+    }
+    throw error;
   }
-  return { jsPDF, autoTable };
 };
 
 type PdfOutputAction = 'download' | 'print' | 'preview';

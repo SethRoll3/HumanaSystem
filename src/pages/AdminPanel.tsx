@@ -6,7 +6,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase/config.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserProfile, Patient, PatientFile, Specialty, Clinic } from '../types.ts';
-import { Users, ClipboardList, Package, FlaskConical, Stethoscope, History, Edit2, Trash2, Ban, Plus, X, Save, Loader2, AlertTriangle, CheckCircle, Search, UserMinus, ShieldAlert, ChevronLeft, ChevronRight, Globe, Building2, UploadCloud, FileText, Database, Download, Upload, Clock, FileSpreadsheet, Cloud, Wallet, Camera, RefreshCw } from 'lucide-react';
+import { Users, ClipboardList, Package, FlaskConical, Stethoscope, History, Edit2, Trash2, Ban, Plus, X, Save, Loader2, AlertTriangle, CheckCircle, Search, UserMinus, ShieldAlert, ChevronLeft, ChevronRight, Globe, Building2, UploadCloud, FileText, Database, Download, Upload, Clock, FileSpreadsheet, Cloud, Wallet, Camera, RefreshCw, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { logAuditAction } from '../services/auditService.ts';
 import { createSystemUser, updateSystemUser } from '../services/userService.ts';
@@ -20,6 +20,7 @@ import { SpecialtyFormsAdmin } from '../components/Admin/SpecialtyFormsAdmin.tsx
 import { getClinics, createClinic, updateClinic, deleteClinic } from '../services/clinicService.ts';
 import { DoctorScheduleAdmin } from '../components/Admin/DoctorScheduleManager.tsx';
 import { QualityReportsAudit } from '../components/Admin/QualityReportsAudit.tsx';
+import { ReportsDashboard } from '../components/Admin/ReportsDashboard.tsx';
 // @ts-ignore
 import * as XLSX from 'xlsx';
 
@@ -27,7 +28,7 @@ interface AdminPanelProps {
   user: UserProfile;
 }
 
-type AdminTab = 'users' | 'patients' | 'inventory' | 'laboratories' | 'external' | 'pathologies' | 'specialties' | 'forms' | 'logs' | 'security' | 'accounting' | 'clinics' | 'doctor_schedule' | 'quality_reports';
+type AdminTab = 'users' | 'patients' | 'inventory' | 'laboratories' | 'external' | 'pathologies' | 'specialties' | 'forms' | 'logs' | 'security' | 'accounting' | 'clinics' | 'doctor_schedule' | 'quality_reports' | 'reports_dashboard';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
@@ -582,6 +583,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
 
   const tabs: {id: AdminTab, label: string, icon: any}[] = [
       { id: 'accounting', label: 'Contabilidad', icon: Wallet },
+      { id: 'reports_dashboard', label: 'Dashboard Reportes', icon: BarChart3 },
       { id: 'users', label: 'Usuarios', icon: Users },
       { id: 'patients', label: 'Pacientes', icon: ClipboardList },
       { id: 'inventory', label: 'Inventario', icon: Package },
@@ -650,6 +652,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
         >
             {activeTab === 'accounting' ? (
                 <AccountingDashboard />
+            ) : activeTab === 'reports_dashboard' ? (
+                <ReportsDashboard />
             ) : activeTab === 'forms' ? (
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[650px]">
                     <SpecialtyFormsAdmin />

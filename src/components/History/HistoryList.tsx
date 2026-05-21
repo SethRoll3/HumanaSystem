@@ -44,26 +44,27 @@ export const HistoryList: React.FC<HistoryListProps> = ({ user, onSelectConsulta
                 // LOGIC CORRECTION: 
                 // Admin OR Nurse -> See ALL finished consultations.
                 // Doctor -> See ONLY their own finished consultations.
+                // Evitamos el 'in' de status en la query para no requerir índices compuestos complejos, filtramos en memoria
                 if (isAdmin || isNurse || isReceptionist) {
                     q = query(
                         collection(db, 'consultations'), 
-                        where('status', 'in', ['finished', 'delivered']), 
                         orderBy('date', 'desc'), 
-                        limit(100)
+                        limit(200)
                     );
                 } else if (isDoctor) {
                     q = query(
                         collection(db, 'consultations'), 
-                        where('status', 'in', ['finished', 'delivered']), 
                         where('doctorId', '==', user.uid),
                         orderBy('date', 'desc'), 
-                        limit(50)
+                        limit(100)
                     );
                 }
                 
                 if (q) {
                     const snap = await getDocs(q);
-                    const data = snap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as Consultation));
+                    let data = snap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as Consultation));
+                    // Filtrar en memoria para asegurar que solo vemos finished o delivered
+                    data = data.filter(c => c.status === 'finished' || c.status === 'delivered');
                     setConsultations(data);
                 }
             } catch (e) {

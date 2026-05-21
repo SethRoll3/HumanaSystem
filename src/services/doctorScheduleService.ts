@@ -69,7 +69,36 @@ export const doctorScheduleService = {
       where('date', '==', dateKey)
     );
     const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as DoctorDaySchedule));
+    const exceptions = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as DoctorDaySchedule));
+    
+    if (exceptions.length > 0) {
+      return exceptions;
+    }
+
+    // No exception found, fallback to weekly schedule
+    const userDoc = await getDoc(doc(db, 'users', doctorId));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      if (userData.weeklySchedule) {
+        const dayOfWeek = date.getDay();
+        const rule = userData.weeklySchedule[dayOfWeek];
+        if (rule) {
+          return [{
+            id: `weekly-${dateKey}`,
+            doctorId,
+            doctorName: userData.name || '',
+            date: dateKey,
+            mode: rule.mode,
+            startTime: rule.startTime,
+            endTime: rule.endTime,
+            createdAt: Timestamp.now(),
+            createdBy: 'system'
+          }];
+        }
+      }
+    }
+    
+    return [];
   },
 
   async createSchedule(data: Omit<DoctorDaySchedule, 'id' | 'createdAt'>): Promise<string> {

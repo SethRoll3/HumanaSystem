@@ -59,6 +59,32 @@ export const AvailabilityView: React.FC<AvailabilityViewProps> = ({ currentUser,
     return map;
   }, [schedules]);
 
+  const currentDoctor = useMemo(() => doctors.find(d => d.uid === selectedDoctorId), [doctors, selectedDoctorId]);
+
+  const getScheduleForDate = (date: Date): DoctorDaySchedule | null => {
+    const key = toDateKey(date);
+    if (scheduleByDate[key]) return scheduleByDate[key];
+    
+    if (currentDoctor?.weeklySchedule) {
+      const dayOfWeek = date.getDay();
+      const rule = currentDoctor.weeklySchedule[dayOfWeek];
+      if (rule) {
+        return {
+          id: `weekly-${key}`,
+          doctorId: selectedDoctorId,
+          doctorName: currentDoctor.name,
+          date: key,
+          mode: rule.mode,
+          startTime: rule.startTime,
+          endTime: rule.endTime,
+          createdAt: new Date(),
+          createdBy: 'system'
+        };
+      }
+    }
+    return null;
+  };
+
   const appointmentsByDate = useMemo(() => {
     const map: Record<string, Appointment[]> = {};
     appointments.forEach(appt => {
@@ -72,20 +98,30 @@ export const AvailabilityView: React.FC<AvailabilityViewProps> = ({ currentUser,
 
   const availabilityByDate = useMemo(() => {
     const map: Record<string, boolean> = {};
-    Object.keys(scheduleByDate).forEach(key => {
-      const schedule = scheduleByDate[key];
-      const slots = buildAvailableSlots({
-        schedule,
-        appointments: appointmentsByDate[key] || [],
-        slotMinutes: SLOT_MINUTES
-      });
-      map[key] = slots.length > 0;
-    });
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    
+    for (let d = 1; d <= lastDay; d++) {
+      const date = new Date(year, month, d);
+      const key = toDateKey(date);
+      const schedule = getScheduleForDate(date);
+      if (schedule && schedule.mode === 'available') {
+        const slots = buildAvailableSlots({
+          schedule,
+          appointments: appointmentsByDate[key] || [],
+          slotMinutes: SLOT_MINUTES
+        });
+        map[key] = slots.length > 0;
+      } else {
+        map[key] = false;
+      }
+    }
     return map;
-  }, [scheduleByDate, appointmentsByDate]);
+  }, [scheduleByDate, appointmentsByDate, currentDoctor, monthDate]);
 
   const selectedDateKey = toDateKey(selectedDate);
-  const selectedSchedule = scheduleByDate[selectedDateKey];
+  const selectedSchedule = getScheduleForDate(selectedDate);
   const selectedAppointments = appointmentsByDate[selectedDateKey] || [];
   const selectedSlots = buildAvailableSlots({
     schedule: selectedSchedule,

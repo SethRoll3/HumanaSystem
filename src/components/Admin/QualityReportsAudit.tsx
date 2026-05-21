@@ -62,7 +62,9 @@ export const QualityReportsAudit: React.FC = () => {
         const toastId = toast.loading(`Generando Excel del ${dateStr}...`);
         
         try {
-            const blob = await generateQualityReportExcel(dateStr);
+            const start = new Date(`${dateStr}T00:00:00`);
+            const end = new Date(`${dateStr}T23:59:59.999`);
+            const blob = await generateQualityReportExcel(start, end);
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

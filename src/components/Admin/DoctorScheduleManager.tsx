@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar as CalendarIcon, Clock, User, Plus, Edit2, Trash2, Loader2, AlertTriangle, CheckCircle, ChevronLeft, ChevronRight, UploadCloud, FileSpreadsheet, CalendarDays } from 'lucide-react';
 import { toast } from 'sonner';
 import { DoctorDaySchedule, DoctorScheduleSettings, UserProfile } from '../../types';
-import { userService } from '../../services/userService';
+import { userService, updateSystemUser } from '../../services/userService';
 import { doctorScheduleService } from '../../services/doctorScheduleService';
 import * as XLSX from 'xlsx';
 
@@ -232,6 +232,33 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
     return map;
   }, [schedules]);
 
+  const currentDoctor = useMemo(() => doctors.find(d => d.uid === selectedDoctorId), [doctors, selectedDoctorId]);
+
+  const getScheduleForDate = (date: Date): DoctorDaySchedule | null => {
+    const dateKey = toDateKey(date);
+    if (schedulesByDate[dateKey]) {
+      return schedulesByDate[dateKey];
+    }
+    if (currentDoctor?.weeklySchedule) {
+      const dayOfWeek = date.getDay();
+      const rule = currentDoctor.weeklySchedule[dayOfWeek];
+      if (rule) {
+        return {
+          id: `weekly-${dateKey}`,
+          doctorId: selectedDoctorId,
+          doctorName: currentDoctor.name,
+          date: dateKey,
+          mode: rule.mode,
+          startTime: rule.startTime,
+          endTime: rule.endTime,
+          createdAt: new Date(),
+          createdBy: 'system'
+        };
+      }
+    }
+    return null;
+  };
+
   const weekDays = useMemo(() => {
     const days: Date[] = [];
     for (let i = 0; i < 6; i++) {
@@ -420,7 +447,7 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
       setIsSavingSchedule(true);
       const doctor = doctors.find(d => d.uid === selectedDoctorId);
 
-      if (editingSchedule && editingSchedule.id) {
+      if (editingSchedule && editingSchedule.id && !editingSchedule.id.startsWith('weekly-')) {
         await doctorScheduleService.updateSchedule(editingSchedule.id, {
           date: formState.date,
           mode: formState.mode,
@@ -489,6 +516,21 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
       const day = new Date(year, month, d);
       day.setHours(0, 0, 0, 0);
       days.push(day);
+    }
+    return days;
+  };
+
+  // Returns all dates from today for the next N months (used for permanent Excel import)
+  const getPermanentDates = (months: number = 12) => {
+    const days: Date[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const end = new Date(today);
+    end.setMonth(end.getMonth() + months);
+    const current = new Date(today);
+    while (current <= end) {
+      days.push(new Date(current));
+      current.setDate(current.getDate() + 1);
     }
     return days;
   };
@@ -659,12 +701,13 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
           created: 0,
           updated: 0,
         };
-        const monthDates = getMonthDates(importMonth);
+        const monthDates = getPermanentDates(12);
         const schedulesCache = new Map<string, Record<string, DoctorDaySchedule>>();
         const doctorEntries = new Map<
           string,
           { doctor: UserProfile; entries: Array<{ days: number[]; startTime: string; endTime: string }>; allowedWeekdays: Set<number> }
         >();
+
         for (const row of rows) {
           if (!row || row.length === 0) continue;
           const rawDoctor = String(row[colEspecialista] || '').trim();
@@ -717,120 +760,35 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
           doctorEntries.set(doctor.uid, entry);
         }
 
+        // Nuevo enfoque permanente: Guardar patrón semanal en el perfil del doctor
         for (const entry of doctorEntries.values()) {
           const { doctor, entries, allowedWeekdays } = entry;
-          let doctorSchedules = schedulesCache.get(doctor.uid);
-          if (!doctorSchedules) {
-            const list = await doctorScheduleService.getSchedulesByDoctor(doctor.uid);
-            doctorSchedules = {};
-            list.forEach(s => {
-              if (s.date) doctorSchedules![s.date] = s;
-            });
-            schedulesCache.set(doctor.uid, doctorSchedules);
-          }
+          
+          const weeklySchedule: Record<number, any> = {};
+          
           for (const scheduleEntry of entries) {
-            const targetDays = monthDates.filter(
-              d => scheduleEntry.days.includes(d.getDay()) && d.getDay() !== 0
-            );
-            for (const day of targetDays) {
-              const dateKey = toDateKey(day);
-              const existing = doctorSchedules[dateKey];
-              if (existing?.id) {
-                await doctorScheduleService.updateSchedule(existing.id, {
-                  date: dateKey,
-                  mode: 'available',
-                  startTime: scheduleEntry.startTime,
-                  endTime: scheduleEntry.endTime,
-                  maxPatients: undefined,
-                });
-                report.updated += 1;
-                doctorSchedules[dateKey] = {
-                  ...existing,
-                  date: dateKey,
-                  mode: 'available',
-                  startTime: scheduleEntry.startTime,
-                  endTime: scheduleEntry.endTime,
-                };
-              } else {
-                const newId = await doctorScheduleService.createSchedule({
-                  doctorId: doctor.uid,
-                  doctorName: doctor.name,
-                  date: dateKey,
-                  mode: 'available',
-                  startTime: scheduleEntry.startTime,
-                  endTime: scheduleEntry.endTime,
-                  maxPatients: undefined,
-                  createdBy: currentUser.uid,
-                });
-                report.created += 1;
-                doctorSchedules[dateKey] = {
-                  id: newId,
-                  doctorId: doctor.uid,
-                  doctorName: doctor.name,
-                  date: dateKey,
-                  mode: 'available',
-                  startTime: scheduleEntry.startTime,
-                  endTime: scheduleEntry.endTime,
-                  maxPatients: undefined,
-                  createdAt: new Date(),
-                  createdBy: currentUser.uid,
-                };
-              }
+            for (const day of scheduleEntry.days) {
+               weeklySchedule[day] = {
+                 mode: 'available',
+                 startTime: scheduleEntry.startTime,
+                 endTime: scheduleEntry.endTime
+               };
             }
           }
-
+          
           const allowed = Array.from(allowedWeekdays);
           if (allowed.length > 0) {
             const unavailableWeekdays = [1, 2, 3, 4, 5, 6].filter(d => !allowed.includes(d));
-            const unavailableDays = monthDates.filter(
-              d => unavailableWeekdays.includes(d.getDay()) && d.getDay() !== 0
-            );
-            for (const day of unavailableDays) {
-              const dateKey = toDateKey(day);
-              const existing = doctorSchedules[dateKey];
-              if (existing?.id) {
-                await doctorScheduleService.updateSchedule(existing.id, {
-                  date: dateKey,
-                  mode: 'unavailable',
-                  startTime: undefined,
-                  endTime: undefined,
-                  maxPatients: undefined,
-                });
-                report.updated += 1;
-                doctorSchedules[dateKey] = {
-                  ...existing,
-                  date: dateKey,
-                  mode: 'unavailable',
-                  startTime: undefined,
-                  endTime: undefined,
-                  maxPatients: undefined,
-                };
-              } else {
-                const newId = await doctorScheduleService.createSchedule({
-                  doctorId: doctor.uid,
-                  doctorName: doctor.name,
-                  date: dateKey,
-                  mode: 'unavailable',
-                  startTime: undefined,
-                  endTime: undefined,
-                  maxPatients: undefined,
-                  createdBy: currentUser.uid,
-                });
-                report.created += 1;
-                doctorSchedules[dateKey] = {
-                  id: newId,
-                  doctorId: doctor.uid,
-                  doctorName: doctor.name,
-                  date: dateKey,
-                  mode: 'unavailable',
-                  startTime: undefined,
-                  endTime: undefined,
-                  maxPatients: undefined,
-                  createdAt: new Date(),
-                  createdBy: currentUser.uid,
-                };
-              }
+            for (const day of unavailableWeekdays) {
+               weeklySchedule[day] = { mode: 'unavailable' };
             }
+          }
+          
+          try {
+             await updateSystemUser(doctor.uid, { weeklySchedule }, currentUser.email);
+             report.updated += 1;
+          } catch (err) {
+             console.error(`Error updating weeklySchedule for ${doctor.name}:`, err);
           }
         }
         setImportReport(report);
@@ -1055,23 +1013,12 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
                         Importar horarios
                       </p>
                       <p className="text-xs font-semibold text-slate-700">
-                        Cargue el Excel y aplique al mes elegido
+                        Cargue el Excel — los horarios se aplican de forma permanente e indefinida.
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <input
-                      type="month"
-                      value={`${importMonth.getFullYear()}-${String(importMonth.getMonth() + 1).padStart(2, '0')}`}
-                      onChange={e => {
-                        const [year, month] = e.target.value.split('-').map(Number);
-                        if (!year || !month) return;
-                        const next = new Date(year, month - 1, 1);
-                        next.setHours(0, 0, 0, 0);
-                        setImportMonth(next);
-                      }}
-                      className="px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-600"
-                    />
+                    {/* Month picker removed: import is now permanent (next 12 months) */}
                     <input
                       ref={excelInputRef}
                       type="file"
@@ -1410,7 +1357,7 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
                         return <div key={`empty-${idx}`} className="h-8" />;
                       }
                       const dateKey = toDateKey(cell.date);
-                      const schedule = schedulesByDate[dateKey];
+                      const schedule = getScheduleForDate(cell.date);
                       const isSelected = bulkWeekdays.includes(cell.date.getDay()) && cell.date.getDay() !== 0;
                       const isUnavailable = schedule?.mode === 'unavailable';
                       const isAvailable = schedule?.mode === 'available';
@@ -1480,7 +1427,7 @@ export const DoctorScheduleAdmin: React.FC<DoctorScheduleAdminProps> = ({ curren
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {weekDays.map(d => {
                 const dateKey = toDateKey(d);
-                const schedule = schedulesByDate[dateKey];
+                const schedule = getScheduleForDate(d);
                 const isUnavailable = schedule?.mode === 'unavailable';
                 const isAvailable = schedule?.mode === 'available';
                 const hasRule = !!schedule;

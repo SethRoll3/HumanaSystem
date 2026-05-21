@@ -198,12 +198,40 @@ export const appointmentService = {
       where('date', '>=', Timestamp.fromDate(startOfDay)),
       orderBy('date', 'asc')
     );
-
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({
       id: doc.id,
       ...(doc.data() as any)
     } as Appointment));
+  },
+
+  async resolveAndFixPatientName(appointmentId: string, patientId: string) {
+    try {
+      const patientRef = doc(db, 'patients', patientId);
+      const patientSnap = await getDoc(patientRef);
+      
+      let fullName = '';
+      if (patientSnap.exists()) {
+        fullName = patientSnap.data().fullName;
+      } else {
+        // Fallback search
+        const q = query(collection(db, 'patients'), where('id', '==', patientId));
+        const qs = await getDocs(q);
+        if (!qs.empty) {
+          fullName = qs.docs[0].data().fullName;
+        }
+      }
+
+      if (fullName) {
+        await updateDoc(doc(db, COLLECTION_NAME, appointmentId), {
+          patientName: fullName
+        });
+        return fullName;
+      }
+    } catch (e) {
+      console.error("Error resolving and fixing patient name:", e);
+    }
+    return null;
   },
 
   async getAppointmentsPaginated(params: {

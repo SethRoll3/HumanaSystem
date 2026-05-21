@@ -21,8 +21,9 @@ import {
 import { Appointment, AppointmentStatus, Patient, UserProfile } from '../../types';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Timestamp } from 'firebase/firestore';
-import { getPatientByDPI, patientService } from '../../services/patientService';
+import { doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { getPatientByDPI, patientService } from '../../services/patientService.ts';
+import { db } from '../../firebase/config.ts';
 import { PatientEditModal } from '../Patients/PatientEditModal';
 import { toast } from 'sonner';
 
@@ -69,6 +70,34 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
   const [confirmationMethod, setConfirmationMethod] = useState<'En Persona' | 'Por Teléfono' | 'Por WhatsApp' | ''>('');
 
   const [isEditing, setIsEditing] = useState(false);
+  const [displayPatientName, setDisplayPatientName] = useState(appointment?.patientName || '');
+
+  React.useEffect(() => {
+    if (appointment) {
+      setDisplayPatientName(appointment.patientName || '');
+    }
+  }, [appointment]);
+
+  React.useEffect(() => {
+    const fixUnknownPatientName = async () => {
+      if (displayPatientName === 'Desconocido' && appointment?.patientId) {
+        try {
+          const patient = await getPatientByDPI(appointment.patientId);
+          if (patient && patient.fullName) {
+             setDisplayPatientName(patient.fullName);
+             if (appointment.id) {
+               const docRef = doc(db, 'appointments', appointment.id);
+               await updateDoc(docRef, { patientName: patient.fullName });
+             }
+          }
+        } catch (e) {
+          console.error("Error fixing patient name", e);
+        }
+      }
+    };
+    fixUnknownPatientName();
+  }, [displayPatientName, appointment]);
+
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
   const [editDoctorId, setEditDoctorId] = useState('');
@@ -357,7 +386,7 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
                 <User className="w-4 h-4" /> Paciente
               </h3>
               <div>
-                <p className="text-lg font-bold text-slate-800">{appointment.patientName}</p>
+                <p className="text-lg font-bold text-slate-800">{displayPatientName}</p>
                 {canManage && (
                   <button
                     type="button"

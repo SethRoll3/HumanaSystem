@@ -7,7 +7,7 @@ import { UserProfile, Patient, Appointment, Specialty } from '../../types';
 import { toast } from 'sonner';
 import { doctorScheduleService } from '../../services/doctorScheduleService';
 import { getSpecialties } from '../../services/inventoryService';
-import { patientService } from '../../services/patientService';
+import { patientService, getPatientByDPI } from '../../services/patientService';
 
 const formatDateInput = (date: Date) => {
   const year = date.getFullYear();
@@ -97,6 +97,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
   const [patientSearchTerm, setPatientSearchTerm] = useState('');
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
   const [patientSearchResults, setPatientSearchResults] = useState<Patient[] | null>(null);
+  const [selectedPatientObj, setSelectedPatientObj] = useState<Patient | null>(null);
   const consultationType = watch('consultationType');
   const isIGSS = watch('isIGSS');
   const selectedPatientId = watch('patientId');
@@ -144,6 +145,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
           setValue('patientId', preSelectedPatientId);
           const selected = patients.find(p => p.id === preSelectedPatientId);
           if (selected) {
+            setSelectedPatientObj(selected);
             setPatientSearchTerm(formatPatientLabel(selected));
           }
       }
@@ -257,12 +259,35 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
       return;
     }
 
-    const patient = patients.find(p => p.id === data.patientId);
+    const patient = selectedPatientObj?.id === data.patientId 
+      ? selectedPatientObj 
+      : patients.find(p => p.id === data.patientId);
+    
+    // Si no se encontró en la lista inicial, intentar buscarlo por ID
+    let finalPatientName = patient?.fullName || 'Desconocido';
+    
+    if (finalPatientName === 'Desconocido' && data.patientId) {
+        try {
+            const fetchedPatient = await patientService.search(data.patientId);
+            if (fetchedPatient && fetchedPatient.length > 0) {
+                finalPatientName = fetchedPatient[0].fullName;
+            } else {
+                // Segundo intento por DPI directo si el ID parece ser un DPI
+                const directPatient = await getPatientByDPI(data.patientId);
+                if (directPatient) {
+                    finalPatientName = directPatient.fullName;
+                }
+            }
+        } catch (e) {
+            console.error("Error resolving patient name during creation:", e);
+        }
+    }
+
     const doctor = doctors.find(d => d.uid === data.doctorId);
 
     const payload: any = {
       patientId: data.patientId,
-      patientName: patient?.fullName || 'Desconocido',
+      patientName: finalPatientName,
       doctorId: data.doctorId,
       doctorName: doctor?.name || 'Desconocido',
       date: startDateTime,
@@ -349,6 +374,7 @@ export const CreateAppointmentModal: React.FC<CreateAppointmentModalProps> = ({
                               onMouseDown={(e) => {
                                 e.preventDefault();
                                 setValue('patientId', p.id, { shouldValidate: true });
+                                setSelectedPatientObj(p);
                                 setPatientSearchTerm(formatPatientLabel(p));
                                 setPatientSearchResults(null);
                                 setIsPatientDropdownOpen(false);

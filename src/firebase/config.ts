@@ -6,12 +6,12 @@ import { getStorage } from "firebase/storage";
 import { getFunctions } from "firebase/functions";
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyDVnHdVLhqCQxisnI4pqUh4-HsF4za6wjI",
-  authDomain: "sistema-hospital-farmacia.firebaseapp.com",
-  projectId: "sistema-hospital-farmacia",
-  storageBucket: "sistema-hospital-farmacia.firebasestorage.app", // Reverted to standard Firebase bucket domain
-  messagingSenderId: "60902139396",
-  appId: "1:60902139396:web:c977b1cf642d3cc57c3751"
+  apiKey: "AIzaSyBtwC_KKs0XPtsU3BlrxOCs2mZ6EctNBFs",
+  authDomain: "asociacionhumanasys.firebaseapp.com",
+  projectId: "asociacionhumanasys",
+  storageBucket: "asociacionhumanasys.firebasestorage.app",
+  messagingSenderId: "309508795879",
+  appId: "1:309508795879:web:c48096859ea67991b7a142"
 };
 
 // Initialize Firebase

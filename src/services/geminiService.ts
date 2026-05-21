@@ -181,6 +181,42 @@ export const analyzeExternalMedicine = async (medName: string) => {
 };
 
 
+export const extractActiveIngredient = async (medName: string): Promise<string> => {
+  if (!medName.trim()) return "";
+  try {
+    if (!API_KEY) throw new Error("Missing API key");
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+    
+    const promptText = `
+      Actúa como un experto farmacéutico.
+      Analiza el siguiente nombre comercial o presentación de medicamento: "${medName}".
+      Tu única tarea es identificar el principio activo (la molécula principal).
+      NO devuelvas explicaciones, saludos ni la dosis.
+      SÓLO devuelve el nombre del principio activo en formato Título (ej: Paracetamol, Ibuprofeno).
+      Por ejemplo, para "Tylenol 500mg" responde "Paracetamol". Para "Inderal" responde "Propranolol".
+      Si no puedes identificarlo, responde "Desconocido".
+    `;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }]
+      })
+    });
+
+    if (!response.ok) throw new Error("API Error");
+    const data = await response.json();
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    text = text.trim();
+    if (text.toLowerCase() === "desconocido") return "";
+    return text;
+  } catch (e) {
+    console.error("Error extracting active ingredient:", e);
+    return "";
+  }
+};
+
 export const improveMedicalText = async (text: string): Promise<string> => {
   if (!text.trim()) return "";
   try {

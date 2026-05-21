@@ -249,32 +249,50 @@ interface ResponsibleDataProps {
   responsibleName?: string;
   responsiblePhone?: string;
   responsibleEmail?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
   onToggleNoResponsible: (checked: boolean) => void;
   onChange: (field: keyof Patient, value: any) => void;
 }
 
 const ResponsibleDataSection = React.memo(({ 
-  isNoResponsible, responsibleName, responsiblePhone, responsibleEmail, onToggleNoResponsible, onChange 
+  isNoResponsible, responsibleName, responsiblePhone, responsibleEmail, emergencyContactName, emergencyContactPhone, onToggleNoResponsible, onChange 
 }: ResponsibleDataProps) => {
   return (
     <>
-      <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Datos del Responsable</div>
+      <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Datos del Responsable / Emergencia</div>
       <div className="md:col-span-2 flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200">
         <input type="checkbox" className="w-5 h-5" checked={isNoResponsible} onChange={e => onToggleNoResponsible(e.target.checked)} />
-        <label className="text-xs font-bold text-slate-500 uppercase">EL PACIENTE VE POR SU PROPIA SALUD</label>
+        <label className="text-xs font-bold text-slate-500 uppercase">EL PACIENTE VE POR SU PROPIA SALUD (SE SOLICITARÁ CONTACTO DE EMERGENCIA)</label>
       </div>
-      <div>
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label>
-        <input disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : responsibleName || ''} onChange={e => onChange('responsibleName', e.target.value)} />
-      </div>
-      <div>
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label>
-        <input disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : responsiblePhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); onChange('responsiblePhone', numeric); }} />
-      </div>
-      <div>
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label>
-        <input type="email" disabled={isNoResponsible} className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100" value={isNoResponsible ? 'No hay' : responsibleEmail || ''} onChange={e => onChange('responsibleEmail', e.target.value)} />
-      </div>
+      
+      {isNoResponsible ? (
+        <>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Contacto Emergencia</label>
+            <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={emergencyContactName || ''} onChange={e => onChange('emergencyContactName', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Contacto Emergencia</label>
+            <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={emergencyContactPhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); onChange('emergencyContactPhone', numeric); }} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label>
+            <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={responsibleName || ''} onChange={e => onChange('responsibleName', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label>
+            <input className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={responsiblePhone || ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); onChange('responsiblePhone', numeric); }} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label>
+            <input type="email" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={responsibleEmail || ''} onChange={e => onChange('responsibleEmail', e.target.value)} />
+          </div>
+        </>
+      )}
     </>
   );
 });
@@ -534,13 +552,16 @@ export const PatientModal: React.FC<PatientModalProps> = ({
         finalPayload.responsibleName = 'No hay';
         finalPayload.responsiblePhone = 'No hay';
         finalPayload.responsibleEmail = 'No hay';
+      } else {
+        finalPayload.emergencyContactName = '';
+        finalPayload.emergencyContactPhone = '';
       }
 
       // Validar duplicados
       const duplicateCheck = await checkPatientDuplicates({
-        fullName: finalPayload.fullName,
-        billingCode: finalPayload.billingCode,
-        dpi: finalPayload.dpi,
+        fullName: isEditing && patient ? (finalPayload.fullName !== patient.fullName ? finalPayload.fullName : undefined) : finalPayload.fullName,
+        billingCode: isEditing && patient ? (finalPayload.billingCode !== patient.billingCode ? finalPayload.billingCode : undefined) : finalPayload.billingCode,
+        dpi: isEditing && patient ? (finalPayload.dpi !== patient.dpi ? finalPayload.dpi : undefined) : finalPayload.dpi,
         excludeId: patient?.id
       });
 
@@ -605,6 +626,10 @@ export const PatientModal: React.FC<PatientModalProps> = ({
         // CREACIÓN
         if (!finalPayload.billingCode) delete finalPayload.billingCode;
         if (!finalPayload.dpi) delete finalPayload.dpi;
+        
+        // Add creator info
+        finalPayload.createdByEmail = currentUser.email || '';
+        finalPayload.creatorName = currentUser.name || '';
         
         const newId = await createPatient(finalPayload);
         if (capturedPhoto) {
@@ -765,6 +790,8 @@ export const PatientModal: React.FC<PatientModalProps> = ({
               responsibleName={formValues.responsibleName}
               responsiblePhone={formValues.responsiblePhone}
               responsibleEmail={formValues.responsibleEmail}
+              emergencyContactName={formValues.emergencyContactName}
+              emergencyContactPhone={formValues.emergencyContactPhone}
               onToggleNoResponsible={setIsNoResponsible}
               onChange={handleChange}
             />

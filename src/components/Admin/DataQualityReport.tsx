@@ -18,15 +18,31 @@ interface DataQualityReportProps {
 interface QualityAlert {
     patient: Patient;
     missingFields: string[];
+    missingResponsibleFields: string[];
     severity: 'high' | 'medium' | 'low';
 }
 
 interface DailySummary {
-    totalCasesToday: number;
+    totalAppointmentsToday: number;
+    arrivedToday: number;
+    noShowsToday: number;
+    cancelledToday: number;
     criticalToday: number;
     alertToday: number;
     reviewedToday: number;
 }
+
+const getAgeFromBirthDate = (birthDate?: string) => {
+    if (!birthDate) return undefined;
+    const today = new Date();
+    const birth = new Date(birthDate);
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+        age--;
+    }
+    return age;
+};
 
 const TODAY_START = () => {
     const d = new Date();
@@ -57,10 +73,19 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
         referralChannel: '',
         birthDate: '',
         age: '',
-        department: ''
+        department: '',
+        isSelfResponsible: false,
+        emergencyContactName: '',
+        emergencyContactPhone: '',
+        responsibleName: '',
+        responsiblePhone: '',
+        responsibleEmail: ''
     });
     const [summary, setSummary] = useState<DailySummary>({
-        totalCasesToday: 0,
+        totalAppointmentsToday: 0,
+        arrivedToday: 0,
+        noShowsToday: 0,
+        cancelledToday: 0,
         criticalToday: 0,
         alertToday: 0,
         reviewedToday: 0,
@@ -77,18 +102,37 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
             const yStart = TODAY_START();
             const yEnd = TODAY_END();
 
-            const patientsSnap = await getDocs(query(
-                collection(db, 'patients'),
-                where('createdAt', '>=', Timestamp.fromDate(yStart)),
-                where('createdAt', '<=', Timestamp.fromDate(yEnd))
+            // 1. Fetch appointments for today
+            const appointmentsSnap = await getDocs(query(
+                collection(db, 'appointments'),
+                where('date', '>=', Timestamp.fromDate(yStart)),
+                where('date', '<=', Timestamp.fromDate(yEnd))
             ));
-            const patients = patientsSnap.docs
-                .map(d => ({ id: d.id, ...d.data() } as Patient))
-                .filter(p => (p as any).isActive !== false);
+            const appointments = appointmentsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+            
+            // 2. Extract unique patient IDs
+            const patientIds = Array.from(new Set(appointments.map(a => a.patientId).filter(Boolean)));
+            
+            // 3. Fetch patient data for those IDs
+            let patients: Patient[] = [];
+            if (patientIds.length > 0) {
+                // Firestore 'in' query supports up to 30 items. If more, we need chunks.
+                const chunks = [];
+                for (let i = 0; i < patientIds.length; i += 30) {
+                    chunks.push(patientIds.slice(i, i + 30));
+                }
+                
+                const patientsData = await Promise.all(chunks.map(chunk => 
+                    getDocs(query(collection(db, 'patients'), where('__name__', 'in', chunk)))
+                ));
+                
+                patients = patientsData.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() } as Patient)));
+            }
 
             const alerts: QualityAlert[] = [];
             for (const p of patients) {
                 const missing: string[] = [];
+                const missingResp: string[] = [];
                 if (!p.dpi) missing.push('DPI');
                 if (!p.billingCode) missing.push('Código Facturación');
                 if (!p.phone) missing.push('Teléfono');
@@ -97,9 +141,18 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                 if (!p.age && !p.birthDate) missing.push('Edad/Fecha Nac.');
                 if (!p.address?.department) missing.push('Dirección');
 
-                if (missing.length > 0) {
-                    const severity = missing.length >= 5 ? 'high' : missing.length >= 3 ? 'medium' : 'low';
-                    alerts.push({ patient: p, missingFields: missing, severity });
+                if (p.responsibleName === 'No hay') {
+                    if (!p.emergencyContactName) missingResp.push('Nombre Emergencia');
+                    if (!p.emergencyContactPhone) missingResp.push('Tel. Emergencia');
+                } else {
+                    if (!p.responsibleName) missingResp.push('Nombre Responsable');
+                    if (!p.responsiblePhone) missingResp.push('Tel. Responsable');
+                }
+
+                if (missing.length > 0 || missingResp.length > 0) {
+                    const totalMissing = missing.length + missingResp.length;
+                    const severity = totalMissing >= 5 ? 'high' : totalMissing >= 3 ? 'medium' : 'low';
+                    alerts.push({ patient: p, missingFields: missing, missingResponsibleFields: missingResp, severity });
                 }
             }
             const severityOrder = { high: 0, medium: 1, low: 2 };
@@ -107,7 +160,10 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
             setQualityAlerts(alerts);
 
             setSummary({
-                totalCasesToday: patients.length,
+                totalAppointmentsToday: appointments.length,
+                arrivedToday: appointments.filter(a => a.status === 'arrived' || a.status === 'completed' || a.status === 'in_consultation').length,
+                noShowsToday: appointments.filter(a => a.status === 'no_show').length,
+                cancelledToday: appointments.filter(a => a.status === 'cancelled').length,
                 criticalToday: alerts.filter(a => a.severity === 'high').length,
                 alertToday: alerts.filter(a => a.severity === 'medium').length,
                 reviewedToday: reviewedCaseIds.length,
@@ -135,7 +191,13 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
             referralChannel: alert.patient.referralChannel || '',
             birthDate: alert.patient.birthDate || '',
             age: alert.patient.age ? String(alert.patient.age) : '',
-            department: alert.patient.address?.department || ''
+            department: alert.patient.address?.department || '',
+            isSelfResponsible: alert.patient.responsibleName === 'No hay',
+            emergencyContactName: alert.patient.emergencyContactName || '',
+            emergencyContactPhone: alert.patient.emergencyContactPhone || '',
+            responsibleName: alert.patient.responsibleName === 'No hay' ? '' : (alert.patient.responsibleName || ''),
+            responsiblePhone: alert.patient.responsibleName === 'No hay' ? '' : (alert.patient.responsiblePhone || ''),
+            responsibleEmail: alert.patient.responsibleName === 'No hay' ? '' : (alert.patient.responsibleEmail || '')
         });
     };
 
@@ -144,7 +206,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
         setSavingCase(true);
         try {
             const patientRef = doc(db, 'patients', selectedAlert.patient.id);
-            await updateDoc(patientRef, {
+            const updatePayload: any = {
                 fullName: editForm.fullName.trim(),
                 dpi: editForm.dpi.trim(),
                 billingCode: editForm.billingCode.trim(),
@@ -154,7 +216,23 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                 birthDate: editForm.birthDate || null,
                 age: editForm.age ? Number(editForm.age) : null,
                 'address.department': editForm.department.trim(),
-            });
+            };
+
+            if (editForm.isSelfResponsible) {
+                updatePayload.responsibleName = 'No hay';
+                updatePayload.responsiblePhone = 'No hay';
+                updatePayload.responsibleEmail = 'No hay';
+                updatePayload.emergencyContactName = editForm.emergencyContactName.trim();
+                updatePayload.emergencyContactPhone = editForm.emergencyContactPhone.trim();
+            } else {
+                updatePayload.responsibleName = editForm.responsibleName.trim();
+                updatePayload.responsiblePhone = editForm.responsiblePhone.trim();
+                updatePayload.responsibleEmail = editForm.responsibleEmail.trim();
+                updatePayload.emergencyContactName = '';
+                updatePayload.emergencyContactPhone = '';
+            }
+
+            await updateDoc(patientRef, updatePayload);
             toast.success('Caso actualizado');
             await loadReportData();
         } catch (error) {
@@ -186,7 +264,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                 dateKey: todayStr,
                 reviewerEmail: currentUser.email || '',
                 reviewerName: currentUser.name || '',
-                totalCasesToday: summary.totalCasesToday,
+                totalCasesToday: summary.totalAppointmentsToday,
                 criticalToday: highCount,
                 alertToday: mediumCount,
                 reviewedCaseIds,
@@ -210,7 +288,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
             await logAuditAction(
                 currentUser.email || 'admin@humana.com',
                 'REVISION_CALIDAD_DATOS',
-                `${currentUser.name} revisó calidad del día. Casos del día: ${summary.totalCasesToday}. Alertas: ${alertCount} (${highCount} críticos, ${mediumCount} alerta). Revisados manualmente: ${reviewedCaseIds.length}. Bitácora: ${bitacoraText}`
+                `${currentUser.name} revisó calidad del día. Citas del día: ${summary.totalAppointmentsToday}. Alertas: ${alertCount} (${highCount} críticos, ${mediumCount} alerta). Revisados manualmente: ${reviewedCaseIds.length}. Bitácora: ${bitacoraText}`
             );
 
             if (persisted) {
@@ -281,35 +359,38 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                                     <Users className="w-4 h-4" /> Indicadores clave del día
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
-                                        <div className="w-12 h-12 mx-auto bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mb-3">
-                                            <Users className="w-6 h-6" />
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-4 text-center">
+                                        <div className="w-10 h-10 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <Users className="w-5 h-5 text-brand-500" />
                                         </div>
-                                        <p className="text-3xl font-bold text-slate-800">{summary.totalCasesToday}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Casos Ingresados</p>
-                                    </div>
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
-                                        <div className="w-12 h-12 mx-auto bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-3">
-                                            <AlertTriangle className="w-6 h-6" />
+                                        <div className="text-2xl font-bold text-slate-800">{summary.totalAppointmentsToday}</div>
+                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Citas Agendadas</div>
+                                    </motion.div>
+
+                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-4 text-center">
+                                        <div className="w-10 h-10 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <AlertTriangle className="w-5 h-5 text-red-500" />
                                         </div>
-                                        <p className="text-3xl font-bold text-slate-800">{summary.criticalToday}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Críticos</p>
-                                    </div>
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
-                                        <div className="w-12 h-12 mx-auto bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mb-3">
-                                            <AlertTriangle className="w-6 h-6" />
+                                        <div className="text-2xl font-bold text-red-600">{summary.criticalToday}</div>
+                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Críticos</div>
+                                    </motion.div>
+
+                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-4 text-center">
+                                        <div className="w-10 h-10 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <AlertTriangle className="w-5 h-5 text-amber-500" />
                                         </div>
-                                        <p className="text-3xl font-bold text-slate-800">{summary.alertToday}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Alertas</p>
-                                    </div>
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center shadow-sm">
-                                        <div className="w-12 h-12 mx-auto bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3">
-                                            <CheckCircle2 className="w-6 h-6" />
+                                        <div className="text-2xl font-bold text-amber-600">{summary.alertToday}</div>
+                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Alertas</div>
+                                    </motion.div>
+
+                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="bg-white rounded-3xl border border-slate-200 shadow-sm p-4 text-center">
+                                        <div className="w-10 h-10 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                                         </div>
-                                        <p className="text-3xl font-bold text-slate-800">{reviewedCaseIds.length}</p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Revisados</p>
-                                    </div>
+                                        <div className="text-2xl font-bold text-emerald-600">{summary.arrivedToday}</div>
+                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pacientes en Clínica</div>
+                                    </motion.div>
                                 </div>
                             </div>
 
@@ -331,7 +412,10 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                                     <tr>
                                                         <th className="p-3 pl-5">Severidad</th>
                                                         <th className="p-3">Paciente</th>
-                                                        <th className="p-3">Campos Faltantes</th>
+                                                        <th className="p-3">Resp. Llenado</th>
+                                                        <th className="p-3">Datos Contacto</th>
+                                                        <th className="p-3">Faltantes (Paciente)</th>
+                                                        <th className="p-3">Faltantes (Resp/Emerg)</th>
                                                         <th className="p-3">Revisión</th>
                                                     </tr>
                                                 </thead>
@@ -348,10 +432,36 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                                                                 <p className="text-[10px] text-slate-400 font-mono">{alert.patient.id?.substring(0, 8)}...</p>
                                                             </td>
                                                             <td className="p-3">
+                                                                <p className="font-bold text-xs text-slate-700">{alert.patient.creatorName || 'N/D'}</p>
+                                                                <p className="text-[10px] text-slate-400">{alert.patient.createdByEmail || ''}</p>
+                                                            </td>
+                                                            <td className="p-3">
+                                                                {alert.patient.responsibleName === 'No hay' ? (
+                                                                    <>
+                                                                        <p className="text-xs font-bold text-brand-600">Emergencia: {alert.patient.emergencyContactName || 'N/D'}</p>
+                                                                        <p className="text-[10px] text-slate-500">{alert.patient.emergencyContactPhone || 'N/D'}</p>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <p className="text-xs font-bold text-slate-700">Responsable: {alert.patient.responsibleName || 'N/D'}</p>
+                                                                        <p className="text-[10px] text-slate-500">{alert.patient.responsiblePhone || 'N/D'}</p>
+                                                                    </>
+                                                                )}
+                                                            </td>
+                                                            <td className="p-3">
                                                                 <div className="flex flex-wrap gap-1">
                                                                     {alert.missingFields.map(f => (
                                                                         <span key={f} className="px-2 py-0.5 bg-slate-200 text-slate-600 rounded text-[10px] font-bold">{f}</span>
                                                                     ))}
+                                                                    {alert.missingFields.length === 0 && <span className="text-[10px] text-emerald-600 font-bold">Completos</span>}
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-3">
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {alert.missingResponsibleFields.map(f => (
+                                                                        <span key={f} className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-bold">{f}</span>
+                                                                    ))}
+                                                                    {alert.missingResponsibleFields.length === 0 && <span className="text-[10px] text-emerald-600 font-bold">Completos</span>}
                                                                 </div>
                                                             </td>
                                                             <td className="p-3">
@@ -411,37 +521,220 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                 </div>
 
                 {selectedAlert && (
-                    <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center p-4">
-                        <div className="w-full max-w-3xl bg-white rounded-2xl border border-slate-200 p-5 space-y-4 max-h-[90vh] overflow-y-auto">
-                            <div className="flex items-center justify-between">
-                                <h4 className="font-bold text-slate-800">Revisión de caso</h4>
-                                <button className="text-xs font-bold text-slate-500" onClick={() => setSelectedAlert(null)}>Cerrar</button>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Nombre" value={editForm.fullName} onChange={e => setEditForm(prev => ({ ...prev, fullName: e.target.value }))} />
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="DPI" value={editForm.dpi} onChange={e => setEditForm(prev => ({ ...prev, dpi: e.target.value }))} />
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Código facturación" value={editForm.billingCode} onChange={e => setEditForm(prev => ({ ...prev, billingCode: e.target.value }))} />
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Teléfono" value={editForm.phone} onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))} />
-                                <select className="rounded-xl border border-slate-300 p-3 text-sm" value={editForm.gender} onChange={e => setEditForm(prev => ({ ...prev, gender: e.target.value }))}>
-                                    <option value="">Género</option>
-                                    <option value="M">Masculino</option>
-                                    <option value="F">Femenino</option>
-                                </select>
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Canal de referencia" value={editForm.referralChannel} onChange={e => setEditForm(prev => ({ ...prev, referralChannel: e.target.value }))} />
-                                <input type="date" className="rounded-xl border border-slate-300 p-3 text-sm" value={editForm.birthDate} onChange={e => setEditForm(prev => ({ ...prev, birthDate: e.target.value }))} />
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm" placeholder="Edad" value={editForm.age} onChange={e => setEditForm(prev => ({ ...prev, age: e.target.value }))} />
-                                <input className="rounded-xl border border-slate-300 p-3 text-sm md:col-span-2" placeholder="Departamento" value={editForm.department} onChange={e => setEditForm(prev => ({ ...prev, department: e.target.value }))} />
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <div className="flex flex-wrap gap-1">
-                                    {selectedAlert.missingFields.map(field => (
-                                        <span key={field} className="px-2 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold">{field}</span>
-                                    ))}
+                    <div className="fixed inset-0 z-[99999] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+                        <div className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[90vh]">
+
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100 shrink-0">
+                                <div>
+                                    <h4 className="font-bold text-slate-800 text-base">Revisión de caso</h4>
+                                    <p className="text-xs text-slate-400 mt-0.5">{selectedAlert.patient.fullName}</p>
                                 </div>
+                                <button
+                                    className="text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors"
+                                    onClick={() => setSelectedAlert(null)}
+                                >
+                                    Cerrar ✕
+                                </button>
+                            </div>
+
+                            {/* Campos faltantes */}
+                            {(selectedAlert.missingFields.length > 0 || selectedAlert.missingResponsibleFields.length > 0) && (
+                                <div className="px-6 pt-4 shrink-0">
+                                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex flex-wrap gap-1.5 items-center">
+                                        <span className="text-[10px] font-bold text-amber-700 uppercase tracking-widest mr-1">Faltan:</span>
+                                        {[...selectedAlert.missingFields, ...selectedAlert.missingResponsibleFields].map(field => (
+                                            <span key={field} className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold">{field}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Scroll body */}
+                            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-5 space-y-5">
+
+                                {/* Datos Personales */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">Datos Personales</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Nombre Completo</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="Nombre completo"
+                                                value={editForm.fullName}
+                                                onChange={e => setEditForm(prev => ({ ...prev, fullName: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">DPI</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="DPI"
+                                                value={editForm.dpi}
+                                                onChange={e => setEditForm(prev => ({ ...prev, dpi: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Teléfono</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="Teléfono"
+                                                value={editForm.phone}
+                                                onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Género</label>
+                                            <select
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                value={editForm.gender}
+                                                onChange={e => setEditForm(prev => ({ ...prev, gender: e.target.value }))}
+                                            >
+                                                <option value="">Seleccionar...</option>
+                                                <option value="M">Masculino</option>
+                                                <option value="F">Femenino</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Fecha de Nacimiento</label>
+                                            <input
+                                                type="date"
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                value={editForm.birthDate}
+                                                onChange={e => setEditForm(prev => ({ ...prev, birthDate: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Edad</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="Edad"
+                                                value={editForm.age}
+                                                onChange={e => setEditForm(prev => ({ ...prev, age: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Departamento</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="Departamento / Dirección"
+                                                value={editForm.department}
+                                                onChange={e => setEditForm(prev => ({ ...prev, department: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Canal de Referencia</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="Canal de referencia"
+                                                value={editForm.referralChannel}
+                                                onChange={e => setEditForm(prev => ({ ...prev, referralChannel: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Código de Facturación</label>
+                                            <input
+                                                className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                placeholder="Código Facturación"
+                                                value={editForm.billingCode}
+                                                onChange={e => setEditForm(prev => ({ ...prev, billingCode: e.target.value }))}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Responsable / Emergencia */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">Responsable / Contacto</p>
+                                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="w-4 h-4 rounded text-brand-600"
+                                                checked={editForm.isSelfResponsible}
+                                                onChange={e => setEditForm(prev => ({ ...prev, isSelfResponsible: e.target.checked }))}
+                                            />
+                                            <span className="text-xs font-bold text-brand-700 uppercase tracking-wide">El paciente ve por su propia salud</span>
+                                        </label>
+
+                                        {editForm.isSelfResponsible ? (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-amber-600 uppercase mb-1 block">Nombre Contacto Emergencia</label>
+                                                    <input
+                                                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                                                        value={editForm.emergencyContactName || ''}
+                                                        onChange={e => setEditForm(prev => ({ ...prev, emergencyContactName: e.target.value }))}
+                                                        placeholder="Ej: María García"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-amber-600 uppercase mb-1 block">Teléfono Contacto Emergencia</label>
+                                                    <input
+                                                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                                                        value={editForm.emergencyContactPhone || ''}
+                                                        onChange={e => setEditForm(prev => ({ ...prev, emergencyContactPhone: e.target.value.replace(/[^0-9]/g, '') }))}
+                                                        placeholder="Solo números"
+                                                    />
+                                                </div>
+                                                <div className="md:col-span-2 text-xs text-amber-600 mt-1 flex items-center gap-1">
+                                                    ⚠️ El paciente es autónomo. Complete el contacto de emergencia.
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div className="md:col-span-2">
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Nombre Responsable</label>
+                                                    <input
+                                                        className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                        placeholder="Nombre del responsable"
+                                                        value={editForm.responsibleName}
+                                                        onChange={e => setEditForm(prev => ({ ...prev, responsibleName: e.target.value }))}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Teléfono Responsable</label>
+                                                    <input
+                                                        className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                        placeholder="Tel. responsable"
+                                                        value={editForm.responsiblePhone}
+                                                        onChange={e => setEditForm(prev => ({ ...prev, responsiblePhone: e.target.value }))}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Email Responsable</label>
+                                                    <input
+                                                        type="email"
+                                                        className="w-full rounded-xl border border-slate-300 p-3 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+                                                        placeholder="email@ejemplo.com"
+                                                        value={editForm.responsibleEmail}
+                                                        onChange={e => setEditForm(prev => ({ ...prev, responsibleEmail: e.target.value }))}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Info del creador */}
+                                {(selectedAlert.patient.creatorName || selectedAlert.patient.createdByEmail) && (
+                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center gap-3 text-xs text-slate-500">
+                                        <span className="font-bold text-slate-600">Registrado por:</span>
+                                        <span>{selectedAlert.patient.creatorName || selectedAlert.patient.createdByEmail}</span>
+                                        {selectedAlert.patient.createdByEmail && selectedAlert.patient.creatorName && (
+                                            <span className="text-slate-400">({selectedAlert.patient.createdByEmail})</span>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-6 py-4 border-t border-slate-100 shrink-0 flex justify-end">
                                 <button
                                     onClick={handleSavePatient}
                                     disabled={savingCase}
-                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60"
+                                    className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60 shadow-lg shadow-emerald-200 transition-all"
                                 >
                                     {savingCase ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                                     Guardar cambios
@@ -450,6 +743,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                         </div>
                     </div>
                 )}
+
             </motion.div>
         </div>
     );

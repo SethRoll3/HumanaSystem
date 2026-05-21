@@ -23,8 +23,53 @@ const COLLECTIONS = [
     'notifications',
     'system_settings',
     'system_counters',
-    'audit_logs'
+    'audit_logs',
+    'quality_reviews',
+    'pharmacy_sales_reports'
 ];
+
+// Colecciones con subcollections que necesitan manejo especial
+const SUBCOLLECTION_MAP: Record<string, string[]> = {
+    'pharmacy_sales_reports': ['rows']
+};
+
+// Helper: Serializar Timestamps recursivamente (profundidad completa)
+const serializeTimestamps = (obj: any): any => {
+    if (obj === null || obj === undefined) return obj;
+    if (obj instanceof Timestamp) {
+        return { _type: 'Timestamp', value: obj.toDate().toISOString() };
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(item => serializeTimestamps(item));
+    }
+    if (typeof obj === 'object' && obj.constructor === Object) {
+        const result: any = {};
+        for (const key of Object.keys(obj)) {
+            result[key] = serializeTimestamps(obj[key]);
+        }
+        return result;
+    }
+    return obj;
+};
+
+// Helper: Deserializar Timestamps recursivamente (profundidad completa)
+const deserializeTimestamps = (obj: any): any => {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj === 'object' && obj._type === 'Timestamp' && obj.value) {
+        return Timestamp.fromDate(new Date(obj.value));
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(item => deserializeTimestamps(item));
+    }
+    if (typeof obj === 'object' && obj !== null) {
+        const result: any = {};
+        for (const key of Object.keys(obj)) {
+            result[key] = deserializeTimestamps(obj[key]);
+        }
+        return result;
+    }
+    return obj;
+};
 
 // Generar Backup (.ah / JSON)
 export const generateSystemBackup = async (userEmail: string): Promise<Blob> => {
@@ -44,15 +89,27 @@ export const generateSystemBackup = async (userEmail: string): Promise<Blob> => 
             const snapshot = await getDocs(colRef);
             backupData.data[colName] = snapshot.docs.map(d => {
                 const data = d.data() as any;
-                const safeData: any = { _id: d.id, ...data };
-                
-                Object.keys(safeData).forEach(key => {
-                    if (safeData[key] instanceof Timestamp) {
-                        safeData[key] = { _type: 'Timestamp', value: safeData[key].toDate().toISOString() };
-                    }
-                });
+                const safeData: any = { _id: d.id, ...serializeTimestamps(data) };
                 return safeData;
             });
+
+            // Manejar subcollections si existen
+            const subNames = SUBCOLLECTION_MAP[colName];
+            if (subNames && subNames.length > 0) {
+                for (const subName of subNames) {
+                    for (const parentDoc of snapshot.docs) {
+                        const subRef = collection(db, colName, parentDoc.id, subName);
+                        const subSnap = await getDocs(subRef);
+                        if (subSnap.docs.length > 0) {
+                            const subKey = `${colName}/__sub__/${parentDoc.id}/${subName}`;
+                            backupData.data[subKey] = subSnap.docs.map(sd => {
+                                const sData = sd.data() as any;
+                                return { _id: sd.id, ...serializeTimestamps(sData) };
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         const jsonString = JSON.stringify(backupData, null, 2);
@@ -504,6 +561,50 @@ export const generateReadableExcelReport = async (userEmail: string) => {
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(logData), "Auditoría");
 
         // ====================================
+        // 18. REVISIONES CALIDAD (quality_reviews)
+        // ====================================
+        const qrSnap = await getDocs(collection(db, 'quality_reviews'));
+        const qrData = qrSnap.docs.map(d => {
+            const q = d.data() as any;
+            return {
+                "ID": d.id,
+                "Fecha": q.dateKey || '',
+                "Revisor": q.reviewerName || '',
+                "Email Revisor": q.reviewerEmail || '',
+                "Total Casos Día": q.totalCasesToday ?? '',
+                "Críticos": q.criticalToday ?? '',
+                "Alertas": q.alertToday ?? '',
+                "Casos Revisados": q.reviewedCasesCount ?? '',
+                "IDs Revisados": safeArr(q.reviewedCaseIds),
+                "Bitácora": q.bitacora || '',
+                "Creado": fmtDate(q.createdAt)
+            };
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(qrData), "Revisiones Calidad");
+
+        // ====================================
+        // 19. REPORTES VENTAS FARMACIA (pharmacy_sales_reports)
+        // ====================================
+        const psrSnap = await getDocs(collection(db, 'pharmacy_sales_reports'));
+        const psrData = psrSnap.docs.map(d => {
+            const r = d.data() as any;
+            return {
+                "ID": d.id,
+                "Archivo": r.fileName || '',
+                "Subido Por": r.uploadedBy || '',
+                "Subido": fmtDate(r.uploadedAt),
+                "No. Filas": r.rowCount ?? '',
+                "Total Ventas (Q)": r.totalSales ?? '',
+                "Clientes Únicos": r.uniqueClients ?? '',
+                "Fecha Inicio": r.dateStart ? new Date(r.dateStart).toLocaleDateString('es-GT') : '',
+                "Fecha Fin": r.dateEnd ? new Date(r.dateEnd).toLocaleDateString('es-GT') : '',
+                "URL Descarga": r.downloadUrl || '',
+                "Columnas": safeArr(r.columns)
+            };
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(psrData), "Ventas Farmacia");
+
+        // ====================================
         // 18. INVENTARIO ARCHIVOS (Storage)
         // ====================================
         const fileList: any[] = [];
@@ -579,7 +680,7 @@ export const generateReadableExcelReport = async (userEmail: string) => {
     }
 };
 
-// Restaurar Backup (Lógica Inalterada)
+// Restaurar Backup
 export const restoreSystemBackup = async (file: File, userEmail: string) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -592,29 +693,69 @@ export const restoreSystemBackup = async (file: File, userEmail: string) => {
                     throw new Error("Archivo inválido o incompatible.");
                 }
 
-                const collections = Object.keys(parsed.data);
+                const allKeys = Object.keys(parsed.data);
+                // Separar colecciones normales de subcollections
+                const normalCollections = allKeys.filter(k => !k.includes('/__sub__/'));
+                const subCollections = allKeys.filter(k => k.includes('/__sub__/'));
                 
-                for (const colName of collections) {
-                    const records = parsed.data[colName];
-                    const chunks = chunkArray(records, 400); 
+                // Restaurar colecciones normales
+                for (const colName of normalCollections) {
+                    try {
+                        const records = parsed.data[colName];
+                        const chunks = chunkArray(records, 400); 
 
-                    for (const chunk of chunks) {
-                        const batch = writeBatch(db);
-                        chunk.forEach((record: any) => {
-                            const docId = record._id;
-                            const docData = { ...record };
-                            delete docData._id;
-                            Object.keys(docData).forEach(key => {
-                                if (docData[key] && docData[key]._type === 'Timestamp') {
-                                    docData[key] = Timestamp.fromDate(new Date(docData[key].value));
-                                }
+                        for (const chunk of chunks) {
+                            const batch = writeBatch(db);
+                            chunk.forEach((record: any) => {
+                                const docId = record._id;
+                                const docData = { ...record };
+                                delete docData._id;
+                                const restored = deserializeTimestamps(docData);
+                                const docRef = doc(db, colName, docId);
+                                batch.set(docRef, restored);
                             });
-                            const docRef = doc(db, colName, docId);
-                            batch.set(docRef, docData);
-                        });
-                        await batch.commit();
+                            await batch.commit();
+                        }
+                    } catch (err: any) {
+                        console.error(`Error restaurando colección ${colName}:`, err);
+                        if (err.message?.includes('permissions')) {
+                            throw new Error(`Permisos insuficientes para restaurar la tabla "${colName}". Contacte al administrador de base de datos.`);
+                        }
+                        throw err;
                     }
                 }
+
+                // Restaurar subcollections (formato: "parentCol/__sub__/parentDocId/subColName")
+                for (const subKey of subCollections) {
+                    try {
+                        const parts = subKey.split('/__sub__/');
+                        const parentCol = parts[0];
+                        const rest = parts[1]; // "parentDocId/subColName"
+                        const slashIdx = rest.indexOf('/');
+                        const parentDocId = rest.substring(0, slashIdx);
+                        const subColName = rest.substring(slashIdx + 1);
+
+                        const records = parsed.data[subKey];
+                        const chunks = chunkArray(records, 400);
+
+                        for (const chunk of chunks) {
+                            const batch = writeBatch(db);
+                            chunk.forEach((record: any) => {
+                                const docId = record._id;
+                                const docData = { ...record };
+                                delete docData._id;
+                                const restored = deserializeTimestamps(docData);
+                                const docRef = doc(db, parentCol, parentDocId, subColName, docId);
+                                batch.set(docRef, restored);
+                            });
+                            await batch.commit();
+                        }
+                    } catch (err: any) {
+                        console.error(`Error restaurando sub-colección ${subKey}:`, err);
+                        throw new Error(`Permisos insuficientes para restaurar datos secundarios (${subKey}).`);
+                    }
+                }
+
                 await logAuditAction(userEmail, 'RESTAURO_SISTEMA', `Sistema restaurado desde archivo generado el: ${parsed.meta.generatedAt}`);
                 resolve(true);
             } catch (error) {

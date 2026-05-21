@@ -118,11 +118,48 @@ export const AccountingDashboard: React.FC = () => {
         dateCell.font = { name: 'Arial', size: 12, italic: true, color: { argb: 'FF6B7280' } }; // Gray
         dateCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
-        // Espacio antes de la tabla (Fila 6 empieza la tabla con nuestros titulos manuales)
-        worksheet.getRow(6).values = ['FECHA / HORA', 'PACIENTE', 'MÉDICO', 'NO. BOLETA', 'ESTADO', 'MONTO (Q)'];
+        // --- 3.5 RESUMEN POR RUBRO ---
+        const nuevas = summary.transactions.filter(t => t.consultationType === 'Nueva');
+        const reconsultas = summary.transactions.filter(t => t.consultationType === 'Reconsulta');
+        const otros = summary.transactions.filter(t => t.consultationType !== 'Nueva' && t.consultationType !== 'Reconsulta');
+        const sumAmount = (arr: typeof summary.transactions) => arr.reduce((acc, t) => acc + (t.paymentAmount || 0), 0);
+
+        worksheet.getRow(5).values = ['DESGLOSE POR RUBRO'];
+        worksheet.getRow(5).font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF374151' } };
+
+        worksheet.getRow(6).values = ['', 'Rubro', '', 'Cantidad', '', 'Total (Q)'];
+        const rubroHeaderRow = worksheet.getRow(6);
+        rubroHeaderRow.height = 24;
+        rubroHeaderRow.eachCell((cell) => {
+            cell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF64748B' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+
+        const rubroData = [
+            { label: 'Primera Consulta', count: nuevas.length, total: sumAmount(nuevas) },
+            { label: 'Reconsulta', count: reconsultas.length, total: sumAmount(reconsultas) },
+            ...(otros.length > 0 ? [{ label: 'Otros Ingresos', count: otros.length, total: sumAmount(otros) }] : [])
+        ];
+
+        let rubroRowIdx = 7;
+        rubroData.forEach(r => {
+            worksheet.getRow(rubroRowIdx).values = ['', r.label, '', r.count, '', r.total];
+            worksheet.getRow(rubroRowIdx).getCell(6).numFmt = '"Q"#,##0.00';
+            worksheet.getRow(rubroRowIdx).getCell(6).font = { name: 'Arial', bold: true, size: 10 };
+            rubroRowIdx++;
+        });
+        // Total row
+        worksheet.getRow(rubroRowIdx).values = ['', 'TOTAL', '', summary.transactions.length, '', summary.totalIncome];
+        worksheet.getRow(rubroRowIdx).getCell(2).font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF059669' } };
+        worksheet.getRow(rubroRowIdx).getCell(6).numFmt = '"Q"#,##0.00';
+        worksheet.getRow(rubroRowIdx).getCell(6).font = { name: 'Arial', bold: true, size: 11, color: { argb: 'FF059669' } };
+        rubroRowIdx += 2;
+
+        // --- 4. ENCABEZADOS DE LA TABLA DE DETALLE ---
+        worksheet.getRow(rubroRowIdx).values = ['FECHA / HORA', 'PACIENTE', 'MÉDICO', 'NO. BOLETA', 'ESTADO', 'MONTO (Q)'];
         
         // Estilo de Cabecera de Tabla
-        const headerRow = worksheet.getRow(6);
+        const headerRow = worksheet.getRow(rubroRowIdx);
         headerRow.height = 30;
         headerRow.eachCell((cell) => {
             cell.fill = {
@@ -145,7 +182,7 @@ export const AccountingDashboard: React.FC = () => {
             };
         });
 
-        // --- 4. DATOS ---
+        // --- 5. DATOS ---
         summary.transactions.forEach((t) => {
             const rowValues = {
                 date: formatGuatemalaTime(t.date), // Usar helper GT
@@ -241,54 +278,88 @@ export const AccountingDashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Tarjetas de Resumen (Stats Cards) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* 1. Total Ingresos */}
-                <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay: 0.1}} className="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-3xl p-6 text-white shadow-xl shadow-emerald-200 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <DollarSign className="w-32 h-32"/>
-                    </div>
-                    <div className="relative z-10">
-                        <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest mb-1">Total Ingresos</p>
-                        <h3 className="text-4xl font-bold flex items-baseline gap-1">
-                            <span className="text-2xl">Q.</span>
+            {/* Card Principal: Total Ingresos */}
+            <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay: 0.1}} className="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-3xl p-8 text-white shadow-xl shadow-emerald-200 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <DollarSign className="w-40 h-40"/>
+                </div>
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest mb-1">Total Ingresos del Día</p>
+                        <h3 className="text-5xl font-bold flex items-baseline gap-1">
+                            <span className="text-3xl">Q.</span>
                             {loading ? "..." : summary.totalIncome.toFixed(2)}
                         </h3>
-                        <p className="text-emerald-100/80 text-xs mt-4 font-medium flex items-center gap-1">
-                            {/* Fecha formateada en GT */}
-                            <Calendar className="w-3 h-3"/> 
+                    </div>
+                    <div className="text-right">
+                        <p className="text-emerald-100/80 text-sm font-medium flex items-center gap-1 md:justify-end">
+                            <Calendar className="w-4 h-4"/> 
                             {formatGuatemalaDateFull(new Date(`${selectedDate}T12:00:00-06:00`))}
                         </p>
+                        <p className="text-emerald-100/60 text-xs mt-1">{summary.transactions.length} movimientos registrados</p>
                     </div>
-                </motion.div>
+                </div>
+            </motion.div>
 
-                {/* 2. Total Consultas */}
-                <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay: 0.2}} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm relative overflow-hidden group hover:border-blue-200 transition-all">
-                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                        <Users className="w-6 h-6"/>
-                    </div>
-                    <div>
-                        <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Consultas Pagadas</p>
-                        <h3 className="text-3xl font-bold text-slate-800 mt-1">
-                            {loading ? "..." : summary.consultationCount}
-                        </h3>
-                    </div>
-                </motion.div>
+            {/* Resumen por Rubro */}
+            {!loading && summary.transactions.length > 0 && (() => {
+                const nuevas = summary.transactions.filter(t => t.consultationType === 'Nueva');
+                const reconsultas = summary.transactions.filter(t => t.consultationType === 'Reconsulta');
+                const otros = summary.transactions.filter(t => t.consultationType !== 'Nueva' && t.consultationType !== 'Reconsulta');
+                const sumAmount = (arr: typeof summary.transactions) => arr.reduce((acc, t) => acc + (t.paymentAmount || 0), 0);
 
-                {/* 3. Ticket Promedio */}
-                <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay: 0.3}} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm relative overflow-hidden group hover:border-violet-200 transition-all">
-                    <div className="w-12 h-12 bg-violet-50 text-violet-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                        <TrendingUp className="w-6 h-6"/>
-                    </div>
-                    <div>
-                        <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Ticket Promedio</p>
-                        <h3 className="text-3xl font-bold text-slate-800 mt-1 flex items-baseline gap-1">
-                            <span className="text-lg text-slate-400">Q.</span>
-                            {loading ? "..." : summary.averageTicket.toFixed(2)}
-                        </h3>
-                    </div>
-                </motion.div>
-            </div>
+                const rubros = [
+                    { label: 'Primera Consulta', count: nuevas.length, total: sumAmount(nuevas), color: 'bg-blue-50 text-blue-700 border-blue-200' },
+                    { label: 'Reconsulta', count: reconsultas.length, total: sumAmount(reconsultas), color: 'bg-violet-50 text-violet-700 border-violet-200' },
+                    ...(otros.length > 0 ? [{ label: 'Otros Ingresos', count: otros.length, total: sumAmount(otros), color: 'bg-amber-50 text-amber-700 border-amber-200' }] : [])
+                ];
+
+                return (
+                    <motion.div initial={{opacity:0}} animate={{opacity:1}} transition={{delay: 0.25}} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="p-5 border-b bg-slate-50/50">
+                            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                <TrendingUp className="w-4 h-4 text-emerald-600" /> Desglose por Rubro
+                            </h3>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-100 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
+                                    <tr>
+                                        <th className="p-4">Rubro</th>
+                                        <th className="p-4 text-center">Cantidad</th>
+                                        <th className="p-4 text-right">Total (Q)</th>
+                                        <th className="p-4 text-right">% del Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {rubros.map(r => (
+                                        <tr key={r.label} className="hover:bg-slate-50 transition-colors">
+                                            <td className="p-4">
+                                                <span className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-bold border ${r.color}`}>
+                                                    {r.label}
+                                                </span>
+                                            </td>
+                                            <td className="p-4 text-center font-bold text-slate-800">{r.count}</td>
+                                            <td className="p-4 text-right font-bold text-slate-800">Q. {r.total.toFixed(2)}</td>
+                                            <td className="p-4 text-right font-mono text-slate-500 text-xs">
+                                                {summary.totalIncome > 0 ? ((r.total / summary.totalIncome) * 100).toFixed(1) : '0.0'}%
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                <tfoot className="bg-slate-50 border-t border-slate-200">
+                                    <tr>
+                                        <td className="p-4 font-bold text-slate-600 text-xs uppercase tracking-widest">Total</td>
+                                        <td className="p-4 text-center font-bold text-slate-800">{summary.transactions.length}</td>
+                                        <td className="p-4 text-right font-bold text-emerald-600 text-lg">Q. {summary.totalIncome.toFixed(2)}</td>
+                                        <td className="p-4 text-right font-mono text-slate-500 text-xs">100%</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </motion.div>
+                );
+            })()}
 
             {/* Tabla de Detalle */}
             <motion.div initial={{opacity:0}} animate={{opacity:1}} transition={{delay: 0.4}} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">

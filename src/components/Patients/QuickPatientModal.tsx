@@ -74,7 +74,9 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
         referralChannel: '',
         responsibleName: '',
         responsiblePhone: '',
-        responsibleEmail: '', 
+        responsibleEmail: '',
+        emergencyContactName: '',
+        emergencyContactPhone: '',
         address: {
             country: 'Guatemala',
             department: '',
@@ -131,7 +133,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                 }
             } catch (error) {
                 setIsCameraOpen(false);
-                toast.error('No se pudo acceder a la cámara');
+                toast.error('No se pudo acceder a la cÃ¡mara');
             }
         };
         startCamera();
@@ -189,11 +191,11 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                 throw new Error('El nombre del paciente es obligatorio.');
             }
             if (!form.phone.trim()) {
-                throw new Error('El teléfono del paciente es obligatorio.');
+                throw new Error('El telÃ©fono del paciente es obligatorio.');
             }
             const payload = { ...(form as object) } as Patient;
             
-            // Lógica de "Paciente ve por su salud"
+            // LÃ³gica de "Paciente ve por su salud"
             if (isNoResNew) { 
                 payload.responsibleName = 'No hay'; 
                 payload.responsiblePhone = 'No hay';
@@ -206,10 +208,10 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                 dpi: payload.dpi
             });
             if (duplicateCheck.billingCodeMatch) {
-                throw new Error(`El código de facturación ya está registrado para ${duplicateCheck.billingCodeMatch.fullName}.`);
+                throw new Error(`El cÃ³digo de facturaciÃ³n ya estÃ¡ registrado para ${duplicateCheck.billingCodeMatch.fullName}.`);
             }
             if (duplicateCheck.dpiMatch) {
-                throw new Error(`El DPI ya está registrado para ${duplicateCheck.dpiMatch.fullName}.`);
+                throw new Error(`El DPI ya estÃ¡ registrado para ${duplicateCheck.dpiMatch.fullName}.`);
             }
             if (duplicateCheck.nameMatch) {
                 throw new Error(`Ya existe un paciente con nombre igual: ${duplicateCheck.nameMatch.fullName}.`);
@@ -236,7 +238,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                 await updateDoc(doc(db, 'patients', newId), { historyFiles: uploadedFiles });
             }
             
-            await logAuditAction(currentUser.email, "CREACION_PACIENTE_RAPIDO", `Paciente creado: ${payload.fullName} [DPI: ${payload.dpi || '—'} | Código: ${payload.billingCode || '—'}]`);
+            await logAuditAction(currentUser.email, "CREACION_PACIENTE_RAPIDO", `Paciente creado: ${payload.fullName} [DPI: ${payload.dpi || 'â€”'} | CÃ³digo: ${payload.billingCode || 'â€”'}]`);
 
             toast.success("Paciente Registrado Exitosamente");
             
@@ -247,7 +249,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
             onClose(); 
         } catch (e: any) { 
             console.error(e);
-            toast.error(e?.message || "Error al registrar paciente. Verifique el código/DPI."); 
+            toast.error(e?.message || "Error al registrar paciente. Verifique el cÃ³digo/DPI."); 
         } finally { 
             setIsSaving(false); 
         }
@@ -288,7 +290,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                                 className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-lg font-bold outline-none focus:ring-2 focus:ring-brand-500 transition-all text-slate-900 text-base md:text-lg" 
                                 value={form.fullName} 
                                 onChange={e => setForm({...form, fullName: e.target.value})} 
-                                placeholder="Ej: Juan Pérez"
+                                placeholder="Ej: Juan PÃ©rez"
                             />
                         </div>
                         <div className="md:col-span-2">
@@ -621,37 +623,63 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                             </label>
                         </div>
 
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label>
-                            <input 
-                                disabled={isNoResNew} 
-                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100 disabled:text-slate-400 outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
-                                value={isNoResNew ? 'No hay' : form.responsibleName} 
-                                onChange={e => setForm({...form, responsibleName: e.target.value})} 
-                            />
-                        </div>
+                        {!isNoResNew && (
+                            <>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nombre Responsable</label>
+                                    <input 
+                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
+                                        value={form.responsibleName} 
+                                        onChange={e => setForm({...form, responsibleName: e.target.value})} 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label>
+                                    <input 
+                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
+                                        value={form.responsiblePhone} 
+                                        onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ""); setForm({...form, responsiblePhone: numeric}); }} 
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label>
+                                    <input 
+                                        type="email"
+                                        className="w-full p-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
+                                        value={form.responsibleEmail} 
+                                        onChange={e => setForm({...form, responsibleEmail: e.target.value})} 
+                                        placeholder="ejemplo@correo.com"
+                                    />
+                                </div>
+                            </>
+                        )}
 
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Teléfono Responsable</label>
-                            <input 
-                                disabled={isNoResNew} 
-                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100 disabled:text-slate-400 outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
-                                value={isNoResNew ? 'No hay' : form.responsiblePhone} 
-                                onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); setForm({...form, responsiblePhone: numeric}); }} 
-                            />
-                        </div>
-
-                        <div className="md:col-span-2">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Responsable</label>
-                            <input 
-                                disabled={isNoResNew} 
-                                type="email"
-                                className="w-full p-4 bg-white border border-slate-200 rounded-2xl disabled:bg-slate-100 disabled:text-slate-400 outline-none focus:ring-2 focus:ring-brand-500 text-slate-900 text-base md:text-sm" 
-                                value={isNoResNew ? 'No hay' : form.responsibleEmail} 
-                                onChange={e => setForm({...form, responsibleEmail: e.target.value})} 
-                                placeholder="ejemplo@correo.com"
-                            />
-                        </div>
+                        {isNoResNew && (
+                            <>
+                                <div className="md:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 font-semibold">
+                                    ⚠️ El paciente es autónomo. Complete el contacto de emergencia.
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-2 block">Nombre Contacto de Emergencia</label>
+                                    <input 
+                                        className="w-full p-4 bg-white border border-amber-300 rounded-2xl outline-none focus:ring-2 focus:ring-amber-400 text-slate-900 text-base md:text-sm" 
+                                        value={form.emergencyContactName} 
+                                        onChange={e => setForm({...form, emergencyContactName: e.target.value})} 
+                                        placeholder="Ej: María García"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-2 block">Teléfono Contacto de Emergencia</label>
+                                    <input 
+                                        className="w-full p-4 bg-white border border-amber-300 rounded-2xl outline-none focus:ring-2 focus:ring-amber-400 text-slate-900 text-base md:text-sm" 
+                                        value={form.emergencyContactPhone} 
+                                        onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ""); setForm({...form, emergencyContactPhone: numeric}); }} 
+                                        placeholder="1234 5678"
+                                        inputMode="numeric"
+                                    />
+                                </div>
+                            </>
+                        )}
 
                         <div className="md:col-span-2 text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2 mb-2 mt-4">Historial Clínico y Archivos</div>
                         <div className="md:col-span-2">
