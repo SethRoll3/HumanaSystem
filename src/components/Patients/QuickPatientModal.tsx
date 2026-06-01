@@ -415,7 +415,13 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                                     onChange={e => {
                                         const numeric = e.target.value.replace(/[^0-9]/g, '');
                                         const birthDate = numeric ? calculateBirthDateFromAge(numeric) : '';
-                                        setForm({...form, age: numeric, birthDate});
+                                        const ageNum = numeric ? parseInt(numeric, 10) : undefined;
+                                        setForm((prev: any) => ({
+                                            ...prev, 
+                                            age: numeric, 
+                                            birthDate,
+                                            dpi: ageNum !== undefined && ageNum < 18 ? '000' : prev.dpi
+                                        }));
                                     }} 
                                     placeholder="0"
                                 />
@@ -428,8 +434,14 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                                     value={form.birthDate} 
                                     onChange={e => {
                                         const birthDate = e.target.value;
-                                        const age = calculateAgeFromBirthDate(birthDate);
-                                        setForm({...form, birthDate, age});
+                                        const ageStr = calculateAgeFromBirthDate(birthDate);
+                                        const ageNum = ageStr ? parseInt(ageStr, 10) : undefined;
+                                        setForm((prev: any) => ({
+                                            ...prev, 
+                                            birthDate, 
+                                            age: ageStr,
+                                            dpi: ageNum !== undefined && ageNum < 18 ? '000' : prev.dpi
+                                        }));
                                     }} 
                                 />
                             </div>

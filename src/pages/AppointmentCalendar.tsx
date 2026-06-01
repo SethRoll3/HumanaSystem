@@ -132,14 +132,14 @@ const CustomMonthView = ({
   const weekDays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
   const getResolvedName = (app: CalendarAppointment) => {
-     if (app.patientName && app.patientName !== 'Desconocido') return app.patientName;
-     const p = patientLookup.get(app.patientId);
-     if (p?.fullName) {
-       if (app.id) appointmentService.resolveAndFixPatientName(app.id, app.patientId);
-       return p.fullName;
-     }
-     return app.patientName || 'Desconocido';
-   };
+    if (app.patientName && app.patientName !== 'Desconocido') return app.patientName;
+    const p = patientLookup.get(app.patientId);
+    if (p?.fullName) {
+      if (app.id) appointmentService.resolveAndFixPatientName(app.id, app.patientId);
+      return p.fullName;
+    }
+    return app.patientName || 'Desconocido';
+  };
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
@@ -278,19 +278,19 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
   }, [patients]);
 
   const getPatientName = (appointment: CalendarAppointment) => {
-     if (appointment.patientName && appointment.patientName !== 'Desconocido') {
-       return appointment.patientName;
-     }
-     const patient = patientLookup.get(appointment.patientId);
-     if (patient?.fullName) {
-       // Intentar arreglar el nombre en la base de datos en segundo plano
-       if (appointment.id) {
-         appointmentService.resolveAndFixPatientName(appointment.id, appointment.patientId);
-       }
-       return patient.fullName;
-     }
-     return appointment.patientName || 'Desconocido';
-   };
+    if (appointment.patientName && appointment.patientName !== 'Desconocido') {
+      return appointment.patientName;
+    }
+    const patient = patientLookup.get(appointment.patientId);
+    if (patient?.fullName) {
+      // Intentar arreglar el nombre en la base de datos en segundo plano
+      if (appointment.id) {
+        appointmentService.resolveAndFixPatientName(appointment.id, appointment.patientId);
+      }
+      return patient.fullName;
+    }
+    return appointment.patientName || 'Desconocido';
+  };
 
   const filteredDayAppointments = dayAppointmentsModal
     ? dayAppointmentsModal.apps.filter(app => {
@@ -498,18 +498,18 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
 
   const handleRegisterPayment = async (id: string, receipt: string, amt: number) => {
     const loadingToast = toast.loading("Registrando pago...");
-    try { 
-        await Promise.race([
-            appointmentService.registerPayment(id, user?.uid || 'unknown', receipt, amt),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout-Firebase')), 5000))
-        ]);
-        toast.success("Pagada", { id: loadingToast }); 
-        setIsDetailsModalOpen(false); 
-        loadData(); 
-    } catch (e: any) { 
-        console.error(e);
-        const errMsg = e?.message || '';
-        toast.error(errMsg.includes('Quota') || errMsg.includes('Timeout') ? "Error: Cuota de Firebase excedida o red lenta." : "Error al registrar pago", { id: loadingToast }); 
+    try {
+      await Promise.race([
+        appointmentService.registerPayment(id, user?.uid || 'unknown', receipt, amt),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout-Firebase')), 5000))
+      ]);
+      toast.success("Pagada", { id: loadingToast });
+      setIsDetailsModalOpen(false);
+      loadData();
+    } catch (e: any) {
+      console.error(e);
+      const errMsg = e?.message || '';
+      toast.error(errMsg.includes('Quota') || errMsg.includes('Timeout') ? "Error: Cuota de Firebase excedida o red lenta." : "Error al registrar pago", { id: loadingToast });
     }
   };
 
@@ -522,11 +522,11 @@ export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ user }
     try {
       await Promise.race([
         (async () => {
-            if (reason === 'no_show_internal') {
-                await appointmentService.markNoShow(id, user?.email || 'system@humana.com');
-            } else {
-                await appointmentService.cancelAppointment(id, reason, user?.email || 'system@humana.com');
-            }
+          if (reason === 'no_show_internal') {
+            await appointmentService.markNoShow(id, user?.email || 'system@humana.com');
+          } else {
+            await appointmentService.cancelAppointment(id, reason, user?.email || 'system@humana.com');
+          }
         })(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout-Firebase')), 5000))
       ]);

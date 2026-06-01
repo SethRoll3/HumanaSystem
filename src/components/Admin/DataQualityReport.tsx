@@ -141,10 +141,7 @@ export const DataQualityReport: React.FC<DataQualityReportProps> = ({ isOpen, on
                 if (!p.age && !p.birthDate) missing.push('Edad/Fecha Nac.');
                 if (!p.address?.department) missing.push('Dirección');
 
-                if (p.responsibleName === 'No hay') {
-                    if (!p.emergencyContactName) missingResp.push('Nombre Emergencia');
-                    if (!p.emergencyContactPhone) missingResp.push('Tel. Emergencia');
-                } else {
+                if (p.responsibleName !== 'No hay') {
                     if (!p.responsibleName) missingResp.push('Nombre Responsable');
                     if (!p.responsiblePhone) missingResp.push('Tel. Responsable');
                 }

@@ -378,11 +378,11 @@ export const PatientEditModal: React.FC<PatientEditModalProps> = ({
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Edad</label>
-              <input type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age ?? ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); const birthDate = numeric ? calculateBirthDateFromAge(numeric) : ''; const ageValue = numeric ? parseInt(numeric, 10) : undefined; setFormValues({ ...formValues, age: ageValue, birthDate }); }} />
+              <input type="number" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.age ?? ''} onChange={e => { const numeric = e.target.value.replace(/[^0-9]/g, ''); const birthDate = numeric ? calculateBirthDateFromAge(numeric) : ''; const ageValue = numeric ? parseInt(numeric, 10) : undefined; const dpi = ageValue !== undefined && ageValue < 18 ? '000' : formValues.dpi; setFormValues({ ...formValues, age: ageValue, birthDate, dpi }); }} />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Fecha Nacimiento</label>
-              <input type="date" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.birthDate || ''} onChange={e => { const birthDate = e.target.value; const age = calculateAgeFromBirthDate(birthDate); setFormValues({ ...formValues, birthDate, age }); }} />
+              <input type="date" className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.birthDate || ''} onChange={e => { const birthDate = e.target.value; const age = calculateAgeFromBirthDate(birthDate); const dpi = age !== undefined && age < 18 ? '000' : formValues.dpi; setFormValues({ ...formValues, birthDate, age, dpi }); }} />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Género</label>

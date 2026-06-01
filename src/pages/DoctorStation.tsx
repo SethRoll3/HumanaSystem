@@ -363,28 +363,28 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
       const processedApps = await Promise.all(snapshot.docs.map(async docSnap => {
         const app = { id: docSnap.id, ...docSnap.data() } as Appointment;
         let pName = app.patientName;
-        
+
         // Si el nombre es desconocido, intentar resolverlo
         if ((!pName || pName === 'Desconocido') && app.patientId) {
-            try {
-                // Primero ver si lo tenemos en la lista cargada (si existe)
-                const inList = allPatients.find(p => p.id === app.patientId);
-                if (inList) {
-                    pName = inList.fullName;
-                    // Arreglar en BD
-                    appointmentService.resolveAndFixPatientName(app.id!, app.patientId);
-                } else {
-                    // Si no, buscarlo directamente (getPatientByDPI maneja varios fallbacks)
-                    const p = await getPatientByDPI(app.patientId);
-                    if (p) {
-                        pName = p.fullName;
-                        // Arreglar en BD
-                        appointmentService.resolveAndFixPatientName(app.id!, app.patientId);
-                    }
-                }
-            } catch (e) {
-                console.error("Error resolving patient name in agenda:", e);
+          try {
+            // Primero ver si lo tenemos en la lista cargada (si existe)
+            const inList = allPatients.find(p => p.id === app.patientId);
+            if (inList) {
+              pName = inList.fullName;
+              // Arreglar en BD
+              appointmentService.resolveAndFixPatientName(app.id!, app.patientId);
+            } else {
+              // Si no, buscarlo directamente (getPatientByDPI maneja varios fallbacks)
+              const p = await getPatientByDPI(app.patientId);
+              if (p) {
+                pName = p.fullName;
+                // Arreglar en BD
+                appointmentService.resolveAndFixPatientName(app.id!, app.patientId);
+              }
             }
+          } catch (e) {
+            console.error("Error resolving patient name in agenda:", e);
+          }
         }
 
         return {
@@ -403,8 +403,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
       }
       // Reset page when fetching new data
       setAgendaPage(1);
-    } catch (error) {
-      console.error("Error loading appointments", error);
+    } catch (error: any) {
+      console.error("Error loading appointments:", error);
     }
   };
 
@@ -829,7 +829,10 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   };
 
   const filteredAppointments = todaysAppointments.filter(appt => {
-    if (isDoctor) return appt.status === 'resident_intake' || appt.status === 'in_progress' || appt.status === 'paid_checked_in';
+    // Doctor: mostrar TODAS las citas excepto canceladas y no_show.
+    // Antes solo mostraba 'resident_intake', 'in_progress', 'paid_checked_in',
+    // lo cual ocultaba citas con status 'scheduled' y 'confirmed_phone'.
+    if (isDoctor) return appt.status !== 'cancelled' && appt.status !== 'no_show';
     // Temporal: deshabilitamos bandeja operativa de enfermeria.
     if (isNurse) return ENABLE_NURSE_RESIDENT_FLOW && (appt.status === 'paid_checked_in' || appt.status === 'in_progress' || appt.status === 'completed');
     if (isReceptionist || isAdmin) return true;

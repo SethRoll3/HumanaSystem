@@ -1,18 +1,18 @@
-import { 
-    collection, 
-    addDoc, 
-    updateDoc, 
-    deleteDoc, 
-    doc, 
-    getDocs, 
-    getDoc, 
-    query, 
-    where, 
-    orderBy, 
-    limit, 
+import {
+    collection,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    doc,
+    getDocs,
+    getDoc,
+    query,
+    where,
+    orderBy,
+    limit,
     startAfter,
     DocumentSnapshot,
-    serverTimestamp 
+    serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Patient, Consultation, Appointment } from '../types';
@@ -23,34 +23,82 @@ const COLLECTION_NAME = 'patients';
 
 export const searchPatients = async (searchTerm: string): Promise<Patient[]> => {
     if (!searchTerm) return [];
-    
-    // Búsqueda simple por nombre
-    // Nota: Firestore no tiene "LIKE" nativo.
-    // Para conjuntos de datos medianos (< 2000), traer todo y filtrar es aceptable.
-    // Para conjuntos grandes, se recomienda Algolia o ElasticSearch.
-    
+
+    const trimmed = searchTerm.trim();
+
     // Opción A: Buscar por DPI (Exacto)
-    const qDpi = query(collection(db, COLLECTION_NAME), where('dpi', '==', searchTerm));
+    const qDpi = query(collection(db, COLLECTION_NAME), where('dpi', '==', trimmed));
     const snapDpi = await getDocs(qDpi);
     if (!snapDpi.empty) {
         return snapDpi.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
     }
 
     // Opción B: Buscar por BillingCode (Exacto)
-    const qCode = query(collection(db, COLLECTION_NAME), where('billingCode', '==', searchTerm));
+    const qCode = query(collection(db, COLLECTION_NAME), where('billingCode', '==', trimmed));
     const snapCode = await getDocs(qCode);
     if (!snapCode.empty) {
         return snapCode.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
     }
 
-    // Opción B: Buscar por Nombre (Client-side filtering con límite aumentado)
-    // Aumentamos el límite para cubrir más casos mientras la base crece
-    const qRecent = query(collection(db, COLLECTION_NAME), limit(1000));
-    const snapRecent = await getDocs(qRecent);
-    const all = snapRecent.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
-    
-    const lowerTerm = searchTerm.toLowerCase();
-    return all.filter(p => p.fullName.toLowerCase().includes(lowerTerm) || p.id.includes(searchTerm));
+    // Opción C: Buscar por nombre usando prefijo Firestore (primer apellido/palabra)
+    // Firestore soporta >= y < para buscar strings que empiezan con un prefijo
+    // Intentamos con el texto tal cual y también con primera letra mayúscula
+    const firstWord = trimmed.split(/\s+/)[0];
+    if (firstWord.length >= 2) {
+        const capitalizedWord = firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
+        const variants = [firstWord, capitalizedWord];
+        // Eliminar duplicados
+        const uniqueVariants = [...new Set(variants)];
+
+        for (const variant of uniqueVariants) {
+            const prefixEnd = variant.slice(0, -1) + String.fromCharCode(variant.charCodeAt(variant.length - 1) + 1);
+            const qPrefix = query(
+                collection(db, COLLECTION_NAME),
+                where('fullName', '>=', variant),
+                where('fullName', '<', prefixEnd),
+                limit(500)
+            );
+            const snapPrefix = await getDocs(qPrefix);
+            if (!snapPrefix.empty) {
+                const lowerTerm = trimmed.toLowerCase();
+                const prefixResults = snapPrefix.docs
+                    .map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient))
+                    .filter(p => p.fullName?.toLowerCase().includes(lowerTerm));
+                if (prefixResults.length > 0) return prefixResults;
+            }
+        }
+    }
+
+    // Opción D: Fallback - recorrer TODA la base de datos sin límite de iteraciones
+    const PAGE_SIZE = 5000;
+    let allMatched: Patient[] = [];
+    let lastSnap: DocumentSnapshot | null = null;
+    const lowerTerm = trimmed.toLowerCase();
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+        let qBatch;
+        if (lastSnap) {
+            qBatch = query(collection(db, COLLECTION_NAME), orderBy('fullName', 'asc'), startAfter(lastSnap), limit(PAGE_SIZE));
+        } else {
+            qBatch = query(collection(db, COLLECTION_NAME), orderBy('fullName', 'asc'), limit(PAGE_SIZE));
+        }
+        const snapBatch = await getDocs(qBatch);
+        if (snapBatch.empty) break;
+
+        const batchPatients = snapBatch.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
+        const matched = batchPatients.filter(p =>
+            p.fullName?.toLowerCase().includes(lowerTerm) || p.id.includes(trimmed)
+        );
+        allMatched = [...allMatched, ...matched];
+
+        // Si el batch fue menor al límite, ya no hay más datos
+        if (snapBatch.docs.length < PAGE_SIZE) break;
+
+        lastSnap = snapBatch.docs[snapBatch.docs.length - 1];
+    }
+
+    return allMatched;
 };
 
 export const getPatientByDPI = async (id: string): Promise<Patient | null> => {
@@ -77,24 +125,24 @@ export const getPatientByDPI = async (id: string): Promise<Patient | null> => {
             const data = d.data() as any;
             return { ...data, id: d.id } as Patient;
         }
-        
-        // 3. Fallback: Buscar por 'billingCode'
-    const q2 = query(collection(db, COLLECTION_NAME), where('billingCode', '==', id));
-    const querySnap2 = await getDocs(q2);
-    if (!querySnap2.empty) {
-        const d = querySnap2.docs[0];
-        const data = d.data() as any;
-        return { ...data, id: d.id } as Patient;
-    }
 
-    // 4. Fallback: Buscar por 'dpi'
-    const q3 = query(collection(db, COLLECTION_NAME), where('dpi', '==', id));
-    const querySnap3 = await getDocs(q3);
-    if (!querySnap3.empty) {
-        const d = querySnap3.docs[0];
-        const data = d.data() as any;
-        return { ...data, id: d.id } as Patient;
-    }
+        // 3. Fallback: Buscar por 'billingCode'
+        const q2 = query(collection(db, COLLECTION_NAME), where('billingCode', '==', id));
+        const querySnap2 = await getDocs(q2);
+        if (!querySnap2.empty) {
+            const d = querySnap2.docs[0];
+            const data = d.data() as any;
+            return { ...data, id: d.id } as Patient;
+        }
+
+        // 4. Fallback: Buscar por 'dpi'
+        const q3 = query(collection(db, COLLECTION_NAME), where('dpi', '==', id));
+        const querySnap3 = await getDocs(q3);
+        if (!querySnap3.empty) {
+            const d = querySnap3.docs[0];
+            const data = d.data() as any;
+            return { ...data, id: d.id } as Patient;
+        }
     } catch (e) {
         console.error("Error searching patient fallback", e);
     }
@@ -167,10 +215,32 @@ export const checkPatientDuplicates = async ({
     }
 
     if (trimmedName) {
-        const nameSnap = await getDocs(query(collection(db, COLLECTION_NAME), limit(1000)));
-        const candidates = nameSnap.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
-        const match = candidates.find(p => p.id !== excludeId && p.fullName && isSamePatientName(trimmedName, p.fullName));
-        if (match) nameMatch = match;
+        // Recorrer TODA la base de datos para verificar duplicados de nombre
+        const BATCH_SIZE = 2000;
+        let lastDocSnap: DocumentSnapshot | null = null;
+        let found = false;
+
+        // eslint-disable-next-line no-constant-condition
+        while (!found) {
+            let nameQuery;
+            if (lastDocSnap) {
+                nameQuery = query(collection(db, COLLECTION_NAME), orderBy('fullName', 'asc'), startAfter(lastDocSnap), limit(BATCH_SIZE));
+            } else {
+                nameQuery = query(collection(db, COLLECTION_NAME), orderBy('fullName', 'asc'), limit(BATCH_SIZE));
+            }
+            const nameSnap = await getDocs(nameQuery);
+            if (nameSnap.empty) break;
+
+            const candidates = nameSnap.docs.map(doc => ({ ...(doc.data() as any), id: doc.id } as Patient));
+            const match = candidates.find(p => p.id !== excludeId && p.fullName && isSamePatientName(trimmedName, p.fullName));
+            if (match) {
+                nameMatch = match;
+                found = true;
+            }
+
+            if (nameSnap.docs.length < BATCH_SIZE) break;
+            lastDocSnap = nameSnap.docs[nameSnap.docs.length - 1];
+        }
     }
 
     return { billingCodeMatch, dpiMatch, nameMatch };
@@ -219,8 +289,8 @@ export const getPatientConsultations = async (patientId: string): Promise<Consul
                 const dateMs = dateValue?.toDate
                     ? dateValue.toDate().getTime()
                     : dateValue?.seconds
-                    ? new Date(dateValue.seconds * 1000).getTime()
-                    : new Date(dateValue).getTime();
+                        ? new Date(dateValue.seconds * 1000).getTime()
+                        : new Date(dateValue).getTime();
                 return {
                     id: `appt_${appt.id}`,
                     status: 'finished',
@@ -264,7 +334,7 @@ import { logAuditAction } from './auditService';
 
 export const updateConsultation = async (patientId: string, consultationId: string, data: Partial<Consultation>, userEmail: string) => {
     const consultRef = doc(db, 'consultations', consultationId);
-    
+
     // Update main fields
     await updateDoc(consultRef, {
         ...data,
@@ -279,109 +349,109 @@ export const updateConsultation = async (patientId: string, consultationId: stri
 // --- OBJECTO SERVICE UNIFICADO (Nuevo Estándar) ---
 
 export const patientService = {
-  async getPaginated(limitCount: number, lastDoc: DocumentSnapshot | null = null) {
-    let q;
-    
-    if (lastDoc) {
-      q = query(
-        collection(db, COLLECTION_NAME),
-        orderBy('fullName', 'asc'),
-        startAfter(lastDoc),
-        limit(limitCount)
-      );
-    } else {
-      q = query(
-        collection(db, COLLECTION_NAME),
-        orderBy('fullName', 'asc'),
-        limit(limitCount)
-      );
+    async getPaginated(limitCount: number, lastDoc: DocumentSnapshot | null = null) {
+        let q;
+
+        if (lastDoc) {
+            q = query(
+                collection(db, COLLECTION_NAME),
+                orderBy('fullName', 'asc'),
+                startAfter(lastDoc),
+                limit(limitCount)
+            );
+        } else {
+            q = query(
+                collection(db, COLLECTION_NAME),
+                orderBy('fullName', 'asc'),
+                limit(limitCount)
+            );
+        }
+
+        const snapshot = await getDocs(q);
+        const patients = snapshot.docs.map(doc => ({
+            ...(doc.data() as any),
+            id: doc.id
+        } as Patient));
+
+        return {
+            patients,
+            lastDoc: snapshot.docs[snapshot.docs.length - 1] || null,
+            hasMore: snapshot.docs.length === limitCount
+        };
+    },
+
+    async getAll() {
+        // Traer TODOS los pacientes sin límite artificial
+        const q = query(
+            collection(db, COLLECTION_NAME),
+            orderBy('fullName', 'asc')
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({
+            ...doc.data(),
+            id: doc.id
+        } as Patient));
+    },
+
+    async create(data: any) {
+        return createPatient(data);
+    },
+
+    async search(term: string) {
+        return searchPatients(term);
+    },
+
+    async getHistory(patientId: string) {
+        return getPatientConsultations(patientId);
+    },
+
+    async getImportantNotices(patientId: string) {
+        return getPatientImportantNotices(patientId);
+    },
+
+    async updateBillingCode(patientId: string, billingCode: string) {
+        // Resolver correctamente el ID del documento en Firestore,
+        // ya que en algunas citas se guarda el ID interno en el campo 'id'
+        // y NO el ID del documento.
+        const tryDocRef = doc(db, COLLECTION_NAME, patientId);
+        try {
+            const snap = await getDoc(tryDocRef);
+            if (snap.exists()) {
+                await updateDoc(tryDocRef, { billingCode });
+                return;
+            }
+        } catch { }
+
+        // Fallback: buscar por campo 'id' (ID interno/legacy)
+        const q = query(collection(db, COLLECTION_NAME), where('id', '==', patientId));
+        const qs = await getDocs(q);
+        if (!qs.empty) {
+            const d = qs.docs[0];
+            const ref = doc(db, COLLECTION_NAME, d.id);
+            await updateDoc(ref, { billingCode });
+            return;
+        }
+
+        // Último intento: buscar por billingCode si el input coincide (poco probable aquí)
+        const q2 = query(collection(db, COLLECTION_NAME), where('billingCode', '==', patientId));
+        const qs2 = await getDocs(q2);
+        if (!qs2.empty) {
+            const d = qs2.docs[0];
+            const ref = doc(db, COLLECTION_NAME, d.id);
+            await updateDoc(ref, { billingCode });
+            return;
+        }
+
+        // Último intento: buscar por dpi
+        const q3 = query(collection(db, COLLECTION_NAME), where('dpi', '==', patientId));
+        const qs3 = await getDocs(q3);
+        if (!qs3.empty) {
+            const d = qs3.docs[0];
+            const ref = doc(db, COLLECTION_NAME, d.id);
+            await updateDoc(ref, { billingCode });
+            return;
+        }
+
+        throw new Error('Paciente no encontrado para actualizar código de facturación');
     }
-
-    const snapshot = await getDocs(q);
-    const patients = snapshot.docs.map(doc => ({
-      ...(doc.data() as any),
-      id: doc.id
-    } as Patient));
-
-    return {
-      patients,
-      lastDoc: snapshot.docs[snapshot.docs.length - 1] || null,
-      hasMore: snapshot.docs.length === limitCount
-    };
-  },
-
-  async getAll() {
-    const q = query(
-      collection(db, COLLECTION_NAME),
-      orderBy('fullName', 'asc'),
-      limit(1000) 
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({
-      ...doc.data(),
-      id: doc.id
-    } as Patient));
-  },
-
-  async create(data: any) {
-      return createPatient(data);
-  },
-
-  async search(term: string) {
-      return searchPatients(term);
-  },
-
-  async getHistory(patientId: string) {
-      return getPatientConsultations(patientId);
-  },
-
-  async getImportantNotices(patientId: string) {
-      return getPatientImportantNotices(patientId);
-  },
-
-  async updateBillingCode(patientId: string, billingCode: string) {
-      // Resolver correctamente el ID del documento en Firestore,
-      // ya que en algunas citas se guarda el ID interno en el campo 'id'
-      // y NO el ID del documento.
-      const tryDocRef = doc(db, COLLECTION_NAME, patientId);
-      try {
-          const snap = await getDoc(tryDocRef);
-          if (snap.exists()) {
-              await updateDoc(tryDocRef, { billingCode });
-              return;
-          }
-      } catch {}
-
-      // Fallback: buscar por campo 'id' (ID interno/legacy)
-      const q = query(collection(db, COLLECTION_NAME), where('id', '==', patientId));
-      const qs = await getDocs(q);
-      if (!qs.empty) {
-          const d = qs.docs[0];
-          const ref = doc(db, COLLECTION_NAME, d.id);
-          await updateDoc(ref, { billingCode });
-          return;
-      }
-
-      // Último intento: buscar por billingCode si el input coincide (poco probable aquí)
-      const q2 = query(collection(db, COLLECTION_NAME), where('billingCode', '==', patientId));
-      const qs2 = await getDocs(q2);
-      if (!qs2.empty) {
-          const d = qs2.docs[0];
-          const ref = doc(db, COLLECTION_NAME, d.id);
-          await updateDoc(ref, { billingCode });
-          return;
-      }
-
-      // Último intento: buscar por dpi
-      const q3 = query(collection(db, COLLECTION_NAME), where('dpi', '==', patientId));
-      const qs3 = await getDocs(q3);
-      if (!qs3.empty) {
-          const d = qs3.docs[0];
-          const ref = doc(db, COLLECTION_NAME, d.id);
-          await updateDoc(ref, { billingCode });
-          return;
-      }
-
-      throw new Error('Paciente no encontrado para actualizar código de facturación');
-  }
 };

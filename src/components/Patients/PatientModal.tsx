@@ -479,7 +479,13 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   }, []);
 
   const handleMultiChange = useCallback((updates: Partial<Patient>) => {
-    setFormValues(prev => ({ ...prev, ...updates }));
+    setFormValues(prev => {
+      const nextValues = { ...prev, ...updates };
+      if (updates.age !== undefined && updates.age !== null && updates.age < 18) {
+        nextValues.dpi = '000';
+      }
+      return nextValues;
+    });
   }, []);
 
   const handleAddressChange = useCallback((key: string, value: string) => {

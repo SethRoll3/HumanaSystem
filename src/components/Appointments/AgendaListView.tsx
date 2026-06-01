@@ -124,7 +124,7 @@ export const AgendaListView: React.FC<AgendaListViewProps> = ({
             // Flujo temporal sin enfermeria/residente: pago -> doctor.
             // Flujo original se conserva con enableNurseResidentFlow=true.
             const canStartFromPaid = appt.status === 'paid_checked_in' && (!enableNurseResidentFlow || (appt.consultationType === 'Reconsulta' && appt.goToNurse === false));
-            const showDoctorButton = isDoctor && (isReadyForDoctor || isInProgress || canStartFromPaid);
+            const showDoctorButton = isDoctor && appt.status !== 'completed' && appt.status !== 'no_show';
             const isLocked = isDoctor && ((enableNurseResidentFlow && appt.consultationType === 'Nueva' && !appt.residentClinicalCompleted) || (!isReadyForDoctor && !isInProgress && !canStartFromPaid));
             const canEditResidentFicha = enableNurseResidentFlow && isResident && appt.consultationType === 'Nueva' && !['in_progress', 'completed', 'cancelled', 'no_show'].includes(appt.status);
             const residentStatusLabel = isResident && appt.consultationType === 'Nueva' && appt.status === 'resident_intake';
