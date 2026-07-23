@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool, Scale, Wind, Droplets, Activity, Thermometer } from 'lucide-react';
+import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool, Scale, Wind, Droplets, Activity, Thermometer, Stethoscope } from 'lucide-react';
 import { Consultation, Patient, UserProfile } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EditConsultationModal } from './EditConsultationModal';
@@ -443,9 +443,12 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             {consultation.specialtyReferrals && consultation.specialtyReferrals.length > 0 ? (
                                 <div className="space-y-2">
                                     {consultation.specialtyReferrals.map((r, idx) => (
-                                        <div key={idx} className="p-3 bg-pink-50 border border-pink-100 rounded-xl">
-                                            <div className="text-xs font-bold text-pink-700 uppercase tracking-wide">{r.specialty}</div>
-                                            {r.note && <div className="text-xs text-pink-900 mt-1 italic leading-relaxed">{r.note}</div>}
+                                        <div key={idx} className="flex items-start gap-3 p-3 bg-pink-50 border-l-4 border-pink-500 rounded-r-lg">
+                                            <Stethoscope className="w-5 h-5 text-pink-600 flex-shrink-0 mt-0.5" />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-pink-800 text-base">{r.specialty}</div>
+                                                {r.note && <div className="text-sm text-pink-900 mt-1 italic leading-relaxed">{r.note}</div>}
+                                            </div>
                                         </div>
                                     ))}
                                 </div>

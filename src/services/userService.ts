@@ -12,16 +12,16 @@ const normalizeDoctorName = (value: string) => {
 };
 
 export const userService = {
-  getDoctors: async (): Promise<UserProfile[]> => {
-    const usersRef = collection(db, 'users');
-    const snapshot = await getDocs(query(usersRef, where('role', 'in', ['doctor', 'licenciado'])));
-    return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile)).filter(d => d.isActive !== false);
-  },
-  getAllUsers: async (): Promise<UserProfile[]> => {
-    const usersRef = collection(db, 'users');
-    const snapshot = await getDocs(query(usersRef, orderBy('name')));
-    return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile));
-  }
+    getDoctors: async (): Promise<UserProfile[]> => {
+        const usersRef = collection(db, 'users');
+        const snapshot = await getDocs(query(usersRef, where('role', 'in', ['doctor', 'licenciado'])));
+        return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile)).filter(d => d.isActive !== false);
+    },
+    getAllUsers: async (): Promise<UserProfile[]> => {
+        const usersRef = collection(db, 'users');
+        const snapshot = await getDocs(query(usersRef, orderBy('name')));
+        return snapshot.docs.map(doc => ({ uid: doc.id, ...(doc.data() as any) } as UserProfile));
+    }
 };
 
 export const getAllUsers = async (): Promise<UserProfile[]> => {
@@ -47,8 +47,8 @@ export const createSystemUser = async (userData: any, password: string): Promise
     const uid = userCredential.user.uid;
 
     const rawSpecialties = Array.isArray(userData.specialties)
-      ? userData.specialties
-      : (userData.specialty ? [userData.specialty] : []);
+        ? userData.specialties
+        : (userData.specialty ? [userData.specialty] : []);
     const specialties = rawSpecialties.map((s: any) => String(s)).filter((s: string) => s.trim() !== '');
     const rawName = String(userData.name || '').trim();
     const isDoctorRole = userData.role === 'doctor' || userData.role === 'licenciado';

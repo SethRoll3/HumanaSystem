@@ -1,12 +1,18 @@
 import * as React from 'react';
 import { useMemo, useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { Calendar, RefreshCw, Download, UploadCloud, BarChart3, Users, Pill, Stethoscope, FileSpreadsheet, ClipboardList, ShieldCheck, Activity, Clock, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Filter, Link2, Unlink, Wand2, Trash2, Check, X, Building2 } from 'lucide-react';
+import { Calendar, RefreshCw, Download, UploadCloud, BarChart3, Users, Pill, Stethoscope, FileSpreadsheet, ClipboardList, ShieldCheck, Activity, Clock, ChevronDown, ChevronRight, AlertTriangle, AlertCircle, CheckCircle2, Filter, Link2, Unlink, Wand2, Trash2, Check, X, Building2, Loader2, FlaskConical } from 'lucide-react';
 import { reportsService, MedicineCatalogItem } from '../../services/reportsService';
 import { pharmacySalesService, PharmacySalesReportMeta, PharmacySaleRow } from '../../services/pharmacySalesService';
+import { getAllMedicines, getPathologies, findMoleculeOverlapsFromPrescriptions, MoleculeOverlapReport } from '../../services/inventoryService';
+import { performPharmacyMatch, PharmacyMatchResult } from '../../services/pharmacyMatchService';
 import { medicineNormalizationService, MedNormalizationRule, DuplicateCluster, detectDuplicateClusters, buildNormalizationMap, normalizeWithMap, buildActiveIngredientMap } from '../../services/medicineNormalizationService';
-import { Appointment, Consultation, Patient, PrescriptionItem, UserProfile, DoctorDaySchedule } from '../../types';
+import { Appointment, Consultation, Patient, PrescriptionItem, UserProfile, DoctorDaySchedule, Medicine, Pathology } from '../../types';
+import { gtDateToMs, msToGtDateStr } from '../../utils/gtTimezone';
+import { calculatePharmacyFillRate } from '../../utils/pharmacyFillRate';
+import { categorizeDiagnosis, loadAllCache, getRecentSubtypes, CategorizationResult } from '../../utils/diagnosisCategorization';
+import { CleanExternalMedicines } from './CleanExternalMedicines';
 // @ts-ignore
 import ExcelJS from 'exceljs';
 
@@ -15,8 +21,8 @@ type ReportTab = 'overview' | 'quality' | 'clinics' | 'secretary' | 'medicines' 
 const getGuatemalaToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
 
 const getDateRange = (startStr: string, endStr: string) => {
-  const start = new Date(`${startStr}T00:00:00-06:00`);
-  const end = new Date(`${endStr}T23:59:59.999-06:00`);
+  const start = new Date(gtDateToMs(startStr));
+  const end = new Date(gtDateToMs(endStr, true));
   return { start, end };
 };
 
@@ -131,6 +137,12 @@ const applyHeaderStyle = (row: any, color: string) => {
   });
 };
 
+// =====================================================================
+// PHARMACY FILL RATE — la lógica vive en src/utils/pharmacyFillRate.ts
+// para que sea testeable de forma aislada.
+// =====================================================================
+
+
 export const ReportsDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ReportTab>('overview');
   const [startDate, setStartDate] = useState(getGuatemalaToday());
@@ -142,13 +154,33 @@ export const ReportsDashboard: React.FC = () => {
   const [extraPatients, setExtraPatients] = useState<Patient[]>([]);
   const [inventoryMeds, setInventoryMeds] = useState<MedicineCatalogItem[]>([]);
   const [externalMeds, setExternalMeds] = useState<MedicineCatalogItem[]>([]);
+  const [inventoryWithStock, setInventoryWithStock] = useState<Medicine[]>([]);
+  const [allCatalogMeds, setAllCatalogMeds] = useState<Medicine[]>([]);
+  const [moleculeOverlap, setMoleculeOverlap] = useState<MoleculeOverlapReport>({ overlaps: [], totalExternalMedsWithInternalMolecule: 0, uniqueMoleculesCount: 0, totalInternalMeds: 0, totalExternalMeds: 0 });
+  const [pathologies, setPathologies] = useState<Pathology[]>([]);
+  const [doctorDiagnosisCategories, setDoctorDiagnosisCategories] = useState<Map<string, CategorizationResult>>(new Map());
+  const [diagnosisDetailModal, setDiagnosisDetailModal] = useState<{
+    open: boolean;
+    doctorName: string;
+    category: CategorizationResult | null;
+  }>({ open: false, doctorName: '', category: null });
   const [doctors, setDoctors] = useState<UserProfile[]>([]);
   const [doctorSchedules, setDoctorSchedules] = useState<DoctorDaySchedule[]>([]);
 
   const [pharmacyReports, setPharmacyReports] = useState<PharmacySalesReportMeta[]>([]);
   const [selectedReportId, setSelectedReportId] = useState('');
-  const [pharmacyRows, setPharmacyRows] = useState<PharmacySaleRow[]>([]);
+  const [pharmacyAllRows, setPharmacyAllRows] = useState<PharmacySaleRow[]>([]);
+  const [pharmacyDateStart, setPharmacyDateStart] = useState(getGuatemalaToday());
+  const [pharmacyDateEnd, setPharmacyDateEnd] = useState(getGuatemalaToday());
+  const [pharmacyConsultations, setPharmacyConsultations] = useState<Consultation[]>([]);
   const [uploadingPharmacy, setUploadingPharmacy] = useState(false);
+  const [showPharmacyUploadModal, setShowPharmacyUploadModal] = useState(false);
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [uploadDateStart, setUploadDateStart] = useState(getGuatemalaToday());
+  const [uploadDateEnd, setUploadDateEnd] = useState(getGuatemalaToday());
+  const [selectedMedicationForModal, setSelectedMedicationForModal] = useState<{name: string, isExternal: boolean} | null>(null);
+  const [selectedMoleculeForModal, setSelectedMoleculeForModal] = useState<string | null>(null);
+  const [moleculeModalTab, setMoleculeModalTab] = useState<'internal' | 'external'>('internal');
 
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
   const [selectedMedicineName, setSelectedMedicineName] = useState('');
@@ -162,9 +194,13 @@ export const ReportsDashboard: React.FC = () => {
   // Medicine filters
   const [medFilterDoctor, setMedFilterDoctor] = useState('');
   const [medFilterSpecialty, setMedFilterSpecialty] = useState('');
+  const [medFilterMolecule, setMedFilterMolecule] = useState('');
 
   // Capacity expansion
   const [expandedCapacityCategory, setExpandedCapacityCategory] = useState<string | null>(null);
+
+  // Diagnosis grouping filter
+  const [diagnosisGroupBy, setDiagnosisGroupBy] = useState<'specialty' | 'doctor'>('specialty');
 
   // Normalization
   const [normRules, setNormRules] = useState<MedNormalizationRule[]>([]);
@@ -176,8 +212,59 @@ export const ReportsDashboard: React.FC = () => {
   const [normIgnoredClusters, setNormIgnoredClusters] = useState<string[]>([]);
 
   const [showMissingModal, setShowMissingModal] = useState(false);
+  const [showSpecialtyModal, setShowSpecialtyModal] = useState<'total' | 'new' | 're' | null>(null);
+  const [showUnfinishedConsultationsModal, setShowUnfinishedConsultationsModal] = useState(false);
+  const [showDoctorsNotPrescribingModal, setShowDoctorsNotPrescribingModal] = useState(false);
+
+  useEffect(() => {
+    if (!selectedMoleculeForModal && !selectedMedicationForModal) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedMoleculeForModal(null);
+        setSelectedMedicationForModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [selectedMoleculeForModal, selectedMedicationForModal]);
+
+  // Load inventory with stock for pharmacy fill rate calculations
+  useEffect(() => {
+    const loadInventory = async () => {
+        try {
+          const meds = await getAllMedicines();
+          setAllCatalogMeds(meds);
+          setInventoryWithStock(meds.filter(m => !m.isExternal));
+        } catch (e) {
+          console.error('Error loading inventory for pharmacy fill rate:', e);
+        }
+      };
+      loadInventory();
+    }, []);
+
+    // Load pathologies catalog and hydrate diagnosis category cache on mount
+    useEffect(() => {
+      const loadPathologiesAndCache = async () => {
+        try {
+          const [paths] = await Promise.all([getPathologies(), loadAllCache()]);
+          setPathologies(paths);
+        } catch (e) {
+          console.error('Error loading pathologies or diagnosis cache:', e);
+        }
+      };
+      loadPathologiesAndCache();
+    }, []);
 
   const range = useMemo(() => getDateRange(startDate, endDate), [startDate, endDate]);
+
+  const periodLabel = useMemo(() => {
+    const fmt = (d: string) => {
+      const date = new Date(d + 'T12:00:00');
+      return date.toLocaleDateString('es-GT', { day: 'numeric', month: 'short', year: 'numeric' });
+    };
+    if (startDate === endDate) return fmt(startDate);
+    return `${fmt(startDate)} — ${fmt(endDate)}`;
+  }, [startDate, endDate]);
 
   const refreshData = async () => {
     setLoading(true);
@@ -245,20 +332,124 @@ export const ReportsDashboard: React.FC = () => {
 
   useEffect(() => {
     if (!selectedReportId) {
-      setPharmacyRows([]);
+      setPharmacyAllRows([]);
       return;
     }
-    pharmacySalesService.getReportRowsByRange(selectedReportId, range.start, range.end)
-      .then(setPharmacyRows)
-      .catch(() => setPharmacyRows([]));
-  }, [selectedReportId, range.start, range.end]);
+    pharmacySalesService.getReportRowsByRange(selectedReportId)
+      .then(setPharmacyAllRows)
+      .catch(() => setPharmacyAllRows([]));
+  }, [selectedReportId]);
 
-  const handleUploadPharmacyReport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const parseDateFromFileName = (fileName: string): { start: string; end: string } | null => {
+    const lower = fileName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const months: Record<string, number> = {
+      enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5,
+      julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9, noviembre: 10, diciembre: 11
+    };
+    // Pattern: "13 abril 2025" or "13 de abril 2025"
+    const longMatch = lower.match(/(\d{1,2})\s*(?:de\s+)?(\w+)\s*(?:de\s+)?(\d{4})/);
+    if (longMatch) {
+      const day = parseInt(longMatch[1]);
+      const month = months[longMatch[2]];
+      const year = parseInt(longMatch[3]);
+      if (month !== undefined && !isNaN(day) && !isNaN(year)) {
+        const d = new Date(year, month, day);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return { start: `${y}-${m}-${dd}`, end: `${y}-${m}-${dd}` };
+      }
+    }
+    // Pattern: "2025-04-13" or "13-04-2025" or "13/04/2025"
+    const isoMatch = lower.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (isoMatch) {
+      const y = parseInt(isoMatch[1]);
+      const m = parseInt(isoMatch[2]);
+      const d = parseInt(isoMatch[3]);
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        return { start: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`, end: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` };
+      }
+    }
+    const dmyMatch = lower.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmyMatch) {
+      const d = parseInt(dmyMatch[1]);
+      const m = parseInt(dmyMatch[2]);
+      const y = parseInt(dmyMatch[3]);
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        return { start: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`, end: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` };
+      }
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    const report = pharmacyReports.find(r => r.id === selectedReportId);
+    if (!report) return;
+
+    // 1. Try stored metadata dates
+    const toMs = (v: any): number => {
+      if (typeof v === 'number') return v;
+      if (v?.toDate) return v.toDate().getTime();
+      if (v?.seconds) return v.seconds * 1000;
+      const parsed = new Date(v).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    };
+    const ds = toMs(report.dateStart);
+    const de = toMs(report.dateEnd);
+    if (ds > 0 && de > 0) {
+      setPharmacyDateStart(msToGtDateStr(ds));
+      setPharmacyDateEnd(msToGtDateStr(de));
+      return;
+    }
+
+    // 2. Fallback: parse from filename
+    if (report.fileName) {
+      const parsed = parseDateFromFileName(report.fileName);
+      if (parsed) {
+        setPharmacyDateStart(parsed.start);
+        setPharmacyDateEnd(parsed.end);
+      }
+    }
+  }, [selectedReportId, pharmacyReports]);
+
+  useEffect(() => {
+    if (!pharmacyDateStart || !pharmacyDateEnd) return;
+    const pStart = new Date(gtDateToMs(pharmacyDateStart));
+    const pEnd = new Date(gtDateToMs(pharmacyDateEnd, true));
+    reportsService.getConsultationsByRange(pStart, pEnd)
+      .then(setPharmacyConsultations)
+      .catch(() => setPharmacyConsultations([]));
+  }, [pharmacyDateStart, pharmacyDateEnd]);
+
+  const pharmacyRows = useMemo(() => {
+    if (!pharmacyAllRows.length) return [];
+    const startMs = gtDateToMs(pharmacyDateStart);
+    const endMs = gtDateToMs(pharmacyDateEnd, true);
+    return pharmacyAllRows.filter(row => {
+      if (!row.dateMs) return true;
+      return row.dateMs >= startMs && row.dateMs <= endMs;
+    });
+  }, [pharmacyAllRows, pharmacyDateStart, pharmacyDateEnd]);
+
+  const handleUploadPharmacyReport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = '';
+    setPendingUploadFile(file);
+    const today = getGuatemalaToday();
+    setUploadDateStart(today);
+    setUploadDateEnd(today);
+    setShowPharmacyUploadModal(true);
+  };
+
+  const confirmPharmacyUpload = async () => {
+    if (!pendingUploadFile) return;
     setUploadingPharmacy(true);
+    setShowPharmacyUploadModal(false);
     try {
-      const result = await pharmacySalesService.uploadReport(file, 'admin');
+      const pStartMs = gtDateToMs(uploadDateStart);
+      const pEndMs = gtDateToMs(uploadDateEnd, true);
+      const result = await pharmacySalesService.uploadReport(pendingUploadFile, 'admin', pStartMs, pEndMs);
       toast.success(`Reporte cargado (${result.rowCount} filas)`);
       const reports = await pharmacySalesService.listReports();
       setPharmacyReports(reports);
@@ -268,7 +459,7 @@ export const ReportsDashboard: React.FC = () => {
       toast.error('No se pudo cargar el reporte de farmacia');
     } finally {
       setUploadingPharmacy(false);
-      event.target.value = '';
+      setPendingUploadFile(null);
     }
   };
 
@@ -303,7 +494,7 @@ export const ReportsDashboard: React.FC = () => {
   }, [inventoryMeds, externalMeds]);
 
   const prescriptionItems = useMemo(() => {
-    const items: Array<PrescriptionItem & { doctorId?: string; doctorName?: string; activeIngredient?: string; provider?: string }> = [];
+    const items: Array<PrescriptionItem & { doctorId?: string; doctorName?: string; activeIngredient?: string; provider?: string; consultationDate?: number }> = [];
     consultations.forEach(c => {
       (c.prescription || []).forEach(item => {
         const key = normalizeText(item.name || '');
@@ -313,7 +504,8 @@ export const ReportsDashboard: React.FC = () => {
           doctorId: c.doctorId,
           doctorName: c.doctorName,
           activeIngredient: medInfo?.activeIngredient,
-          provider: medInfo?.provider
+          provider: medInfo?.provider,
+          consultationDate: c.date
         });
       });
     });
@@ -333,27 +525,51 @@ export const ReportsDashboard: React.FC = () => {
     });
   }, [arrivedAppointments, consultations]);
 
+  const pharmacyFillRate = useMemo(() => {
+    return calculatePharmacyFillRate(consultations, inventoryWithStock);
+  }, [consultations, inventoryWithStock]);
+
   const kpis = useMemo(() => {
     const totalConsultations = consultations.length;
     const totalAppointments = appointments.length;
     const totalArrived = arrivedAppointments.length;
     const noShows = appointments.filter(a => a.status === 'no_show').length;
-    const newPatients = patients.length;
     const totalPrescriptionItems = prescriptionItems.reduce((acc, item) => acc + (item.quantity || 1), 0);
-    const newConsultations = consultations.filter(c => c.consultationType === 'Nueva').length;
-    const reConsultations = consultations.filter(c => c.consultationType === 'Reconsulta').length;
+    const newConsultations = consultations.filter(c => c.consultationType === 'Nueva' && (c.status === 'finished' || c.status === 'delivered')).length;
+    const reConsultations = consultations.filter(c => c.consultationType === 'Reconsulta' && (c.status === 'finished' || c.status === 'delivered')).length;
     return {
       totalConsultations,
       totalAppointments,
       totalArrived,
       noShows,
-      newPatients,
       totalPrescriptionItems,
       newConsultations,
       reConsultations,
       missingAppointments
     };
-  }, [consultations, appointments, arrivedAppointments, patients, prescriptionItems, missingAppointments]);
+  }, [consultations, appointments, arrivedAppointments, prescriptionItems, missingAppointments]);
+
+  const unfinishedConsultationsList = useMemo(() => {
+    return consultations.filter(c => c.status !== 'finished' && c.status !== 'delivered');
+  }, [consultations]);
+
+  const doctorsNotPrescribingList = useMemo(() => {
+    return consultations.filter(c => 
+      (c.status === 'finished' || c.status === 'delivered') && 
+      (!c.prescription || c.prescription.length === 0)
+    );
+  }, [consultations]);
+
+  const noPrescriptionReasonsSummary = useMemo(() => {
+    const map = new Map<string, number>();
+    doctorsNotPrescribingList.forEach(c => {
+      const reason = c.noPrescriptionReasonCategory || 'Sin clasificar';
+      map.set(reason, (map.get(reason) || 0) + 1);
+    });
+    return Array.from(map.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [doctorsNotPrescribingList]);
 
   const matrixByWeek = useMemo(() => {
     const map = new Map<string, {
@@ -451,6 +667,8 @@ export const ReportsDashboard: React.FC = () => {
 
     const moleculeMap = new Map<string, number>();
     const medMap = new Map<string, number>();
+    const internalMedMap = new Map<string, number>();
+    const externalMedMap = new Map<string, number>();
     const providerMap = new Map<string, number>();
     const doctorMap = new Map<string, number>();
 
@@ -458,6 +676,12 @@ export const ReportsDashboard: React.FC = () => {
       const qty = item.quantity || 1;
       const nameKey = item.name || 'Sin nombre';
       medMap.set(nameKey, (medMap.get(nameKey) || 0) + qty);
+
+      if (item.isExternal) {
+        externalMedMap.set(nameKey, (externalMedMap.get(nameKey) || 0) + qty);
+      } else {
+        internalMedMap.set(nameKey, (internalMedMap.get(nameKey) || 0) + qty);
+      }
 
       const moleculeKey = item.activeIngredient || 'No identificado';
       moleculeMap.set(moleculeKey, (moleculeMap.get(moleculeKey) || 0) + qty);
@@ -478,25 +702,59 @@ export const ReportsDashboard: React.FC = () => {
       internalItems,
       molecules: toSorted(moleculeMap),
       medicines: toSorted(medMap),
+      internalMedicines: toSorted(internalMedMap),
+      externalMedicines: toSorted(externalMedMap),
       providers: toSorted(providerMap),
       doctors: toSorted(doctorMap)
     };
   }, [prescriptionItems]);
 
+  // --- CALCULATION FOR SELECTED MEDICATION MODAL ---
+  const selectedMedicationModalData = useMemo(() => {
+    if (!selectedMedicationForModal) return [];
+    
+    const matched = prescriptionItems.filter(p => 
+      p.name === selectedMedicationForModal.name && 
+      p.isExternal === selectedMedicationForModal.isExternal
+    );
+    
+    const docMap = new Map<string, number>();
+    matched.forEach(item => {
+      const docName = item.doctorName || 'Desconocido';
+      docMap.set(docName, (docMap.get(docName) || 0) + 1); // Count incidences, not pill quantity
+    });
+    
+    return Array.from(docMap.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [selectedMedicationForModal, prescriptionItems]);
+
   // --- DIAGNOSIS GROUPING FOR OVERVIEW TABLE ---
-  const categorizeDiagnosis = (diagnosis: string | undefined): string => {
-    if (!diagnosis) return 'Neurología general';
-    const d = normalizeText(diagnosis);
-    if (d.includes('epilepsia') || d.includes('epilepsy') || d.includes('epilep')) return 'Epilepsia';
-    if (d.includes('parkinson')) return 'Parkinson';
-    if (d.includes('tumor') || d.includes('tumores') || d.includes('neoplasia')) return 'Tumores cerebrales';
-    if (d.includes('dolor') || d.includes('cefalea') || d.includes('migrana') || d.includes('migraña')) return 'Dolor';
-    return 'Neurología general';
-  };
+  // (Old keyword-based categorizeDiagnosis removed — replaced by the new helper
+  // from utils/diagnosisCategorization.ts which is imported above. Keeping the
+  // diagnosisTable logic but computing categories with the new system.)
 
   const diagnosisTable = useMemo(() => {
-    const CATEGORIES = ['Epilepsia', 'Parkinson', 'Tumores cerebrales', 'Dolor', 'Neurología general'];
+    let CATEGORIES: string[] = [];
+    
+    if (diagnosisGroupBy === 'specialty') {
+      const specSet = new Set<string>();
+      consultations.forEach(c => {
+        if (c.doctorSpecialty) specSet.add(c.doctorSpecialty);
+      });
+      CATEGORIES = Array.from(specSet).sort();
+      if (CATEGORIES.length === 0) CATEGORIES = ['Sin especialidad'];
+    } else if (diagnosisGroupBy === 'doctor') {
+      const docSet = new Set<string>();
+      consultations.forEach(c => {
+        if (c.doctorName) docSet.add(c.doctorName);
+      });
+      CATEGORIES = Array.from(docSet).sort();
+      if (CATEGORIES.length === 0) CATEGORIES = ['Sin doctor asignado'];
+    }
+
     const TYPES: Array<'Nueva' | 'Reconsulta'> = ['Nueva', 'Reconsulta'];
+    const isDoctorMode = diagnosisGroupBy === 'doctor';
 
     type RowData = {
       label: string;
@@ -506,6 +764,9 @@ export const ReportsDashboard: React.FC = () => {
       pctPharmacy: number;
       pctExams: number;
       pctReferral: number;
+      totalMeds: number;
+      internalMeds: number;
+      pctInternal: number;
     };
 
     const rows: RowData[] = [];
@@ -513,9 +774,15 @@ export const ReportsDashboard: React.FC = () => {
     for (const cat of CATEGORIES) {
       for (const tipo of TYPES) {
         const matching = consultations.filter(c => {
-          const group = categorizeDiagnosis(c.diagnosis || c.reasonForConsultation);
-          return group === cat && c.consultationType === tipo;
+          if (c.consultationType !== tipo) return false;
+          
+          if (diagnosisGroupBy === 'specialty') {
+            return (c.doctorSpecialty || 'Sin especialidad') === cat;
+          } else {
+            return (c.doctorName || 'Sin doctor asignado') === cat;
+          }
         });
+        
         const count = matching.length;
         if (count === 0) {
           rows.push({
@@ -525,7 +792,10 @@ export const ReportsDashboard: React.FC = () => {
             count: 0,
             pctPharmacy: 0,
             pctExams: 0,
-            pctReferral: 0
+            pctReferral: 0,
+            totalMeds: 0,
+            internalMeds: 0,
+            pctInternal: 0
           });
           continue;
         }
@@ -545,6 +815,19 @@ export const ReportsDashboard: React.FC = () => {
           (c.specialtyReferrals || []).length > 0
         ).length;
 
+        // Medication counts (only meaningful in doctor mode)
+        let totalMeds = 0;
+        let internalMeds = 0;
+        if (isDoctorMode) {
+          matching.forEach(c => {
+            (c.prescription || []).forEach(p => {
+              totalMeds += 1;
+              if (!p.isExternal) internalMeds += 1;
+            });
+          });
+        }
+        const pctInternal = totalMeds > 0 ? Math.round((internalMeds / totalMeds) * 100) : 0;
+
         rows.push({
           label: `${tipo === 'Nueva' ? 'Primera consulta' : 'Reconsulta'} ${cat}`,
           category: cat,
@@ -552,7 +835,10 @@ export const ReportsDashboard: React.FC = () => {
           count,
           pctPharmacy: Math.round((withPharmacy / count) * 100),
           pctExams: Math.round((withExams / count) * 100),
-          pctReferral: Math.round((withReferral / count) * 100)
+          pctReferral: Math.round((withReferral / count) * 100),
+          totalMeds,
+          internalMeds,
+          pctInternal
         });
       }
     }
@@ -569,59 +855,80 @@ export const ReportsDashboard: React.FC = () => {
       (c.specialtyReferrals || []).length > 0
     ).length;
 
+    const totalMedsAll = rows.reduce((acc, r) => acc + r.totalMeds, 0);
+    const internalMedsAll = rows.reduce((acc, r) => acc + r.internalMeds, 0);
+    const pctInternalAll = totalMedsAll > 0 ? Math.round((internalMedsAll / totalMedsAll) * 100) : 0;
+
     return {
       rows,
       totals: {
         count: totalCount,
         pctPharmacy: totalCount > 0 ? Math.round((totalWithPharmacy / totalCount) * 100) : 0,
         pctExams: totalCount > 0 ? Math.round((totalWithExams / totalCount) * 100) : 0,
-        pctReferral: totalCount > 0 ? Math.round((totalWithReferral / totalCount) * 100) : 0
+        pctReferral: totalCount > 0 ? Math.round((totalWithReferral / totalCount) * 100) : 0,
+        totalMeds: totalMedsAll,
+        internalMeds: internalMedsAll,
+        pctInternal: pctInternalAll
       }
     };
-  }, [consultations]);
+  }, [consultations, diagnosisGroupBy]);
 
   // --- CLINIC CAPACITY USAGE ---
-  // Helper: count weekdays (0=Sun..6=Sat) in a date range
-  const getWeekdayCounts = (start: Date, end: Date) => {
-    const counts = [0, 0, 0, 0, 0, 0, 0]; // Sun..Sat
+  // Helper to get array of dates between start and end
+  const getDatesInRange = (start: Date, end: Date) => {
+    const dates: Date[] = [];
     const cursor = new Date(start);
     cursor.setHours(0, 0, 0, 0);
     const endDay = new Date(end);
     endDay.setHours(23, 59, 59, 999);
     while (cursor <= endDay) {
-      counts[cursor.getDay()]++;
+      dates.push(new Date(cursor));
       cursor.setDate(cursor.getDate() + 1);
     }
-    return counts;
+    return dates;
   };
 
-  // Map JS day (0=Sun) to weeklySchedule key (0=Mon..5=Sat)
-  const jsDayToScheduleKey = (jsDay: number): number | null => {
-    // weeklySchedule uses: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat
-    if (jsDay === 0) return null; // Sunday — no schedule
-    return jsDay - 1; // Mon(1)->0, Tue(2)->1, ... Sat(6)->5
+  const toDateKey = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   };
 
   const clinicCapacity = useMemo(() => {
-    const weekdayCounts = getWeekdayCounts(range.start, range.end);
-
-    // Contracted hours: from weeklySchedule on doctor profiles
+    const dates = getDatesInRange(range.start, range.end);
     let contractedMinutes = 0;
+
+    // Create a fast lookup map for explicit schedules: schedulesMap[doctorId][dateKey]
+    const schedulesMap: Record<string, Record<string, DoctorDaySchedule>> = {};
+    doctorSchedules.forEach(ds => {
+      if (!schedulesMap[ds.doctorId]) schedulesMap[ds.doctorId] = {};
+      schedulesMap[ds.doctorId][ds.date] = ds;
+    });
+
     doctors.forEach(doc => {
-      const ws = doc.weeklySchedule;
-      if (!ws) return;
-      for (let jsDay = 1; jsDay <= 6; jsDay++) { // Mon..Sat
-        const schedKey = jsDayToScheduleKey(jsDay);
-        if (schedKey === null) continue;
-        const dayEntry = ws[schedKey];
-        if (!dayEntry || dayEntry.mode !== 'available' || !dayEntry.startTime || !dayEntry.endTime) continue;
-        const [sh, sm] = dayEntry.startTime.split(':').map(Number);
-        const [eh, em] = dayEntry.endTime.split(':').map(Number);
-        const minutes = (eh * 60 + em) - (sh * 60 + sm);
-        if (minutes > 0) {
-          contractedMinutes += minutes * weekdayCounts[jsDay];
+      dates.forEach(d => {
+        const dateKey = toDateKey(d);
+        const override = schedulesMap[doc.uid]?.[dateKey];
+
+        if (override) {
+          if (override.mode === 'available' && override.startTime && override.endTime) {
+            const [sh, sm] = override.startTime.split(':').map(Number);
+            const [eh, em] = override.endTime.split(':').map(Number);
+            const minutes = (eh * 60 + em) - (sh * 60 + sm);
+            if (minutes > 0) contractedMinutes += minutes;
+          }
+        } else if (doc.weeklySchedule) {
+          const jsDay = d.getDay(); // 0 = Sunday, 6 = Saturday
+          const wsRule = doc.weeklySchedule[jsDay];
+          if (wsRule && wsRule.mode === 'available' && wsRule.startTime && wsRule.endTime) {
+            const [sh, sm] = wsRule.startTime.split(':').map(Number);
+            const [eh, em] = wsRule.endTime.split(':').map(Number);
+            const minutes = (eh * 60 + em) - (sh * 60 + sm);
+            if (minutes > 0) contractedMinutes += minutes;
+          }
         }
-      }
+      });
     });
 
     // Attended minutes: fixed standard per consultation
@@ -636,78 +943,156 @@ export const ReportsDashboard: React.FC = () => {
       attendedHours: (attendedMinutes / 60),
       percentage: Math.min(percentage, 100)
     };
-  }, [doctors, consultations, range]);
+  }, [doctors, doctorSchedules, consultations, range]);
 
-  // --- CAPACITY BY SPECIALTY ---
-  const capacityBySpecialty = useMemo(() => {
-    const weekdayCounts = getWeekdayCounts(range.start, range.end);
+  // --- CAPACITY BY DOCTOR ---
+  const capacityByDoctor = useMemo(() => {
+    const dates = getDatesInRange(range.start, range.end);
+    type DoctorCapacity = { name: string; uid: string; specialty: string; contractedMin: number; attendedMin: number; newCount: number; reCount: number };
+    
+    const docStats = new Map<string, DoctorCapacity>();
 
-    type DoctorCapacity = { name: string; uid: string; contractedMin: number; attendedMin: number; newCount: number; reCount: number };
-    type CategoryCapacity = { category: string; doctors: DoctorCapacity[]; contractedMin: number; attendedMin: number };
+    const schedulesMap: Record<string, Record<string, DoctorDaySchedule>> = {};
+    doctorSchedules.forEach(ds => {
+      if (!schedulesMap[ds.doctorId]) schedulesMap[ds.doctorId] = {};
+      schedulesMap[ds.doctorId][ds.date] = ds;
+    });
 
-    // Contracted minutes per doctor from weeklySchedule
-    const doctorContracted = new Map<string, number>();
     doctors.forEach(doc => {
-      const ws = doc.weeklySchedule;
-      if (!ws) return;
-      let totalMin = 0;
-      for (let jsDay = 1; jsDay <= 6; jsDay++) {
-        const schedKey = jsDayToScheduleKey(jsDay);
-        if (schedKey === null) continue;
-        const dayEntry = ws[schedKey];
-        if (!dayEntry || dayEntry.mode !== 'available' || !dayEntry.startTime || !dayEntry.endTime) continue;
-        const [sh, sm] = dayEntry.startTime.split(':').map(Number);
-        const [eh, em] = dayEntry.endTime.split(':').map(Number);
-        const minutes = (eh * 60 + em) - (sh * 60 + sm);
-        if (minutes > 0) totalMin += minutes * weekdayCounts[jsDay];
-      }
-      if (totalMin > 0) doctorContracted.set(doc.uid, totalMin);
+      let docContractedMin = 0;
+      
+      dates.forEach(d => {
+        const dateKey = toDateKey(d);
+        const override = schedulesMap[doc.uid]?.[dateKey];
+
+        if (override) {
+          if (override.mode === 'available' && override.startTime && override.endTime) {
+            const [sh, sm] = override.startTime.split(':').map(Number);
+            const [eh, em] = override.endTime.split(':').map(Number);
+            const minutes = (eh * 60 + em) - (sh * 60 + sm);
+            if (minutes > 0) docContractedMin += minutes;
+          }
+        } else if (doc.weeklySchedule) {
+          const jsDay = d.getDay();
+          const wsRule = doc.weeklySchedule[jsDay];
+          if (wsRule && wsRule.mode === 'available' && wsRule.startTime && wsRule.endTime) {
+            const [sh, sm] = wsRule.startTime.split(':').map(Number);
+            const [eh, em] = wsRule.endTime.split(':').map(Number);
+            const minutes = (eh * 60 + em) - (sh * 60 + sm);
+            if (minutes > 0) docContractedMin += minutes;
+          }
+        }
+      });
+
+      docStats.set(doc.uid, {
+        name: doc.name || doc.uid,
+        uid: doc.uid,
+        specialty: doc.specialty || doc.specialties?.[0] || 'Sin especialidad',
+        contractedMin: docContractedMin,
+        attendedMin: 0,
+        newCount: 0,
+        reCount: 0
+      });
     });
 
-    // Attended minutes per doctor: fixed standard
-    const doctorAttended = new Map<string, { min: number; newCount: number; reCount: number }>();
     consultations.forEach(c => {
-      const doctorId = c.doctorId;
-      if (!doctorId) return;
+      if (!c.doctorId) return;
+      let stats = docStats.get(c.doctorId);
+      if (!stats) {
+        stats = {
+          name: c.doctorName || c.doctorId,
+          uid: c.doctorId,
+          specialty: c.doctorSpecialty || 'Sin especialidad',
+          contractedMin: 0,
+          attendedMin: 0,
+          newCount: 0,
+          reCount: 0
+        };
+        docStats.set(c.doctorId, stats);
+      }
       const min = c.consultationType === 'Nueva' ? 60 : 30;
-      const current = doctorAttended.get(doctorId) || { min: 0, newCount: 0, reCount: 0 };
-      current.min += min;
-      if (c.consultationType === 'Nueva') current.newCount++;
-      else current.reCount++;
-      doctorAttended.set(doctorId, current);
+      stats.attendedMin += min;
+      if (c.consultationType === 'Nueva') stats.newCount++;
+      else stats.reCount++;
     });
 
-    // Group by specialty
-    const categoryMap = new Map<string, DoctorCapacity[]>();
-    const allDoctorIds = new Set([...doctorContracted.keys(), ...doctorAttended.keys()]);
-    allDoctorIds.forEach(uid => {
-      const doc = doctors.find(d => d.uid === uid);
-      const category = doc?.specialty || doc?.specialties?.[0] || 'Sin especialidad';
-      const attended = doctorAttended.get(uid) || { min: 0, newCount: 0, reCount: 0 };
-      const entry: DoctorCapacity = {
-        name: doc?.name || uid,
-        uid,
-        contractedMin: doctorContracted.get(uid) || 0,
-        attendedMin: attended.min,
-        newCount: attended.newCount,
-        reCount: attended.reCount
-      };
-      const arr = categoryMap.get(category) || [];
-      arr.push(entry);
-      categoryMap.set(category, arr);
-    });
-
-    const result: CategoryCapacity[] = Array.from(categoryMap.entries())
-      .map(([category, drs]) => ({
-        category,
-        doctors: drs.sort((a, b) => b.attendedMin - a.attendedMin),
-        contractedMin: drs.reduce((acc, d) => acc + d.contractedMin, 0),
-        attendedMin: drs.reduce((acc, d) => acc + d.attendedMin, 0)
-      }))
+    return Array.from(docStats.values())
+      .filter(d => d.contractedMin > 0 || d.attendedMin > 0)
       .sort((a, b) => b.attendedMin - a.attendedMin);
+  }, [doctors, doctorSchedules, consultations, range]);
 
-    return result;
-  }, [doctors, consultations, range]);
+  // --- PHARMACY UTILIZATION BY DOCTOR ---
+  const pharmacyUtilizationByDoctor = useMemo(() => {
+    type PharmacyStats = { name: string; uid: string; newCount: number; newWithPharmacy: number; reCount: number; reWithPharmacy: number };
+    const docStats = new Map<string, PharmacyStats>();
+
+    doctors.forEach(doc => {
+      docStats.set(doc.uid, {
+        name: doc.name || doc.uid,
+        uid: doc.uid,
+        newCount: 0,
+        newWithPharmacy: 0,
+        reCount: 0,
+        reWithPharmacy: 0
+      });
+    });
+
+    consultations.forEach(c => {
+      if (!c.doctorId || (c.status !== 'finished' && c.status !== 'delivered')) return;
+      let stats = docStats.get(c.doctorId);
+      if (!stats) {
+        stats = {
+          name: c.doctorName || c.doctorId,
+          uid: c.doctorId,
+          newCount: 0,
+          newWithPharmacy: 0,
+          reCount: 0,
+          reWithPharmacy: 0
+        };
+        docStats.set(c.doctorId, stats);
+      }
+
+      const hasPharmacy = (c.prescription || []).some(p => !p.isExternal);
+      
+      if (c.consultationType === 'Nueva') {
+        stats.newCount++;
+        if (hasPharmacy) stats.newWithPharmacy++;
+      } else if (c.consultationType === 'Reconsulta') {
+        stats.reCount++;
+        if (hasPharmacy) stats.reWithPharmacy++;
+      }
+    });
+
+    return Array.from(docStats.values())
+      .filter(d => capacityByDoctor.some(c => c.uid === d.uid))
+      .sort((a, b) => {
+        const ca = capacityByDoctor.find(c => c.uid === a.uid);
+        const cb = capacityByDoctor.find(c => c.uid === b.uid);
+        return (cb?.attendedMin || 0) - (ca?.attendedMin || 0);
+      });
+  }, [doctors, consultations, capacityByDoctor]);
+
+  // Compute diagnosis category for each doctor based on their first non-empty diagnosis
+  useEffect(() => {
+    const computeDoctorCategories = async () => {
+      const map = new Map<string, CategorizationResult>();
+      for (const doc of capacityByDoctor) {
+        const docCons = consultations.filter(c => c.doctorName === doc.name);
+        for (const c of docCons) {
+          if (c.diagnosis && c.diagnosis.trim()) {
+            const cat = await categorizeDiagnosis(c.diagnosis, pathologies);
+            map.set(doc.name, cat);
+            break;
+          }
+        }
+      }
+      setDoctorDiagnosisCategories(map);
+    };
+    if (capacityByDoctor.length > 0 && pathologies.length > 0) {
+      computeDoctorCategories();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capacityByDoctor, pathologies, consultations.length]);
 
   // --- QUALITY DATA WITH SEVERITY ---
   const qualityData = useMemo(() => {
@@ -736,7 +1121,7 @@ export const ReportsDashboard: React.FC = () => {
     return { items: filtered, allItems: items, critical, alert, ok, total: items.length, operators };
   }, [arrivedPatients, qualitySeverityFilter, qualityOperatorFilter]);
 
-  // --- FILTERED MEDICINE STATS BY DOCTOR/SPECIALTY ---
+  // --- FILTERED MEDICINE STATS BY DOCTOR/SPECIALTY/MOLECULE ---
   const filteredPrescriptionItems = useMemo(() => {
     let items = prescriptionItems;
     if (medFilterDoctor) {
@@ -748,15 +1133,60 @@ export const ReportsDashboard: React.FC = () => {
         .map(d => d.uid);
       items = items.filter(p => p.doctorId && doctorIdsInSpecialty.includes(p.doctorId));
     }
+    if (medFilterMolecule) {
+      items = items.filter(p => p.activeIngredient === medFilterMolecule);
+    }
     return items;
-  }, [prescriptionItems, medFilterDoctor, medFilterSpecialty, doctors]);
+  }, [prescriptionItems, medFilterDoctor, medFilterSpecialty, medFilterMolecule, doctors]);
+
+  // --- MOLECULE OVERLAP REACTIVO A FILTROS ---
+  useEffect(() => {
+    if (allCatalogMeds.length === 0) return;
+    setMoleculeOverlap(findMoleculeOverlapsFromPrescriptions(filteredPrescriptionItems, allCatalogMeds));
+  }, [filteredPrescriptionItems, allCatalogMeds]);
 
   // --- NORMALIZATION MAP ---
   const normMap = useMemo(() => buildNormalizationMap(normRules), [normRules]);
   const activeIngredientMap = useMemo(() => buildActiveIngredientMap(normRules), [normRules]);
 
+  // --- CALCULATION FOR MOLECULE BRANDS MODAL ---
+  const selectedMoleculeBrands = useMemo(() => {
+    if (!selectedMoleculeForModal) return { internal: [] as Array<{name: string; count: number; providers: string[]}>, external: [] as Array<{name: string; count: number; providers: string[]}>, total: 0 };
+
+    const matched = filteredPrescriptionItems.filter(item => {
+      const key = normalizeText(item.name || '');
+      const ai = activeIngredientMap.get(key) || item.activeIngredient;
+      return ai === selectedMoleculeForModal;
+    });
+
+    const internalMap = new Map<string, { name: string; count: number; providers: Set<string> }>();
+    const externalMap = new Map<string, { name: string; count: number; providers: Set<string> }>();
+
+    matched.forEach(item => {
+      const name = item.name || 'Sin marca';
+      const target = item.isExternal ? externalMap : internalMap;
+      const current = target.get(name) || { name, count: 0, providers: new Set<string>() };
+      current.count += 1;
+      if (item.provider) current.providers.add(item.provider);
+      target.set(name, current);
+    });
+
+    const sortBrands = (map: Map<string, { name: string; count: number; providers: Set<string> }>) =>
+      Array.from(map.values())
+        .map(b => ({ name: b.name, count: b.count, providers: Array.from(b.providers) }))
+        .sort((a, b) => b.count - a.count);
+
+    return {
+      internal: sortBrands(internalMap),
+      external: sortBrands(externalMap),
+      total: matched.length
+    };
+  }, [selectedMoleculeForModal, filteredPrescriptionItems, activeIngredientMap]);
+
   const filteredMedicineStats = useMemo(() => {
     const medMap = new Map<string, number>();
+    const internalMedMap = new Map<string, number>();
+    const externalMedMap = new Map<string, number>();
     const moleculeMap = new Map<string, number>();
     const providerMap = new Map<string, number>();
     const doctorMap = new Map<string, number>();
@@ -769,8 +1199,13 @@ export const ReportsDashboard: React.FC = () => {
       const name = normalizeWithMap(rawName, normMap);
       medMap.set(name, (medMap.get(name) || 0) + 1);
 
-      if (item.isExternal) externalItems++;
-      else internalItems++;
+      if (item.isExternal) {
+        externalItems++;
+        externalMedMap.set(name, (externalMedMap.get(name) || 0) + 1);
+      } else {
+        internalItems++;
+        internalMedMap.set(name, (internalMedMap.get(name) || 0) + 1);
+      }
 
       const aiMolecule = activeIngredientMap.get(name) || item.activeIngredient;
       if (aiMolecule) {
@@ -795,6 +1230,8 @@ export const ReportsDashboard: React.FC = () => {
       internalItems,
       molecules: toSorted(moleculeMap),
       medicines: toSorted(medMap),
+      internalMedicines: toSorted(internalMedMap),
+      externalMedicines: toSorted(externalMedMap),
       providers: toSorted(providerMap),
       doctors: toSorted(doctorMap)
     };
@@ -822,6 +1259,16 @@ export const ReportsDashboard: React.FC = () => {
     return Array.from(set).sort();
   }, [doctors]);
 
+  const moleculesList = useMemo(() => {
+    const set = new Set<string>();
+    prescriptionItems.forEach(item => {
+      const key = normalizeText(item.name || '');
+      const ai = activeIngredientMap.get(key) || item.activeIngredient;
+      if (ai) set.add(ai);
+    });
+    return Array.from(set).sort();
+  }, [prescriptionItems, activeIngredientMap]);
+
   const selectedDoctor = useMemo(() => doctors.find(d => d.uid === selectedDoctorId), [doctors, selectedDoctorId]);
 
   const doctorStats = useMemo(() => {
@@ -844,6 +1291,40 @@ export const ReportsDashboard: React.FC = () => {
     });
     const totalWeeks = weeklyMinutes.size || 1;
     const avgWeeklyMinutes = Array.from(weeklyMinutes.values()).reduce((acc, val) => acc + val.minutes, 0) / totalWeeks;
+    const avgWeeklyHours = avgWeeklyMinutes / 60;
+
+    // --- Contracted hours (from schedule for this doctor) ---
+    const selectedDoc = doctors.find(d => d.uid === selectedDoctorId);
+    const dates = getDatesInRange(range.start, range.end);
+    const docSchedulesMap: Record<string, DoctorDaySchedule> = {};
+    doctorSchedules.forEach(ds => {
+      if (ds.doctorId === selectedDoctorId) docSchedulesMap[ds.date] = ds;
+    });
+    let contractedMinutes = 0;
+    dates.forEach(d => {
+      const dateKey = toDateKey(d);
+      const override = docSchedulesMap[dateKey];
+      if (override) {
+        if (override.mode === 'available' && override.startTime && override.endTime) {
+          const [sh, sm] = override.startTime.split(':').map(Number);
+          const [eh, em] = override.endTime.split(':').map(Number);
+          const min = (eh * 60 + em) - (sh * 60 + sm);
+          if (min > 0) contractedMinutes += min;
+        }
+      } else if (selectedDoc?.weeklySchedule) {
+        const jsDay = d.getDay();
+        const wsRule = selectedDoc.weeklySchedule[jsDay];
+        if (wsRule && wsRule.mode === 'available' && wsRule.startTime && wsRule.endTime) {
+          const [sh, sm] = wsRule.startTime.split(':').map(Number);
+          const [eh, em] = wsRule.endTime.split(':').map(Number);
+          const min = (eh * 60 + em) - (sh * 60 + sm);
+          if (min > 0) contractedMinutes += min;
+        }
+      }
+    });
+    const attendedHours = Array.from(weeklyMinutes.values()).reduce((acc, val) => acc + val.minutes, 0) / 60;
+    const contractedHours = contractedMinutes / 60;
+    const utilizationPct = contractedHours > 0 ? Math.min((attendedHours / contractedHours) * 100, 100) : 0;
 
     const doctorPrescriptionItems = prescriptionItems.filter(i => i.doctorId === selectedDoctorId);
     const medMap = new Map<string, number>();
@@ -853,18 +1334,31 @@ export const ReportsDashboard: React.FC = () => {
     });
     const sortedMeds = Array.from(medMap.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
 
+    const externalCount = doctorPrescriptionItems.filter(i => i.isExternal).length;
+    const internalCount = doctorPrescriptionItems.filter(i => !i.isExternal).length;
+    const totalPrescriptionCount = externalCount + internalCount;
+    const inventoryPct = totalPrescriptionCount > 0 ? (internalCount / totalPrescriptionCount) * 100 : 0;
+    const externalPct = totalPrescriptionCount > 0 ? (externalCount / totalPrescriptionCount) * 100 : 0;
+
     return {
       totalConsultations,
       newConsultations,
       reConsultations,
       avgWeeklyMinutes,
+      avgWeeklyHours,
+      attendedHours,
+      contractedHours,
+      utilizationPct,
       weeklyStats: Array.from(weeklyMinutes.entries()).map(([week, data]) => ({ week, ...data })).sort((a, b) => b.week.localeCompare(a.week)),
       topMeds: sortedMeds.slice(0, 5),
       leastMeds: sortedMeds.slice(-5).reverse(),
-      externalCount: doctorPrescriptionItems.filter(i => i.isExternal).length,
-      internalCount: doctorPrescriptionItems.filter(i => !i.isExternal).length
+      externalCount,
+      internalCount,
+      totalPrescriptionCount,
+      inventoryPct,
+      externalPct
     };
-  }, [appointments, consultations, prescriptionItems, selectedDoctorId]);
+  }, [appointments, consultations, prescriptionItems, selectedDoctorId, doctors, doctorSchedules, range]);
 
   const selectedDoctorWeekData = useMemo(() => {
     if (!selectedDoctorWeek) return null;
@@ -873,7 +1367,11 @@ export const ReportsDashboard: React.FC = () => {
 
   const selectedMedicineStats = useMemo(() => {
     if (!selectedMedicineName) return null;
-    const items = prescriptionItems.filter(i => i.name === selectedMedicineName);
+    const items = prescriptionItems.filter(i => {
+      const rawName = i.name || 'Sin nombre';
+      const normalized = normalizeWithMap(rawName, normMap);
+      return normalized === selectedMedicineName;
+    });
     const doctorMap = new Map<string, number>();
     const patientMap = new Map<string, number>();
 
@@ -889,76 +1387,48 @@ export const ReportsDashboard: React.FC = () => {
       prescriptionsCount: items.length,
       topDoctors: Array.from(doctorMap.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 5)
     };
-  }, [prescriptionItems, selectedMedicineName]);
+  }, [prescriptionItems, selectedMedicineName, normMap]);
 
-  const pharmacyMatch = useMemo(() => {
+  const pharmacyPrescriptionItems = useMemo(() => {
+    const items: Array<PrescriptionItem & { doctorId?: string; doctorName?: string; activeIngredient?: string; provider?: string }> = [];
+    pharmacyConsultations.forEach(c => {
+      (c.prescription || []).forEach(item => {
+        const key = normalizeText(item.name || '');
+        const medInfo = medicineIndex.get(key);
+        items.push({
+          ...item,
+          doctorId: c.doctorId,
+          doctorName: c.doctorName,
+          activeIngredient: medInfo?.activeIngredient,
+          provider: medInfo?.provider
+        });
+      });
+    });
+    return items;
+  }, [pharmacyConsultations, medicineIndex]);
+
+  const pharmacyMatch: PharmacyMatchResult = useMemo(() => {
     if (!pharmacyRows.length) {
       return {
         totalSalesItems: 0,
         totalPrescriptionItems: 0,
+        internalPrescriptionItems: 0,
         matchRate: 0,
+        matched: [],
         soldOnly: [],
         prescribedOnly: [],
-        matched: []
+        totalDiscounts: 0,
+        discountAmount: 0,
+        patientBreakdown: [],
+        completePrescriptionsCount: 0,
+        completePrescriptionsRate: 0,
+        prescriptionsWithInternalMeds: 0,
+        totalConsultationsWithPrescription: 0,
+        externalSalesDetected: [],
       };
     }
-
-    const salesMap = new Map<string, number>();
-    pharmacyRows.forEach(row => {
-      const key = row.normalizedProduct || normalizeText(row.product || '');
-      if (!key) return;
-      const qty = row.quantity || 1;
-      salesMap.set(key, (salesMap.get(key) || 0) + qty);
-    });
-
-    const prescriptionsMap = new Map<string, number>();
-    prescriptionItems.forEach(item => {
-      const key = normalizeText(item.name || '');
-      if (!key) return;
-      const qty = item.quantity || 1;
-      prescriptionsMap.set(key, (prescriptionsMap.get(key) || 0) + qty);
-    });
-
-    let matchedQty = 0;
-    const matched: Array<{ name: string; sold: number; prescribed: number }> = [];
-    const soldOnly: Array<{ name: string; sold: number }> = [];
-    const prescribedOnly: Array<{ name: string; prescribed: number }> = [];
-
-    salesMap.forEach((sold, key) => {
-      if (prescriptionsMap.has(key)) {
-        const prescribed = prescriptionsMap.get(key) || 0;
-        matchedQty += Math.min(sold, prescribed);
-        matched.push({ name: key, sold, prescribed });
-      } else {
-        soldOnly.push({ name: key, sold });
-      }
-    });
-
-    prescriptionsMap.forEach((prescribed, key) => {
-      if (!salesMap.has(key)) {
-        prescribedOnly.push({ name: key, prescribed });
-      }
-    });
-
-    const topSold: Array<{ name: string; sold: number }> = [];
-    salesMap.forEach((sold, key) => {
-      topSold.push({ name: key, sold });
-    });
-
-    const totalSalesItems = Array.from(salesMap.values()).reduce((acc, val) => acc + val, 0);
-    const totalPrescriptionItems = Array.from(prescriptionsMap.values()).reduce((acc, val) => acc + val, 0);
-    const matchRate = totalPrescriptionItems === 0 ? 0 : matchedQty / totalPrescriptionItems;
-
-    return {
-      totalSalesItems,
-      totalPrescriptionItems,
-      matchRate,
-      topSold: topSold.sort((a, b) => b.sold - a.sold).slice(0, 10),
-      soldOnly: soldOnly.sort((a, b) => b.sold - a.sold).slice(0, 10),
-      prescribedOnly: prescribedOnly.sort((a, b) => b.prescribed - a.prescribed).slice(0, 10),
-      matched: matched.sort((a, b) => b.sold - a.sold).slice(0, 10)
-    };
-  }, [pharmacyRows, prescriptionItems]);
+    return performPharmacyMatch(pharmacyRows, pharmacyConsultations, medicineIndex);
+  }, [pharmacyRows, pharmacyConsultations, medicineIndex]);
 
   const handleExportQuality = async () => {
     const workbook = new ExcelJS.Workbook();
@@ -1166,10 +1636,19 @@ export const ReportsDashboard: React.FC = () => {
     const startRow = selectedMedicineName ? sheet.lastRow!.number + 3 : 5;
     let rowIndex = startRow;
 
-    sheet.getRow(rowIndex).values = ['TOP MEDICAMENTOS RECETADOS', 'Cantidad'];
+    sheet.getRow(rowIndex).values = ['TOP PRODUCTOS INTERNOS (INVENTARIO)', 'Cantidad'];
     applyHeaderStyle(sheet.getRow(rowIndex), 'FF9333EA');
     rowIndex++;
-    medicineStats.medicines.slice(0, 50).forEach(item => {
+    medicineStats.internalMedicines.slice(0, 50).forEach(item => {
+      sheet.getRow(rowIndex).values = [item.name, item.count];
+      rowIndex++;
+    });
+
+    rowIndex += 2;
+    sheet.getRow(rowIndex).values = ['TOP PRODUCTOS EXTERNOS', 'Cantidad'];
+    applyHeaderStyle(sheet.getRow(rowIndex), 'FFEF4444');
+    rowIndex++;
+    medicineStats.externalMedicines.slice(0, 50).forEach(item => {
       sheet.getRow(rowIndex).values = [item.name, item.count];
       rowIndex++;
     });
@@ -1179,15 +1658,6 @@ export const ReportsDashboard: React.FC = () => {
     applyHeaderStyle(sheet.getRow(rowIndex), 'FF2563EB');
     rowIndex++;
     medicineStats.molecules.slice(0, 30).forEach(item => {
-      sheet.getRow(rowIndex).values = [item.name, item.count];
-      rowIndex++;
-    });
-
-    rowIndex += 2;
-    sheet.getRow(rowIndex).values = ['DISTRIBUCIÓN POR PROVEEDOR', 'Cantidad'];
-    applyHeaderStyle(sheet.getRow(rowIndex), 'FF059669');
-    rowIndex++;
-    medicineStats.providers.forEach(item => {
       sheet.getRow(rowIndex).values = [item.name, item.count];
       rowIndex++;
     });
@@ -1224,7 +1694,7 @@ export const ReportsDashboard: React.FC = () => {
     sheet.getRow(6).values = ['Consultas totales', doctorStats.totalConsultations, ''];
     sheet.getRow(7).values = ['Consultas nuevas', doctorStats.newConsultations, ''];
     sheet.getRow(8).values = ['Reconsultas', doctorStats.reConsultations, ''];
-    sheet.getRow(9).values = ['Promedio semanal (min)', Math.round(doctorStats.avgWeeklyMinutes), ''];
+    sheet.getRow(9).values = ['Promedio semanal (horas)', doctorStats.avgWeeklyHours.toFixed(1), ''];
     sheet.getRow(10).values = ['Total horas estimadas', (doctorStats.weeklyStats.reduce((acc, s) => acc + s.minutes, 0) / 60).toFixed(1), 'h'];
 
     // Pestaña de DETALLE DE CITAS DIARIAS
@@ -1281,41 +1751,94 @@ export const ReportsDashboard: React.FC = () => {
     if (!selected) return;
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Match Farmacia', { views: [{ showGridLines: false }] });
-    sheet.columns = [{ width: 35 }, { width: 18 }, { width: 18 }];
+    sheet.columns = [{ width: 32 }, { width: 32 }, { width: 18 }, { width: 18 }, { width: 18 }];
 
-    addWorkbookTitle(sheet, 'MATCH FARMACIA VS RECETAS', `Rango: ${startDate} a ${endDate}`);
+    addWorkbookTitle(sheet, 'MATCH FARMACIA VS RECETAS', `Rango: ${pharmacyDateStart} a ${pharmacyDateEnd}`);
     sheet.getRow(5).values = ['Indicador', 'Valor'];
     applyHeaderStyle(sheet.getRow(5), 'FF0F766E');
-    sheet.getRow(6).values = ['Total ventas (items)', pharmacyMatch.totalSalesItems];
-    sheet.getRow(7).values = ['Total recetas (items)', pharmacyMatch.totalPrescriptionItems];
-    sheet.getRow(8).values = ['Match %', `${(pharmacyMatch.matchRate * 100).toFixed(1)}%`];
+    sheet.getRow(6).values = ['Ventas FAR (items vendidos)', pharmacyMatch.totalSalesItems];
+    sheet.getRow(7).values = ['Recetas FAR (items internos recetados)', pharmacyMatch.internalPrescriptionItems];
+    sheet.getRow(8).values = ['% Items Vendidos (vendidos/recetados)', `${(pharmacyMatch.matchRate * 100).toFixed(1)}%`];
+    sheet.getRow(9).values = ['Consultas c/ Receta FAR', pharmacyMatch.totalConsultationsWithPrescription];
+    sheet.getRow(10).values = ['Consultas Completas (100% surtidas)', `${pharmacyMatch.completePrescriptionsCount} de ${pharmacyMatch.totalConsultationsWithPrescription} (${(pharmacyMatch.completePrescriptionsRate * 100).toFixed(1)}%)`];
+    sheet.getRow(11).values = ['Recetas c/ Meds Internos (consultas)', pharmacyMatch.prescriptionsWithInternalMeds];
 
-    let rowIndex = 10;
-    sheet.getRow(rowIndex).values = ['COINCIDENCIAS (Venta == Receta)', 'Vendidos', 'Recetados'];
+    // Detail table: prescriptions by patient with completeness status (only internal items)
+    let rowIndex = 13;
+    sheet.getRow(rowIndex).values = ['PACIENTE', 'MEDICAMENTO', 'Vendidos', 'Recetados', 'Estado'];
     applyHeaderStyle(sheet.getRow(rowIndex), 'FF2563EB');
     rowIndex++;
-    pharmacyMatch.matched.forEach(item => {
-      sheet.getRow(rowIndex).values = [item.name, item.sold, item.prescribed];
+
+    // Group matched items by patient+doctor+date to determine completeness (only internal)
+    const consultationsByPatientDate = new Map<string, { items: typeof pharmacyMatch.matched; complete: boolean }>();
+    pharmacyMatch.matched.forEach(m => {
+      const dateKey = m.dateMs || 0;
+      const cKey = `${normalizeText(m.patientName)}|${normalizeText(m.doctorName || '')}|${dateKey}`;
+      if (!consultationsByPatientDate.has(cKey)) {
+        consultationsByPatientDate.set(cKey, { items: [], complete: false });
+      }
+      consultationsByPatientDate.get(cKey)!.items.push(m);
+    });
+    consultationsByPatientDate.forEach(entry => {
+      const allFullySold = entry.items.every(m => m.soldQuantity >= m.prescribedQuantity);
+      entry.complete = allFullySold;
+    });
+
+    pharmacyMatch.matched.forEach(m => {
+      const dateKey = m.dateMs || 0;
+      const cKey = `${normalizeText(m.patientName)}|${normalizeText(m.doctorName || '')}|${dateKey}`;
+      const c = consultationsByPatientDate.get(cKey);
+      const status = c?.complete ? 'COMPLETA' : 'INCOMPLETA';
+      sheet.getRow(rowIndex).values = [m.patientName, m.productName, m.soldQuantity, m.prescribedQuantity, status];
+      const row = sheet.getRow(rowIndex);
+      row.getCell(5).font = { bold: true, color: { argb: c?.complete ? 'FF059669' : 'FFDC2626' } };
       rowIndex++;
     });
 
-    rowIndex += 2;
-    sheet.getRow(rowIndex).values = ['VENDIDOS SIN RECETA (Solo en Farmacia)', 'Cantidad'];
-    applyHeaderStyle(sheet.getRow(rowIndex), 'FF059669');
-    rowIndex++;
-    pharmacyMatch.soldOnly.forEach(item => {
-      sheet.getRow(rowIndex).values = [item.name, item.sold];
+    // Revisar — external sales detected
+    if (pharmacyMatch.externalSalesDetected.length > 0) {
+      rowIndex += 2;
+      sheet.getRow(rowIndex).values = ['FECHA', 'PACIENTE', 'PRODUCTO', 'CÓDIGO', 'CANT.', 'MOTIVO'];
+      applyHeaderStyle(sheet.getRow(rowIndex), 'FFD97706');
       rowIndex++;
-    });
+      pharmacyMatch.externalSalesDetected.forEach(flag => {
+        sheet.getRow(rowIndex).values = [
+          flag.dateMs ? formatDate(flag.dateMs) : '—',
+          flag.patientName,
+          flag.productName,
+          flag.productCode,
+          flag.soldQuantity,
+          flag.reason === 'not-in-catalog' ? 'NO EN CATÁLOGO' : 'MARCADO EXTERNO',
+        ];
+        rowIndex++;
+      });
+    }
 
-    rowIndex += 2;
-    sheet.getRow(rowIndex).values = ['RECETADOS SIN VENTA (Fuga de Venta)', 'Cantidad'];
-    applyHeaderStyle(sheet.getRow(rowIndex), 'FFDC2626');
-    rowIndex++;
-    pharmacyMatch.prescribedOnly.forEach(item => {
-      sheet.getRow(rowIndex).values = [item.name, item.prescribed];
+    // Unsold items (fuga)
+    if (pharmacyMatch.prescribedOnly.length > 0) {
+      rowIndex += 2;
+      sheet.getRow(rowIndex).values = ['PACIENTE', 'MEDICAMENTO', 'Recetados', 'Doctor', 'Estado'];
+      applyHeaderStyle(sheet.getRow(rowIndex), 'FFDC2626');
       rowIndex++;
-    });
+      pharmacyMatch.prescribedOnly.forEach(item => {
+        sheet.getRow(rowIndex).values = [item.patientName, item.productName, item.prescribedQuantity, item.doctorName || '', 'SIN VENTA'];
+        sheet.getRow(rowIndex).getCell(5).font = { bold: true, color: { argb: 'FFDC2626' } };
+        rowIndex++;
+      });
+    }
+
+    // Sold without prescription
+    if (pharmacyMatch.soldOnly.length > 0) {
+      rowIndex += 2;
+      sheet.getRow(rowIndex).values = ['PACIENTE', 'MEDICAMENTO', 'Vendidos', 'Vendedor', 'Estado'];
+      applyHeaderStyle(sheet.getRow(rowIndex), 'FF059669');
+      rowIndex++;
+      pharmacyMatch.soldOnly.forEach(item => {
+        sheet.getRow(rowIndex).values = [item.patientName, item.productName, item.soldQuantity, item.sellerName || '', 'SIN RECETA'];
+        sheet.getRow(rowIndex).getCell(5).font = { bold: true, color: { argb: 'FF059669' } };
+        rowIndex++;
+      });
+    }
 
     await downloadWorkbook(workbook, `Match_Farmacia_Completo_${selected.fileName}.xlsx`);
   };
@@ -1354,7 +1877,6 @@ export const ReportsDashboard: React.FC = () => {
     { id: 'overview', label: 'Resumen', icon: BarChart3 },
     { id: 'clinics', label: 'Clínicas', icon: Building2 },
     { id: 'quality', label: 'Calidad', icon: ShieldCheck },
-    { id: 'secretary', label: 'Secretaría', icon: ClipboardList },
     { id: 'medicines', label: 'Medicamentos', icon: Pill },
     { id: 'doctors', label: 'Médicos', icon: Stethoscope },
     { id: 'pharmacy', label: 'Farmacia', icon: FileSpreadsheet }
@@ -1364,23 +1886,23 @@ export const ReportsDashboard: React.FC = () => {
     <div className="space-y-6 pb-12">
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+          <h2 className="text-3xl font-bold text-slate-800 flex items-center gap-2">
             <BarChart3 className="w-7 h-7 text-brand-600" /> Dashboard de Reportes
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Analítica integral y exportación de reportes en Excel</p>
+          <p className="text-base text-slate-500 mt-1">Analítica integral y exportación de reportes en Excel</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button onClick={() => setPreset('iso')} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Semana ISO</button>
-          <button onClick={() => setPreset('week')} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Últimos 7 días</button>
-          <button onClick={() => setPreset('month')} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Mes</button>
-          <button onClick={() => setPreset('year')} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Año</button>
+          <button onClick={() => setPreset('iso')} className="px-3 py-2 text-base font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Semana ISO</button>
+          <button onClick={() => setPreset('week')} className="px-3 py-2 text-base font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Últimos 7 días</button>
+          <button onClick={() => setPreset('month')} className="px-3 py-2 text-base font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Mes</button>
+          <button onClick={() => setPreset('year')} className="px-3 py-2 text-base font-bold rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200">Año</button>
 
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2">
             <Calendar className="w-4 h-4 text-slate-400" />
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="text-xs font-bold text-slate-600 bg-transparent outline-none" />
-            <span className="text-slate-400 text-xs">a</span>
-            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="text-xs font-bold text-slate-600 bg-transparent outline-none" />
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="text-base font-bold text-slate-600 bg-transparent outline-none" />
+            <span className="text-slate-400 text-base">a</span>
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="text-base font-bold text-slate-600 bg-transparent outline-none" />
           </div>
           <button onClick={refreshData} className="p-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 shadow">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -1394,7 +1916,7 @@ export const ReportsDashboard: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-base font-bold transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
@@ -1407,14 +1929,12 @@ export const ReportsDashboard: React.FC = () => {
         <div className="space-y-6">
           {/* NOTA EXPLICATIVA PARA ADMINISTRADORES */}
           <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex gap-3 items-start">
-            <div className="w-5 h-5 mt-0.5 shrink-0 rounded-full bg-blue-500 flex items-center justify-center text-white text-[10px] font-bold">i</div>
-            <div className="text-xs text-blue-800 leading-relaxed">
+            <div className="w-5 h-5 mt-0.5 shrink-0 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-bold">i</div>
+            <div className="text-base text-blue-800 leading-relaxed">
               <p className="font-bold mb-1">¿Cómo leer estos números?</p>
               <p>
-                <span className="font-semibold">Total Consultas</span> = suma de pacientes <span className="font-semibold">Nuevos + Reconsultas + Expedientes sin cerrar</span>.<br />
-                <span className="font-semibold">Sin cerrar (pendientes)</span> = citas de pacientes que hicieron check-in pero el médico no cerró la consulta en el sistema.<br />
-                <span className="font-semibold">Citas Llegadas</span> = número físico de pacientes que pasaron a clínica (check-in / pagado).<br />
-                <span className="text-blue-600/80 italic mt-1 block">* Nota: El % de expedientes sin cerrar se calcula sobre el total de citas llegadas al periodo.</span>
+                <span className="font-semibold">Total Consultas</span> = suma de pacientes <span className="font-semibold">Nuevos + Reconsultas</span> con expediente cerrado.<br />
+                <span className="font-semibold">Citas Llegadas</span> = número físico de pacientes que pasaron a clínica (check-in / pagado).
               </p>
             </div>
           </div>
@@ -1422,104 +1942,146 @@ export const ReportsDashboard: React.FC = () => {
           {/* KPI CARDS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* 1. Total Consultas — CARD PRINCIPAL */}
-            <motion.div className="bg-gradient-to-br from-brand-600 to-brand-700 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
-              <p className="text-xs uppercase tracking-widest text-brand-100 font-bold">Total Consultas</p>
-              <h3 className="text-3xl font-bold mt-2">{formatNumber(kpis.newConsultations + kpis.reConsultations + kpis.missingAppointments.length)}</h3>
-              <p className="text-[10px] text-brand-200 mt-1">Nuevas + Reconsultas + Sin expediente</p>
-              <div className="mt-3 space-y-1.5">
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-brand-200">Citas con expediente registrado:</span>
-                  <span className="font-bold text-emerald-300">{formatNumber(kpis.totalArrived - kpis.missingAppointments.length)}</span>
+            <motion.div 
+              className="bg-gradient-to-br from-brand-600 to-brand-700 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden hover:shadow-2xl transition-all"
+            >
+              <div 
+                className="cursor-pointer group flex justify-between items-start"
+                onClick={() => setShowSpecialtyModal('total')}
+              >
+                <div>
+                  <p className="text-base uppercase tracking-widest text-brand-100 font-bold">Total Consultas</p>
+                  <h3 className="text-4xl font-bold mt-2 group-hover:scale-105 transition-transform origin-left">{formatNumber(kpis.totalConsultations)}</h3>
                 </div>
-                {kpis.missingAppointments.length > 0 && (
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-amber-300">Citas sin expediente (pendientes):</span>
-                    <span className="font-bold text-amber-300">
-                      {formatNumber(kpis.missingAppointments.length)}
-                      <span className="ml-1 opacity-80">({((kpis.missingAppointments.length / kpis.totalArrived) * 100).toFixed(1)}%)</span>
-                    </span>
+                <div className="bg-white/10 p-2 rounded-xl group-hover:bg-white/20 transition-colors">
+                  <Activity className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              
+              <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/20 pt-4">
+                <div 
+                  className="cursor-pointer group/new bg-white/5 hover:bg-white/10 p-3 rounded-xl transition-colors"
+                  onClick={() => setShowSpecialtyModal('new')}
+                >
+                  <p className="text-sm text-brand-200 uppercase tracking-wider font-bold">Nuevas</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xl font-bold text-white">{formatNumber(kpis.newConsultations)}</p>
+                    <ChevronRight className="w-4 h-4 text-brand-300 group-hover/new:text-white group-hover/new:translate-x-1 transition-all" />
                   </div>
-                )}
-                <div className="flex items-center justify-between text-[10px] border-t border-brand-500/30 pt-1 mt-1">
-                  <span className="text-brand-200 font-bold">Total Citas Llegadas al periodo:</span>
-                  <span className="font-bold text-white">{formatNumber(kpis.totalArrived)}</span>
                 </div>
-              </div>
-              {kpis.missingAppointments.length > 0 && (
-                <div className="absolute bottom-0 left-0 w-full bg-amber-500/30 p-2 flex items-center justify-between border-t border-amber-400/30">
-                  <span className="text-[10px] font-semibold text-amber-200">⚠ {kpis.missingAppointments.length} cita(s) sin expediente</span>
-                  <button onClick={() => setShowMissingModal(true)} className="text-[10px] font-bold bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded-lg transition-colors text-white">
-                    Ver lista
-                  </button>
+                
+                <div 
+                  className="cursor-pointer group/re bg-white/5 hover:bg-white/10 p-3 rounded-xl transition-colors"
+                  onClick={() => setShowSpecialtyModal('re')}
+                >
+                  <p className="text-sm text-brand-200 uppercase tracking-wider font-bold">Reconsultas</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xl font-bold text-white">{formatNumber(kpis.reConsultations)}</p>
+                    <ChevronRight className="w-4 h-4 text-brand-300 group-hover/re:text-white group-hover/re:translate-x-1 transition-all" />
+                  </div>
                 </div>
-              )}
-            </motion.div>
-            {/* 2. Consultas Nuevas */}
-            <motion.div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex flex-col justify-between">
-              <div>
-                <div className="flex items-center gap-3 text-slate-600 text-xs font-bold uppercase">
-                  <Users className="w-5 h-5 text-emerald-500" />
-                  Consultas Nuevas
-                </div>
-                <h3 className="text-3xl font-bold text-slate-800 mt-3">{formatNumber(kpis.newConsultations)}</h3>
-              </div>
-              <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
-                <p className="text-[10px] text-slate-500 font-semibold">¿Qué es esto?</p>
-                <p className="text-[10px] text-slate-400 leading-relaxed">Pacientes que vinieron <span className="font-semibold text-slate-600">por primera vez</span> y tienen consulta registrada con diagnóstico en el sistema.</p>
-              </div>
-            </motion.div>
-            {/* 3. Reconsultas */}
-            <motion.div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex flex-col justify-between">
-              <div>
-                <div className="flex items-center gap-3 text-slate-600 text-xs font-bold uppercase">
-                  <Activity className="w-5 h-5 text-blue-500" />
-                  Reconsultas
-                </div>
-                <h3 className="text-3xl font-bold text-slate-800 mt-3">{formatNumber(kpis.reConsultations)}</h3>
-              </div>
-              <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
-                <p className="text-[10px] text-slate-500 font-semibold">¿Qué es esto?</p>
-                <p className="text-[10px] text-slate-400 leading-relaxed">Pacientes que ya habían venido antes y regresan para <span className="font-semibold text-slate-600">seguimiento</span>. Tienen expediente médico registrado.</p>
-              </div>
-            </motion.div>
-          </div>
 
-          {/* FÓRMULA DE VERIFICACIÓN */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 flex flex-col md:flex-row md:items-center gap-3 text-sm">
-            <span className="text-slate-500 text-xs font-bold uppercase tracking-widest shrink-0">Verificación:</span>
-            
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold">{kpis.newConsultations} nuevas</span>
-              <span className="text-slate-400 font-bold">+</span>
-              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-lg text-xs font-bold">{kpis.reConsultations} reconsultas</span>
-              <span className="text-slate-400 font-bold">+</span>
-              <span className="px-3 py-1 bg-amber-100 text-amber-800 rounded-lg text-xs font-bold">{kpis.missingAppointments.length} sin cerrar</span>
-              <span className="text-slate-400 font-bold">=</span>
-              <span className="px-3 py-1 bg-brand-100 text-brand-800 rounded-lg text-xs font-bold">{kpis.newConsultations + kpis.reConsultations + kpis.missingAppointments.length} consultas en total</span>
-            </div>
+                <div 
+                  className="cursor-pointer group/unf bg-white/5 hover:bg-white/10 p-3 rounded-xl transition-colors"
+                  onClick={() => setShowUnfinishedConsultationsModal(true)}
+                >
+                  <p className="text-sm text-brand-200 uppercase tracking-wider font-bold">No final.</p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xl font-bold text-white">{formatNumber(unfinishedConsultationsList.length)}</p>
+                    <ChevronRight className="w-4 h-4 text-brand-300 group-hover/unf:text-white group-hover/unf:translate-x-1 transition-all" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center text-sm text-brand-100 font-bold gap-1">
+                <span className="text-white opacity-80">Haz clic en cualquier número para ver desglose por especialidad</span>
+              </div>
+            </motion.div>
+
+            {/* 2. Unfinished Consultations */}
+            <motion.div 
+              className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden hover:shadow-2xl transition-all"
+            >
+              <div 
+                className="cursor-pointer group flex justify-between items-start"
+                onClick={() => setShowUnfinishedConsultationsModal(true)}
+              >
+                <div>
+                  <p className="text-base tracking-widest text-amber-100 font-bold">Consultas no Finalizadas</p>
+                  <h3 className="text-4xl font-bold mt-2 group-hover:scale-105 transition-transform origin-left">{formatNumber(unfinishedConsultationsList.length)}</h3>
+                </div>
+                <div className="bg-white/10 p-2 rounded-xl group-hover:bg-white/20 transition-colors">
+                  <AlertCircle className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-sm text-amber-100 font-bold gap-1 pt-4 border-t border-white/20">
+                <span className="text-white opacity-80">Haz clic para ver el detalle de pacientes y estatus</span>
+              </div>
+            </motion.div>
+
+            {/* 3. Doctors Not Prescribing */}
+            <motion.div 
+              className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden hover:shadow-2xl transition-all"
+            >
+              <div 
+                className="cursor-pointer group flex justify-between items-start"
+                onClick={() => setShowDoctorsNotPrescribingModal(true)}
+              >
+                <div>
+                  <p className="text-base uppercase tracking-widest text-indigo-100 font-bold">Sin Receta</p>
+                  <h3 className="text-4xl font-bold mt-2 group-hover:scale-105 transition-transform origin-left">{formatNumber(doctorsNotPrescribingList.length)}</h3>
+                </div>
+                <div className="bg-white/10 p-2 rounded-xl group-hover:bg-white/20 transition-colors">
+                  <Stethoscope className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center text-sm text-indigo-100 font-bold gap-1 pt-4 border-t border-white/20">
+                <span className="text-white opacity-80">Haz clic para ver los motivos de no prescripción</span>
+              </div>
+            </motion.div>
           </div>
 
           {/* TABLA DE DIAGNÓSTICOS AGRUPADOS */}
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-5 border-b flex items-center justify-between bg-slate-50/60">
+            <div className="p-5 border-b flex flex-col md:flex-row md:items-center justify-between bg-slate-50/60 gap-4">
               <div>
-                <h3 className="font-bold text-slate-800 text-sm">Resumen por Diagnóstico y Tipo de Consulta</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Agrupación: Epilepsia, Parkinson, Tumores cerebrales, Dolor, Neurología general</p>
+                <h3 className="font-bold text-slate-800 text-base">Resumen General por Tipo de Consulta</h3>
+                <p className="text-sm text-slate-400 mt-0.5">Distribución de prescripciones y exámenes según el factor de agrupación</p>
               </div>
-              <span className="text-xs font-bold text-brand-600">{diagnosisTable.totals.count} consultas</span>
+              <div className="flex items-center space-x-3">
+                <span className="text-sm text-slate-500 font-medium">Agrupar por:</span>
+                <select
+                  value={diagnosisGroupBy}
+                  onChange={(e) => setDiagnosisGroupBy(e.target.value as any)}
+                  className="bg-white border border-slate-200 text-base rounded-xl px-3 py-1.5 focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 font-medium text-slate-700 shadow-sm transition-all"
+                >
+                  <option value="specialty">Especialidad</option>
+                  <option value="doctor">Profesional (Doctor)</option>
+                </select>
+                <span className="text-base font-bold text-brand-600 border-l border-slate-200 pl-3">{diagnosisTable.totals.count} consultas</span>
+              </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-base">
                 <thead>
                   <tr className="bg-slate-100">
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest" rowSpan={2}>Tipo de Consulta</th>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center" rowSpan={2}>Nº Pacientes</th>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center border-l border-slate-200" colSpan={3}>% de Receta</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest" rowSpan={2}>Tipo de Consulta</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-center" rowSpan={2}>Nº Pacientes</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-center border-l border-slate-200" colSpan={3}>% de Receta</th>
+                    {diagnosisGroupBy === 'doctor' && (
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-center border-l border-slate-200" colSpan={2}>Medicamentos</th>
+                    )}
                   </tr>
                   <tr className="bg-slate-50 border-t border-slate-200">
-                    <th className="p-3 text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center border-l border-slate-200">Farmacia</th>
-                    <th className="p-3 text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center">Exámenes Dx</th>
-                    <th className="p-3 text-[10px] text-slate-500 uppercase font-bold tracking-widest text-center">Ref. Interna</th>
+                    <th className="p-3 text-sm text-slate-500 uppercase font-bold tracking-widest text-center border-l border-slate-200">Con Receta Farma.</th>
+                    <th className="p-3 text-sm text-slate-500 uppercase font-bold tracking-widest text-center">Exámenes Dx</th>
+                    <th className="p-3 text-sm text-slate-500 uppercase font-bold tracking-widest text-center">Ref. Interna</th>
+                    {diagnosisGroupBy === 'doctor' && (
+                      <>
+                        <th className="p-3 text-sm text-slate-500 uppercase font-bold tracking-widest text-center border-l border-slate-200">Total Medicamentos Recetados</th>
+                        <th className="p-3 text-sm text-slate-500 uppercase font-bold tracking-widest text-center">% Meds Internos</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1529,25 +2091,39 @@ export const ReportsDashboard: React.FC = () => {
                       <td className="p-4 text-center font-bold text-slate-800">{row.count}</td>
                       <td className="p-4 text-center border-l border-slate-100">
                         {row.count > 0 ? (
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${row.pctPharmacy > 0 ? 'bg-emerald-50 text-emerald-700' : 'text-slate-400'}`}>
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${row.pctPharmacy > 0 ? 'bg-emerald-50 text-emerald-700' : 'text-slate-400'}`}>
                             {row.pctPharmacy}%
                           </span>
                         ) : '—'}
                       </td>
                       <td className="p-4 text-center">
                         {row.count > 0 ? (
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${row.pctExams > 0 ? 'bg-blue-50 text-blue-700' : 'text-slate-400'}`}>
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${row.pctExams > 0 ? 'bg-blue-50 text-blue-700' : 'text-slate-400'}`}>
                             {row.pctExams}%
                           </span>
                         ) : '—'}
                       </td>
                       <td className="p-4 text-center">
                         {row.count > 0 ? (
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${row.pctReferral > 0 ? 'bg-violet-50 text-violet-700' : 'text-slate-400'}`}>
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${row.pctReferral > 0 ? 'bg-violet-50 text-violet-700' : 'text-slate-400'}`}>
                             {row.pctReferral}%
                           </span>
                         ) : '—'}
                       </td>
+                      {diagnosisGroupBy === 'doctor' && (
+                        <>
+                          <td className="p-4 text-center border-l border-slate-100 font-bold text-slate-800">
+                            {row.totalMeds > 0 ? row.totalMeds : '—'}
+                          </td>
+                          <td className="p-4 text-center">
+                            {row.totalMeds > 0 ? (
+                              <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${row.pctInternal > 0 ? 'bg-amber-50 text-amber-700' : 'text-slate-400'}`}>
+                                {row.pctInternal}%
+                              </span>
+                            ) : '—'}
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -1558,6 +2134,12 @@ export const ReportsDashboard: React.FC = () => {
                     <td className="p-4 text-center border-l border-slate-200 text-emerald-700">{diagnosisTable.totals.pctPharmacy}%</td>
                     <td className="p-4 text-center text-blue-700">{diagnosisTable.totals.pctExams}%</td>
                     <td className="p-4 text-center text-violet-700">{diagnosisTable.totals.pctReferral}%</td>
+                    {diagnosisGroupBy === 'doctor' && (
+                      <>
+                        <td className="p-4 text-center border-l border-slate-200 text-slate-800">{diagnosisTable.totals.totalMeds}</td>
+                        <td className="p-4 text-center text-amber-700">{diagnosisTable.totals.pctInternal}%</td>
+                      </>
+                    )}
                   </tr>
                 </tfoot>
               </table>
@@ -1571,17 +2153,17 @@ export const ReportsDashboard: React.FC = () => {
           {/* HEADER */}
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-blue-500" /> Capacidad Clínica por Especialidad
               </h3>
-              <p className="text-xs text-slate-500">Horas trabajadas vs horas contratadas en el periodo seleccionado</p>
+              <p className="text-base text-slate-500">Horas trabajadas vs horas contratadas en el periodo seleccionado</p>
             </div>
           </div>
 
           {/* NOTA EXPLICATIVA */}
           <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex gap-3 items-start">
-            <div className="w-5 h-5 mt-0.5 shrink-0 rounded-full bg-blue-500 flex items-center justify-center text-white text-[10px] font-bold">i</div>
-            <div className="text-xs text-blue-800 leading-relaxed">
+            <div className="w-5 h-5 mt-0.5 shrink-0 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-bold">i</div>
+            <div className="text-base text-blue-800 leading-relaxed">
               <p className="font-bold mb-1">¿Cómo se calculan las horas?</p>
               <p>
                 <span className="font-semibold">Horas Contratadas</span> = horas programadas de cada profesional según su horario semanal configurado, multiplicadas por los días del periodo seleccionado.<br />
@@ -1594,18 +2176,18 @@ export const ReportsDashboard: React.FC = () => {
           {/* KPI RESUMEN GLOBAL */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <motion.div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Contratadas</p>
-              <h4 className="text-3xl font-bold text-slate-800 mt-2">{clinicCapacity.contractedHours.toFixed(1)}h</h4>
-              <p className="text-[10px] text-slate-400 mt-1">Horas programadas en el periodo</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Total Contratadas</p>
+              <h4 className="text-4xl font-bold text-slate-800 mt-2">{clinicCapacity.contractedHours.toFixed(1)}h</h4>
+              <p className="text-sm text-slate-400 mt-1">Horas programadas en el periodo</p>
             </motion.div>
             <motion.div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Total Trabajadas</p>
-              <h4 className="text-3xl font-bold text-blue-600 mt-2">{clinicCapacity.attendedHours.toFixed(1)}h</h4>
-              <p className="text-[10px] text-slate-400 mt-1">Horas de consulta estimadas</p>
+              <p className="text-sm font-bold text-blue-400 uppercase tracking-widest">Total Trabajadas</p>
+              <h4 className="text-4xl font-bold text-blue-600 mt-2">{clinicCapacity.attendedHours.toFixed(1)}h</h4>
+              <p className="text-sm text-slate-400 mt-1">Horas de consulta estimadas</p>
             </motion.div>
             <motion.div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Utilización Global</p>
-              <h4 className={`text-3xl font-bold mt-2 ${clinicCapacity.percentage >= 80 ? 'text-emerald-600' : clinicCapacity.percentage >= 50 ? 'text-amber-600' : 'text-red-500'}`}>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Utilización Global</p>
+              <h4 className={`text-4xl font-bold mt-2 ${clinicCapacity.percentage >= 80 ? 'text-emerald-600' : clinicCapacity.percentage >= 50 ? 'text-amber-600' : 'text-red-500'}`}>
                 {clinicCapacity.percentage.toFixed(1)}%
               </h4>
               <div className="mt-3 h-2.5 bg-slate-100 rounded-full overflow-hidden">
@@ -1622,88 +2204,102 @@ export const ReportsDashboard: React.FC = () => {
           {clinicCapacity.contractedHours === 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
-              <p className="text-xs text-amber-800 font-semibold">No se encontraron horarios semanales configurados para los profesionales. Suba el Excel de horarios en la sección de Administración para calcular las horas contratadas.</p>
+              <p className="text-sm text-amber-800 font-semibold">No se encontraron horarios semanales configurados para los profesionales. Suba el Excel de horarios en la sección de Administración para calcular las horas contratadas.</p>
             </div>
           )}
 
-          {/* TABLA DESGLOSE POR CATEGORÍA + PROFESIONAL */}
-          {capacityBySpecialty.length > 0 && (
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* TABLA DESGLOSE POR PROFESIONAL */}
+            {capacityByDoctor.length > 0 && (
+              <>
+              {(() => {
+                const subtypes = getRecentSubtypes();
+                if (subtypes.length === 0) return null;
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                    <p className="text-sm font-bold text-amber-800 mb-2 flex items-center gap-2">
+                      <Wand2 className="w-4 h-4" /> Subtipos descubiertos por Gemini
+                    </p>
+                    <p className="text-xs text-amber-700 mb-2">
+                      Cuando Gemini clasifica un diagnóstico como "Otro", sugiere un subtipo. Estos se acumulan aquí para que la lista de "Otro" se haga más específica con el tiempo.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {subtypes.slice(0, 15).map(s => (
+                        <span key={s.subtype} className="text-xs px-2.5 py-1 rounded-full bg-white border border-amber-200 text-amber-800 font-semibold">
+                          {s.subtype} <span className="text-amber-500 font-normal">({s.occurrences})</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-5 border-b bg-slate-50/60">
-                <h3 className="font-bold text-slate-800 text-sm">Desglose por Categoría y Profesional</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Clic en la categoría para ver el detalle por profesional</p>
+                <h3 className="font-bold text-slate-800 text-base">Desglose por Profesional</h3>
+                <p className="text-sm text-slate-400 mt-0.5">Métricas de horas trabajadas vs contratadas por médico</p>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
+                <table className="w-full text-left text-base">
+                  <thead className="bg-slate-100 text-sm text-slate-500 uppercase font-bold tracking-widest">
                     <tr>
-                      <th className="p-3 w-8"></th>
-                      <th className="p-3">Categoría / Profesional</th>
+                      <th className="p-3 pl-5">Profesional</th>
+                      <th className="p-3">Categoría</th>
                       <th className="p-3 text-right">Consultas Nuevas</th>
                       <th className="p-3 text-right">Reconsultas</th>
                       <th className="p-3 text-right">Horas Contratadas</th>
                       <th className="p-3 text-right">Horas Trabajadas</th>
-                      <th className="p-3 text-right">% Utilización</th>
+                      <th className="p-3 text-right pr-5">% Utilización</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {capacityBySpecialty.map(cat => {
-                      const catPct = cat.contractedMin > 0 ? Math.min((cat.attendedMin / cat.contractedMin) * 100, 100) : 0;
-                      const isExpanded = expandedCapacityCategory === cat.category;
-                      const catNewCount = cat.doctors.reduce((acc, d) => acc + (d as any).newCount, 0);
-                      const catReCount = cat.doctors.reduce((acc, d) => acc + (d as any).reCount, 0);
+                    {capacityByDoctor.map(doc => {
+                      const docPct = doc.contractedMin > 0 ? Math.min((doc.attendedMin / doc.contractedMin) * 100, 100) : 0;
                       return (
-                        <React.Fragment key={cat.category}>
-                          <tr
-                            className="hover:bg-slate-50 transition-colors cursor-pointer"
-                            onClick={() => setExpandedCapacityCategory(isExpanded ? null : cat.category)}
-                          >
-                            <td className="p-3 w-8">
-                              {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-                            </td>
-                            <td className="p-3 font-bold text-slate-800">{cat.category} <span className="text-slate-400 font-normal">({cat.doctors.length})</span></td>
-                            <td className="p-3 text-right text-emerald-600 font-semibold">{catNewCount}</td>
-                            <td className="p-3 text-right text-blue-600 font-semibold">{catReCount}</td>
-                            <td className="p-3 text-right text-slate-600">{(cat.contractedMin / 60).toFixed(1)}h</td>
-                            <td className="p-3 text-right font-bold text-blue-600">{(cat.attendedMin / 60).toFixed(1)}h</td>
-                            <td className="p-3 text-right">
-                              <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${catPct >= 80 ? 'bg-emerald-50 text-emerald-700' : catPct >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
-                                {catPct.toFixed(1)}%
-                              </span>
-                            </td>
-                          </tr>
-                          {isExpanded && cat.doctors.map(doc => {
-                            const docPct = doc.contractedMin > 0 ? Math.min((doc.attendedMin / doc.contractedMin) * 100, 100) : 0;
-                            return (
-                              <tr key={doc.uid} className="bg-slate-50/50">
-                                <td className="p-3"></td>
-                                <td className="p-3 pl-8 text-slate-600">{doc.name}</td>
-                                <td className="p-3 text-right text-emerald-500">{(doc as any).newCount}</td>
-                                <td className="p-3 text-right text-blue-500">{(doc as any).reCount}</td>
-                                <td className="p-3 text-right text-slate-500">{(doc.contractedMin / 60).toFixed(1)}h</td>
-                                <td className="p-3 text-right text-blue-500">{(doc.attendedMin / 60).toFixed(1)}h</td>
-                                <td className="p-3 text-right">
-                                  <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${docPct >= 80 ? 'bg-emerald-50 text-emerald-700' : docPct >= 50 ? 'bg-amber-50 text-amber-700' : doc.contractedMin > 0 ? 'bg-red-50 text-red-700' : 'text-slate-400'}`}>
-                                    {doc.contractedMin > 0 ? `${docPct.toFixed(1)}%` : '—'}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </React.Fragment>
+                        <tr key={doc.uid} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-3 pl-5 font-bold text-slate-800">{doc.name}</td>
+                           <td className="p-3 text-slate-500">
+                             {(() => {
+                               const cat = doctorDiagnosisCategories.get(doc.name);
+                               if (!cat) return <span className="italic text-slate-300">Calculando...</span>;
+                               return (
+                                 <button
+                                   type="button"
+                                   onClick={() => setDiagnosisDetailModal({ open: true, doctorName: doc.name, category: cat })}
+                                   className="inline-flex flex-col items-start gap-0.5 px-2 py-1 rounded-lg hover:bg-amber-50 transition-colors group"
+                                 >
+                                   {cat.kind === 'predefined' ? (
+                                     <span className="text-sm font-bold text-blue-700 group-hover:text-blue-800">{cat.category}</span>
+                                   ) : (
+                                     <>
+                                       <span className="text-xs font-bold text-slate-500 group-hover:text-amber-700">Otro</span>
+                                       <span className="text-xs italic text-slate-400 group-hover:text-amber-600">({cat.subtype})</span>
+                                     </>
+                                   )}
+                                 </button>
+                               );
+                             })()}
+                           </td>
+                          <td className="p-3 text-right text-emerald-600 font-semibold">{doc.newCount}</td>
+                          <td className="p-3 text-right text-blue-600 font-semibold">{doc.reCount}</td>
+                          <td className="p-3 text-right text-slate-600">{(doc.contractedMin / 60).toFixed(1)}h</td>
+                          <td className="p-3 text-right font-bold text-blue-600">{(doc.attendedMin / 60).toFixed(1)}h</td>
+                          <td className="p-3 text-right pr-5">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${docPct >= 80 ? 'bg-emerald-50 text-emerald-700' : docPct >= 50 ? 'bg-amber-50 text-amber-700' : doc.contractedMin > 0 ? 'bg-red-50 text-red-700' : 'text-slate-400'}`}>
+                              {doc.contractedMin > 0 ? `${docPct.toFixed(1)}%` : '—'}
+                            </span>
+                          </td>
+                        </tr>
                       );
                     })}
                   </tbody>
                   <tfoot className="bg-slate-100 border-t-2 border-slate-300">
                     <tr className="font-bold">
-                      <td className="p-3"></td>
-                      <td className="p-3 text-slate-800">Total General</td>
-                      <td className="p-3 text-right text-emerald-700">{capacityBySpecialty.reduce((acc, c) => acc + c.doctors.reduce((a, d) => a + (d as any).newCount, 0), 0)}</td>
-                      <td className="p-3 text-right text-blue-700">{capacityBySpecialty.reduce((acc, c) => acc + c.doctors.reduce((a, d) => a + (d as any).reCount, 0), 0)}</td>
+                      <td className="p-3 pl-5 text-slate-800" colSpan={2}>Total General</td>
+                      <td className="p-3 text-right text-emerald-700">{capacityByDoctor.reduce((acc, d) => acc + d.newCount, 0)}</td>
+                      <td className="p-3 text-right text-blue-700">{capacityByDoctor.reduce((acc, d) => acc + d.reCount, 0)}</td>
                       <td className="p-3 text-right text-slate-700">{clinicCapacity.contractedHours.toFixed(1)}h</td>
                       <td className="p-3 text-right text-blue-700">{clinicCapacity.attendedHours.toFixed(1)}h</td>
-                      <td className="p-3 text-right">
-                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${clinicCapacity.percentage >= 80 ? 'bg-emerald-50 text-emerald-700' : clinicCapacity.percentage >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                      <td className="p-3 text-right pr-5">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${clinicCapacity.percentage >= 80 ? 'bg-emerald-50 text-emerald-700' : clinicCapacity.percentage >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
                           {clinicCapacity.percentage.toFixed(1)}%
                         </span>
                       </td>
@@ -1712,7 +2308,74 @@ export const ReportsDashboard: React.FC = () => {
                 </table>
               </div>
             </div>
+            </>
           )}
+
+          {/* TABLA: DESEMPEÑO DE FARMACIA POR PROFESIONAL */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden mt-6">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-brand-50/30">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">Desempeño de Farmacia por Profesional</h3>
+                <p className="text-sm text-slate-500 mt-1">Porcentaje de recetas emitidas utilizando medicamentos del inventario interno</p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="p-4 text-sm text-slate-500 font-bold uppercase tracking-widest border-r border-slate-200">Profesional</th>
+                    <th className="p-4 text-sm text-slate-500 font-bold uppercase tracking-widest text-center" colSpan={2}>Nuevas Consultas</th>
+                    <th className="p-4 text-sm text-slate-500 font-bold uppercase tracking-widest text-center border-l border-slate-200" colSpan={2}>Reconsultas</th>
+                  </tr>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="p-3 border-r border-slate-200"></th>
+                    <th className="p-3 text-sm text-slate-500 font-bold uppercase tracking-widest text-center">Cantidad</th>
+                    <th className="p-3 text-sm text-slate-500 font-bold uppercase tracking-widest text-center">Farmacia Interna</th>
+                    <th className="p-3 text-sm text-slate-500 font-bold uppercase tracking-widest text-center border-l border-slate-200">Cantidad</th>
+                    <th className="p-3 text-sm text-slate-500 font-bold uppercase tracking-widest text-center">Farmacia Interna</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {pharmacyUtilizationByDoctor.map((d, idx) => {
+                    const newPct = d.newCount > 0 ? Math.round((d.newWithPharmacy / d.newCount) * 100) : 0;
+                    const rePct = d.reCount > 0 ? Math.round((d.reWithPharmacy / d.reCount) * 100) : 0;
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-4 text-sm font-bold text-slate-800 border-r border-slate-100">{d.name}</td>
+                        
+                        <td className="p-4 text-center font-medium text-slate-600">{d.newCount}</td>
+                        <td className="p-4 text-center">
+                          {d.newCount > 0 ? (
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold ${newPct >= 50 ? 'bg-emerald-50 text-emerald-700' : newPct > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                              {newPct}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+
+                        <td className="p-4 text-center font-medium text-slate-600 border-l border-slate-100">{d.reCount}</td>
+                        <td className="p-4 text-center">
+                          {d.reCount > 0 ? (
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold ${rePct >= 50 ? 'bg-emerald-50 text-emerald-700' : rePct > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                              {rePct}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {pharmacyUtilizationByDoctor.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-slate-500">No hay datos de farmacia para los profesionales en este periodo</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1720,8 +2383,8 @@ export const ReportsDashboard: React.FC = () => {
         <div className="space-y-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-emerald-500" /> Control de Calidad de Datos</h3>
-              <p className="text-xs text-slate-500">Pacientes llegados • DPI enmascarado en menores de 18</p>
+              <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-emerald-500" /> Control de Calidad de Datos</h3>
+              <p className="text-base text-slate-500">Pacientes llegados • DPI enmascarado en menores de 18</p>
             </div>
             <div className="flex items-center gap-3">
               {qualityData.operators.length > 0 && (
@@ -1730,7 +2393,7 @@ export const ReportsDashboard: React.FC = () => {
                   <select
                     value={qualityOperatorFilter}
                     onChange={e => setQualityOperatorFilter(e.target.value)}
-                    className="text-xs font-bold text-slate-600 bg-transparent outline-none cursor-pointer"
+                    className="text-sm font-bold text-slate-600 bg-transparent outline-none cursor-pointer"
                   >
                     <option value="">Todos los operadores</option>
                     {qualityData.operators.map(op => (
@@ -1739,7 +2402,7 @@ export const ReportsDashboard: React.FC = () => {
                   </select>
                 </div>
               )}
-              <button onClick={handleExportQuality} className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
+              <button onClick={handleExportQuality} className="px-4 py-2 text-base font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
                 <Download className="w-4 h-4" /> Exportar Excel
               </button>
             </div>
@@ -1748,30 +2411,30 @@ export const ReportsDashboard: React.FC = () => {
           {/* KPI Severity Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <button onClick={() => setQualitySeverityFilter('all')} className={`rounded-2xl p-5 border transition-all text-left ${qualitySeverityFilter === 'all' ? 'bg-slate-900 text-white border-slate-900 shadow-lg' : 'bg-white border-slate-200 hover:border-slate-400'}`}>
-              <p className={`text-[10px] uppercase tracking-widest font-bold ${qualitySeverityFilter === 'all' ? 'text-slate-300' : 'text-slate-400'}`}>Total Llegados</p>
-              <h4 className={`text-2xl font-bold mt-1 ${qualitySeverityFilter === 'all' ? 'text-white' : 'text-slate-800'}`}>{qualityData.total}</h4>
+              <p className={`text-sm uppercase tracking-widest font-bold ${qualitySeverityFilter === 'all' ? 'text-slate-300' : 'text-slate-400'}`}>Total Perfiles Creados</p>
+              <h4 className={`text-3xl font-bold mt-1 ${qualitySeverityFilter === 'all' ? 'text-white' : 'text-slate-800'}`}>{qualityData.total}</h4>
             </button>
             <button onClick={() => setQualitySeverityFilter('critical')} className={`rounded-2xl p-5 border transition-all text-left ${qualitySeverityFilter === 'critical' ? 'bg-red-600 text-white border-red-600 shadow-lg' : 'bg-red-50 border-red-100 hover:border-red-300'}`}>
-              <p className={`text-[10px] uppercase tracking-widest font-bold flex items-center gap-1 ${qualitySeverityFilter === 'critical' ? 'text-red-200' : 'text-red-400'}`}><AlertTriangle className="w-3 h-3" /> Críticos</p>
-              <h4 className={`text-2xl font-bold mt-1 ${qualitySeverityFilter === 'critical' ? 'text-white' : 'text-red-700'}`}>{qualityData.critical}</h4>
-              <p className={`text-[10px] mt-1 ${qualitySeverityFilter === 'critical' ? 'text-red-200' : 'text-red-400'}`}>3+ campos faltantes</p>
+              <p className={`text-sm uppercase tracking-widest font-bold flex items-center gap-1 ${qualitySeverityFilter === 'critical' ? 'text-red-200' : 'text-red-400'}`}><AlertTriangle className="w-3 h-3" /> Críticos</p>
+              <h4 className={`text-3xl font-bold mt-1 ${qualitySeverityFilter === 'critical' ? 'text-white' : 'text-red-700'}`}>{qualityData.critical}</h4>
+              <p className={`text-sm mt-1 ${qualitySeverityFilter === 'critical' ? 'text-red-200' : 'text-red-400'}`}>3+ campos faltantes</p>
             </button>
             <button onClick={() => setQualitySeverityFilter('alert')} className={`rounded-2xl p-5 border transition-all text-left ${qualitySeverityFilter === 'alert' ? 'bg-amber-500 text-white border-amber-500 shadow-lg' : 'bg-amber-50 border-amber-100 hover:border-amber-300'}`}>
-              <p className={`text-[10px] uppercase tracking-widest font-bold ${qualitySeverityFilter === 'alert' ? 'text-amber-100' : 'text-amber-400'}`}>Alertas</p>
-              <h4 className={`text-2xl font-bold mt-1 ${qualitySeverityFilter === 'alert' ? 'text-white' : 'text-amber-700'}`}>{qualityData.alert}</h4>
-              <p className={`text-[10px] mt-1 ${qualitySeverityFilter === 'alert' ? 'text-amber-100' : 'text-amber-400'}`}>1-2 campos faltantes</p>
+              <p className={`text-sm uppercase tracking-widest font-bold ${qualitySeverityFilter === 'alert' ? 'text-amber-100' : 'text-amber-400'}`}>Alertas</p>
+              <h4 className={`text-3xl font-bold mt-1 ${qualitySeverityFilter === 'alert' ? 'text-white' : 'text-amber-700'}`}>{qualityData.alert}</h4>
+              <p className={`text-sm mt-1 ${qualitySeverityFilter === 'alert' ? 'text-amber-100' : 'text-amber-400'}`}>1-2 campos faltantes</p>
             </button>
             <button onClick={() => setQualitySeverityFilter('ok')} className={`rounded-2xl p-5 border transition-all text-left ${qualitySeverityFilter === 'ok' ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg' : 'bg-emerald-50 border-emerald-100 hover:border-emerald-300'}`}>
-              <p className={`text-[10px] uppercase tracking-widest font-bold flex items-center gap-1 ${qualitySeverityFilter === 'ok' ? 'text-emerald-200' : 'text-emerald-400'}`}><CheckCircle2 className="w-3 h-3" /> Completos</p>
-              <h4 className={`text-2xl font-bold mt-1 ${qualitySeverityFilter === 'ok' ? 'text-white' : 'text-emerald-700'}`}>{qualityData.ok}</h4>
-              <p className={`text-[10px] mt-1 ${qualitySeverityFilter === 'ok' ? 'text-emerald-200' : 'text-emerald-400'}`}>0 campos faltantes</p>
+              <p className={`text-sm uppercase tracking-widest font-bold flex items-center gap-1 ${qualitySeverityFilter === 'ok' ? 'text-emerald-200' : 'text-emerald-400'}`}><CheckCircle2 className="w-3 h-3" /> Completos</p>
+              <h4 className={`text-3xl font-bold mt-1 ${qualitySeverityFilter === 'ok' ? 'text-white' : 'text-emerald-700'}`}>{qualityData.ok}</h4>
+              <p className={`text-sm mt-1 ${qualitySeverityFilter === 'ok' ? 'text-emerald-200' : 'text-emerald-400'}`}>0 campos faltantes</p>
             </button>
           </div>
 
           {/* Table */}
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-base">
                 <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest">
                   <tr>
                     <th className="p-4 w-8">Sev.</th>
@@ -1793,18 +2456,18 @@ export const ReportsDashboard: React.FC = () => {
                         {severity === 'alert' && <span className="w-3 h-3 rounded-full bg-amber-400 block" title="Alerta" />}
                         {severity === 'ok' && <span className="w-3 h-3 rounded-full bg-emerald-400 block" title="Completo" />}
                       </td>
-                      <td className="p-4 font-semibold text-slate-800">{appointment.patientName || patient?.fullName || '—'}</td>
+                      <td className="p-4 text-base font-semibold text-slate-800">{appointment.patientName || patient?.fullName || '—'}</td>
                       <td className="p-4 font-mono text-slate-600">{dpi}</td>
                       <td className="p-4 text-slate-600">{age ?? '—'}</td>
                       <td className="p-4 text-slate-600">{appointment.doctorName || '—'}</td>
                       <td className="p-4">
-                        <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-semibold">
+                        <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 text-sm font-semibold">
                           {registeredBy}
                         </span>
                       </td>
                       <td className="p-4">
                         {missing.length === 0 ? (
-                          <span className="text-emerald-600 text-[10px] font-bold flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Completo</span>
+                          <span className="text-emerald-600 text-sm font-bold flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Completo</span>
                         ) : (
                           <div className="flex flex-wrap gap-1">
                             {missing.map(f => (
@@ -1824,19 +2487,19 @@ export const ReportsDashboard: React.FC = () => {
           <div className="border-t-2 border-slate-200 pt-6 mt-2">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Activity className="w-5 h-5 text-blue-500" /> Matriz ISO Semanal</h3>
-                <p className="text-xs text-slate-500">Casos ingresados vs críticos por semana ISO</p>
+                <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Activity className="w-5 h-5 text-blue-500" /> Matriz ISO Semanal</h3>
+                <p className="text-base text-slate-500">Casos ingresados vs críticos por semana ISO</p>
               </div>
-              <button onClick={handleExportMatrix} className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
+              <button onClick={handleExportMatrix} className="px-4 py-2 text-base font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
                 <Download className="w-4 h-4" /> Exportar Excel
               </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-1 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden h-fit">
-                <div className="p-4 border-b bg-slate-50 text-[10px] font-bold uppercase tracking-widest text-slate-500">Resumen por Semanas</div>
+                <div className="p-4 border-b bg-slate-50 text-sm font-bold uppercase tracking-widest text-slate-500">Resumen por Semanas</div>
                 <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full text-left text-base">
                     <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
                       <tr>
                         <th className="p-4">Semana</th>
@@ -1853,7 +2516,7 @@ export const ReportsDashboard: React.FC = () => {
                           onClick={() => setSelectedMatrixWeek(item.week)}
                           className={`text-slate-600 cursor-pointer hover:bg-slate-50 transition-colors ${selectedMatrixWeek === item.week ? 'bg-brand-50' : ''}`}
                         >
-                          <td className="p-4 font-semibold text-slate-800">{item.week}</td>
+                          <td className="p-4 text-base font-semibold text-slate-800">{item.week}</td>
                           <td className="p-4">{item.total}</td>
                           <td className="p-4 text-red-500 font-semibold">{item.critical}</td>
                         </tr>
@@ -1868,47 +2531,47 @@ export const ReportsDashboard: React.FC = () => {
                   <>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Pacientes</p>
-                        <h4 className="text-2xl font-bold text-slate-800 mt-1">{selectedMatrixWeekData.total}</h4>
+                        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Total Pacientes</p>
+                        <h4 className="text-3xl font-bold text-slate-800 mt-1">{selectedMatrixWeekData.total}</h4>
                       </div>
                       <div className="bg-red-50 p-5 rounded-3xl border border-red-100 shadow-sm">
-                        <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Críticos</p>
-                        <h4 className="text-2xl font-bold text-red-800 mt-1">{selectedMatrixWeekData.critical}</h4>
+                        <p className="text-sm font-bold text-red-400 uppercase tracking-widest">Críticos</p>
+                        <h4 className="text-3xl font-bold text-red-800 mt-1">{selectedMatrixWeekData.critical}</h4>
                       </div>
                       <div className="bg-amber-50 p-5 rounded-3xl border border-amber-100 shadow-sm">
-                        <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Alertas</p>
-                        <h4 className="text-2xl font-bold text-amber-800 mt-1">{selectedMatrixWeekData.alert}</h4>
+                        <p className="text-sm font-bold text-amber-400 uppercase tracking-widest">Alertas</p>
+                        <h4 className="text-3xl font-bold text-amber-800 mt-1">{selectedMatrixWeekData.alert}</h4>
                       </div>
                     </div>
                     <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                      <div className="p-4 border-b bg-slate-50 text-[10px] font-bold uppercase tracking-widest text-slate-500">Detalle de la Semana {selectedMatrixWeek}</div>
+                      <div className="p-4 border-b bg-slate-50 text-sm font-bold uppercase tracking-widest text-slate-500">Detalle de la Semana {selectedMatrixWeek}</div>
                       <div className="p-6 space-y-6">
                         <div>
-                          <h5 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2"><Users className="w-4 h-4 text-brand-500" /> Pacientes Registrados</h5>
+                          <h5 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2"><Users className="w-4 h-4 text-brand-500" /> Pacientes Registrados</h5>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {selectedMatrixWeekData.patients.slice(0, 10).map(p => (
                               <div key={p.id} className="p-3 bg-slate-50 rounded-xl flex items-center justify-between">
-                                <span className="text-xs font-semibold text-slate-700 truncate mr-2">{p.fullName}</span>
-                                <span className={`text-[10px] px-2 py-0.5 rounded-full ${getMissingFields(p).length >= 5 ? 'bg-red-100 text-red-600' : getMissingFields(p).length >= 3 ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                                <span className="text-base font-semibold text-slate-700 truncate mr-2">{p.fullName}</span>
+                                <span className={`text-sm px-2 py-0.5 rounded-full ${getMissingFields(p).length >= 5 ? 'bg-red-100 text-red-600' : getMissingFields(p).length >= 3 ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}>
                                   {getMissingFields(p).length} campos faltantes
                                 </span>
                               </div>
                             ))}
                             {selectedMatrixWeekData.patients.length > 10 && (
-                              <p className="text-[10px] text-slate-400 text-center col-span-2">Y {selectedMatrixWeekData.patients.length - 10} pacientes más...</p>
+                              <p className="text-sm text-slate-400 text-center col-span-2">Y {selectedMatrixWeekData.patients.length - 10} pacientes más...</p>
                             )}
                           </div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
                           <div>
-                            <h5 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-blue-500" /> Consultas</h5>
-                            <p className="text-2xl font-bold text-slate-800">{selectedMatrixWeekData.consultations.length}</p>
-                            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Atendidas en la semana</p>
+                            <h5 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-blue-500" /> Consultas</h5>
+                            <p className="text-3xl font-bold text-slate-800">{selectedMatrixWeekData.consultations.length}</p>
+                            <p className="text-sm text-slate-400 uppercase font-bold tracking-widest">Atendidas en la semana</p>
                           </div>
                           <div>
-                            <h5 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2"><Calendar className="w-4 h-4 text-emerald-500" /> Citas Agendadas</h5>
-                            <p className="text-2xl font-bold text-slate-800">{selectedMatrixWeekData.appointments.length}</p>
-                            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Total citas en agenda</p>
+                            <h5 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2"><Calendar className="w-4 h-4 text-emerald-500" /> Citas Agendadas</h5>
+                            <p className="text-3xl font-bold text-slate-800">{selectedMatrixWeekData.appointments.length}</p>
+                            <p className="text-sm text-slate-400 uppercase font-bold tracking-widest">Total citas en agenda</p>
                           </div>
                         </div>
                       </div>
@@ -1923,258 +2586,40 @@ export const ReportsDashboard: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <CleanExternalMedicines />
         </div>
       )}
 
-      {activeTab === 'secretary' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><ClipboardList className="w-5 h-5 text-teal-500" /> Reporte Secretaría</h3>
-              <p className="text-xs text-slate-500">Nuevos pacientes, patología, consultas nuevas vs reconsultas</p>
-            </div>
-            <button onClick={handleExportSecretary} className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
-              <Download className="w-4 h-4" /> Exportar Excel
-            </button>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-slate-50/60 text-xs font-bold uppercase tracking-widest text-slate-500">Consultas por Especialidad</div>
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest">
-                  <tr>
-                    <th className="p-3">Especialidad</th>
-                    <th className="p-3">Nuevas</th>
-                    <th className="p-3">Reconsultas</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {consultationBySpecialty.map(item => (
-                    <tr key={item.specialty}>
-                      <td className="p-3 font-semibold text-slate-700">{item.specialty}</td>
-                      <td className="p-3">{item.newCount}</td>
-                      <td className="p-3">{item.reCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-slate-50/60 text-xs font-bold uppercase tracking-widest text-slate-500">Patologías / Diagnóstico</div>
-              <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
-                    <tr>
-                      <th className="p-3">Patología</th>
-                      <th className="p-3">Nuevos</th>
-                      <th className="p-3">Recons.</th>
-                      <th className="p-3 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {secretaryByPathology.slice(0, 30).map(item => (
-                      <tr key={item.name}>
-                        <td className="p-3 font-semibold text-slate-700 truncate max-w-[150px]" title={item.name}>{item.name}</td>
-                        <td className="p-3 text-emerald-600 font-bold">{item.newPatients}</td>
-                        <td className="p-3 text-blue-600 font-bold">{item.reconsultations}</td>
-                        <td className="p-3 text-right font-bold text-slate-900">{item.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {activeTab === 'medicines' && (
         <div className="space-y-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Pill className="w-5 h-5 text-violet-500" /> Incidencia de Medicamentos</h3>
-              <p className="text-xs text-slate-500">Frecuencia de prescripción por molécula, proveedor y médico</p>
+              <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Pill className="w-5 h-5 text-violet-500" /> Incidencia de Medicamentos</h3>
+              <p className="text-base text-slate-500">Frecuencia de prescripción por molécula, proveedor y médico</p>
             </div>
             <div className="flex items-center gap-3">
-              <select value={selectedMedicineName} onChange={e => setSelectedMedicineName(e.target.value)} className="text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white max-w-[200px]">
-                {filteredMedicineStats.medicines.slice(0, 50).map(m => (
-                  <option key={m.name} value={m.name}>{m.name}</option>
-                ))}
-              </select>
-              <button onClick={handleExportMedicines} className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
+              <button onClick={handleExportMedicines} className="px-4 py-2 text-base font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
                 <Download className="w-4 h-4" /> Exportar Excel
               </button>
             </div>
           </div>
 
-          {/* FILTER BAR */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 text-xs text-slate-500 font-bold">
-              <Filter className="w-4 h-4" /> Filtros:
-            </div>
-            <select value={medFilterDoctor} onChange={e => setMedFilterDoctor(e.target.value)} className="text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
-              <option value="">Todos los médicos</option>
-              {doctors.map(d => (
-                <option key={d.uid} value={d.uid}>{d.name}</option>
-              ))}
-            </select>
-            <select value={medFilterSpecialty} onChange={e => setMedFilterSpecialty(e.target.value)} className="text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
-              <option value="">Todas las especialidades</option>
-              {specialtiesList.map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-            {(medFilterDoctor || medFilterSpecialty) && (
-              <button onClick={() => { setMedFilterDoctor(''); setMedFilterSpecialty(''); }} className="text-[10px] text-red-500 font-bold underline">Limpiar filtros</button>
-            )}
-            <span className="ml-auto text-[10px] text-slate-400 font-bold">{formatNumber(filteredMedicineStats.totalItems)} items</span>
-          </div>
-
-          {selectedMedicineStats && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Cantidad Total</p>
-                <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(selectedMedicineStats.totalQty)}</h3>
-                <p className="text-xs text-slate-400 mt-2">Unidades recetadas</p>
-              </div>
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recetas</p>
-                <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(selectedMedicineStats.prescriptionsCount)}</h3>
-                <p className="text-xs text-slate-400 mt-2">Prescripciones individuales</p>
-              </div>
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="p-4 border-b bg-slate-50/60 text-[10px] font-bold uppercase tracking-widest text-slate-500">Top Doctores que lo recetan</div>
-                <div className="p-4 space-y-2">
-                  {selectedMedicineStats.topDoctors.map(d => (
-                    <div key={d.name} className="flex items-center justify-between text-xs">
-                      <span className="text-slate-600 truncate mr-2">{d.name}</span>
-                      <span className="font-bold text-slate-800">{d.count}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Externos</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(filteredMedicineStats.externalItems)}</h3>
-            </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Inventario</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(filteredMedicineStats.internalItems)}</h3>
-            </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Items</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(filteredMedicineStats.totalItems)}</h3>
-            </div>
-          </div>
-
-          {/* Incidence Tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden border-2 border-violet-100">
-              <div className="p-4 border-b bg-violet-50 text-xs font-bold uppercase tracking-widest text-violet-700">Top Medicamentos Más Recetados (Incidencia)</div>
-              <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
-                    <tr>
-                      <th className="p-3">#</th>
-                      <th className="p-3">Medicamento</th>
-                      <th className="p-3 text-right">Incidencia</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredMedicineStats.medicines.slice(0, 50).map((item, idx) => (
-                      <tr key={item.name} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-3 text-slate-400 font-mono">{idx + 1}</td>
-                        <td className="p-3 font-semibold text-slate-700">{item.name}</td>
-                        <td className="p-3 text-right">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-violet-50 text-violet-700 font-bold text-[10px]">{item.count} veces</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden border-2 border-rose-100">
-              <div className="p-4 border-b bg-rose-50 text-xs font-bold uppercase tracking-widest text-rose-700">Medicamentos Menos Recetados</div>
-              <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
-                    <tr>
-                      <th className="p-3">#</th>
-                      <th className="p-3">Medicamento</th>
-                      <th className="p-3 text-right">Incidencia</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {[...filteredMedicineStats.medicines].reverse().slice(0, 50).map((item, idx) => (
-                      <tr key={item.name} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-3 text-slate-400 font-mono">{filteredMedicineStats.medicines.length - idx}</td>
-                        <td className="p-3 font-semibold text-slate-700">{item.name}</td>
-                        <td className="p-3 text-right">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 font-bold text-[10px]">{item.count} veces</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-slate-50/60 text-xs font-bold uppercase tracking-widest text-slate-500">Top Moléculas</div>
-              <div className="p-5 space-y-3">
-                {filteredMedicineStats.molecules.slice(0, 8).map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-slate-800">{item.count}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-slate-50/60 text-xs font-bold uppercase tracking-widest text-slate-500">Top Proveedores</div>
-              <div className="p-5 space-y-3">
-                {filteredMedicineStats.providers.slice(0, 8).map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-slate-800">{item.count}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-slate-50/60 text-xs font-bold uppercase tracking-widest text-slate-500">Top Médicos</div>
-              <div className="p-5 space-y-3">
-                {filteredMedicineStats.doctors.slice(0, 8).map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-slate-800">{item.count}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* ===== NORMALIZATION SECTION ===== */}
+          {/* ===== NORMALIZATION SECTION (FIRST) ===== */}
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-5 border-b bg-slate-50/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
-                <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
                   <Wand2 className="w-4 h-4 text-violet-500" /> Normalización de Medicamentos
                 </h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">Detecta nombres duplicados y unifica conteos automáticamente</p>
+                <p className="text-sm text-slate-400 mt-0.5">Detecta nombres duplicados y unifica conteos automáticamente</p>
               </div>
               <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
-                <button onClick={() => setNormSubView('detect')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition ${normSubView === 'detect' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <button onClick={() => setNormSubView('detect')} className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${normSubView === 'detect' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                   <Unlink className="w-3 h-3 inline mr-1" /> Duplicados ({duplicateClusters.filter(c => !c.hasRule && !normIgnoredClusters.includes(c.variants.map(v => v.name).sort().join('|'))).length})
                 </button>
-                <button onClick={() => setNormSubView('rules')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition ${normSubView === 'rules' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <button onClick={() => setNormSubView('rules')} className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${normSubView === 'rules' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                   <Link2 className="w-3 h-3 inline mr-1" /> Reglas ({normRules.filter(r => r.status === 'approved').length})
                 </button>
               </div>
@@ -2185,8 +2630,8 @@ export const ReportsDashboard: React.FC = () => {
                 {duplicateClusters.filter(c => !c.hasRule && !normIgnoredClusters.includes(c.variants.map(v => v.name).sort().join('|'))).length === 0 ? (
                   <div className="text-center py-10">
                     <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-                    <p className="text-sm font-bold text-slate-700">No se detectaron duplicados</p>
-                    <p className="text-xs text-slate-400 mt-1">Todos los nombres de medicamentos parecen ser únicos</p>
+                    <p className="text-base font-bold text-slate-700">No se detectaron duplicados</p>
+                    <p className="text-base text-slate-400 mt-1">Todos los nombres de medicamentos parecen ser únicos</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -2199,7 +2644,7 @@ export const ReportsDashboard: React.FC = () => {
                           <div key={clusterId} className="border border-amber-200 bg-amber-50/30 rounded-2xl p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1">
-                                <p className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-2">
+                                <p className="text-base font-bold text-slate-800 mb-2 flex items-center gap-2">
                                   <AlertTriangle className="w-4 h-4 text-amber-500" />
                                   Posible duplicado ({cluster.variants.length} variantes, {cluster.totalCount} recetas)
                                 </p>
@@ -2208,14 +2653,14 @@ export const ReportsDashboard: React.FC = () => {
                                     <button
                                       key={v.name}
                                       onClick={() => setNormManualCanonicalMap(prev => ({ ...prev, [clusterId]: v.name }))}
-                                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer hover:shadow-sm transition ${v.name === activeCanonical ? 'bg-violet-100 text-violet-800 border-violet-300' : 'bg-white text-slate-600 border-slate-200'}`}
+                                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-sm font-bold border cursor-pointer hover:shadow-sm transition ${v.name === activeCanonical ? 'bg-violet-100 text-violet-800 border-violet-300' : 'bg-white text-slate-600 border-slate-200'}`}
                                     >
                                       {v.name === activeCanonical && <Check className="w-3 h-3" />}
                                       {v.name} <span className="text-slate-400">×{v.count}</span>
                                     </button>
                                   ))}
                                 </div>
-                                <p className="text-[10px] text-slate-500 mt-2">
+                                <p className="text-sm text-slate-500 mt-2">
                                   Canónico: <strong className="text-violet-700">{activeCanonical}</strong>
                                 </p>
                               </div>
@@ -2238,7 +2683,7 @@ export const ReportsDashboard: React.FC = () => {
                                     }
                                     setNormSaving(false);
                                   }}
-                                  className="px-3 py-2 text-[10px] font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                  className="px-3 py-2 text-sm font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                                 >
                                   <Check className="w-3 h-3" /> Aprobar
                                 </button>
@@ -2260,7 +2705,7 @@ export const ReportsDashboard: React.FC = () => {
                                     }
                                     setNormSaving(false);
                                   }}
-                                  className="px-3 py-2 text-[10px] font-bold rounded-xl bg-slate-200 text-slate-600 hover:bg-slate-300 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                  className="px-3 py-2 text-sm font-bold rounded-xl bg-slate-200 text-slate-600 hover:bg-slate-300 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                                 >
                                   <X className="w-3 h-3" /> Descartar
                                 </button>
@@ -2274,16 +2719,16 @@ export const ReportsDashboard: React.FC = () => {
 
                 {/* Manual Rule */}
                 <div className="border-t border-slate-200 pt-4 mt-4">
-                  <p className="text-xs font-bold text-slate-600 mb-3">Agregar regla manual</p>
+                  <p className="text-sm font-bold text-slate-600 mb-3">Agregar regla manual</p>
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="flex-1 min-w-[150px]">
-                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Nombre incorrecto</label>
-                      <input value={normManualDirty} onChange={e => setNormManualDirty(e.target.value)} placeholder="ej: propanolol 40mg" className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white" />
+                      <label className="text-sm text-slate-400 font-bold uppercase tracking-widest block mb-1">Nombre incorrecto</label>
+                      <input value={normManualDirty} onChange={e => setNormManualDirty(e.target.value)} placeholder="ej: propanolol 40mg" className="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 bg-white" />
                     </div>
-                    <div className="text-slate-400 text-lg font-bold pb-1">→</div>
+                    <div className="text-slate-400 text-xl font-bold pb-1">→</div>
                     <div className="flex-1 min-w-[150px]">
-                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Nombre correcto</label>
-                      <input value={normManualCanonicalText} onChange={e => setNormManualCanonicalText(e.target.value)} placeholder="ej: Propranolol 40mg" className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white" />
+                      <label className="text-sm text-slate-400 font-bold uppercase tracking-widest block mb-1">Nombre correcto</label>
+                      <input value={normManualCanonicalText} onChange={e => setNormManualCanonicalText(e.target.value)} placeholder="ej: Propranolol 40mg" className="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 bg-white" />
                     </div>
                     <button
                       disabled={!normManualDirty.trim() || !normManualCanonicalText.trim() || normSaving}
@@ -2300,7 +2745,7 @@ export const ReportsDashboard: React.FC = () => {
                         }
                         setNormSaving(false);
                       }}
-                      className="px-4 py-2 text-xs font-bold rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition disabled:opacity-50"
+                      className="px-4 py-2 text-sm font-bold rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition disabled:opacity-50"
                     >
                       Agregar
                     </button>
@@ -2314,13 +2759,13 @@ export const ReportsDashboard: React.FC = () => {
                 {normRules.filter(r => r.status === 'approved').length === 0 ? (
                   <div className="text-center py-10">
                     <Link2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                    <p className="text-sm font-bold text-slate-700">No hay reglas aprobadas</p>
-                    <p className="text-xs text-slate-400 mt-1">Detecta duplicados y apruébalos para crear reglas</p>
+                    <p className="text-base font-bold text-slate-700">No hay reglas aprobadas</p>
+                    <p className="text-sm text-slate-400 mt-1">Detecta duplicados y apruébalos para crear reglas</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-100 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
+                    <table className="w-full text-left text-base">
+                      <thead className="bg-slate-100 text-sm text-slate-500 uppercase font-bold tracking-widest">
                         <tr>
                           <th className="p-3">Nombre Original</th>
                           <th className="p-3">→ Nombre Normalizado</th>
@@ -2331,10 +2776,10 @@ export const ReportsDashboard: React.FC = () => {
                         {normRules.filter(r => r.status === 'approved').map(rule => (
                           <tr key={rule.id} className="hover:bg-slate-50 transition-colors">
                             <td className="p-3">
-                              <span className="inline-flex items-center px-2 py-0.5 bg-red-50 text-red-700 rounded text-[10px] font-bold border border-red-200 line-through">{rule.dirtyName}</span>
+                              <span className="inline-flex items-center px-2 py-0.5 bg-red-50 text-red-700 rounded text-sm font-bold border border-red-200 line-through">{rule.dirtyName}</span>
                             </td>
                             <td className="p-3">
-                              <span className="inline-flex items-center px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded text-[10px] font-bold border border-emerald-200">{rule.canonicalName}</span>
+                              <span className="inline-flex items-center px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded text-sm font-bold border border-emerald-200">{rule.canonicalName}</span>
                             </td>
                             <td className="p-3 text-right">
                               <button
@@ -2362,6 +2807,311 @@ export const ReportsDashboard: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* FILTER BAR */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 text-base text-slate-500 font-bold">
+              <Filter className="w-4 h-4" /> Filtros:
+            </div>
+            <select value={medFilterDoctor} onChange={e => setMedFilterDoctor(e.target.value)} className="text-sm font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
+              <option value="">Todos los médicos</option>
+              {doctors.map(d => (
+                <option key={d.uid} value={d.uid}>{d.name}</option>
+              ))}
+            </select>
+            <select value={medFilterSpecialty} onChange={e => setMedFilterSpecialty(e.target.value)} className="text-sm font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
+              <option value="">Todas las especialidades</option>
+              {specialtiesList.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            <select value={medFilterMolecule} onChange={e => setMedFilterMolecule(e.target.value)} className="text-sm font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
+              <option value="">Todas las moléculas</option>
+              {moleculesList.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+            {(medFilterDoctor || medFilterSpecialty || medFilterMolecule) && (
+              <button onClick={() => { setMedFilterDoctor(''); setMedFilterSpecialty(''); setMedFilterMolecule(''); }} className="text-sm text-red-500 font-bold underline">Limpiar filtros</button>
+            )}
+            <span className="ml-auto text-sm text-slate-400 font-bold">{formatNumber(filteredMedicineStats.totalItems)} items</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <p className="text-sm font-bold text-slate-900 uppercase tracking-widest">{periodLabel}</p>
+              <p className="text-base font-bold text-slate-400 uppercase tracking-widest mt-1">Externos</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(filteredMedicineStats.externalItems)}</h3>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <p className="text-sm font-bold text-slate-900 uppercase tracking-widest">{periodLabel}</p>
+              <p className="text-base font-bold text-slate-400 uppercase tracking-widest mt-1">Inventario</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(filteredMedicineStats.internalItems)}</h3>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <p className="text-sm font-bold text-slate-900 uppercase tracking-widest">{periodLabel}</p>
+              <p className="text-base font-bold text-slate-400 uppercase tracking-widest mt-1">Total Items</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(filteredMedicineStats.totalItems)}</h3>
+            </div>
+          </div>
+
+          {/* Incidence Tables */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="flex flex-col gap-4">
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden border-2 border-violet-100">
+                <div className="p-4 border-b bg-violet-50">
+                  <p className="text-sm font-bold text-violet-900 uppercase tracking-widest">{periodLabel}</p>
+                  <p className="text-base font-bold uppercase tracking-widest text-violet-700 mt-1">Top Productos Internos Más Recetados</p>
+                  <p className="text-sm text-violet-500 font-normal mt-1">Productos de inventario propio con mayor número de prescripciones en el periodo.</p>
+                </div>
+                <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-base">
+                    <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
+                      <tr>
+                        <th className="p-3">#</th>
+                        <th className="p-3">Producto</th>
+                        <th className="p-3 text-right">Incidencia</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredMedicineStats.internalMedicines.slice(0, 50).map((item, idx) => (
+                        <tr key={item.name} className="hover:bg-violet-100 transition-colors cursor-pointer" onClick={() => setSelectedMedicationForModal({name: item.name, isExternal: false})}>
+                          <td className="p-3 text-sm text-slate-400 font-mono">{idx + 1}</td>
+                          <td className="p-3 text-base font-semibold text-slate-700">{item.name}</td>
+                          <td className="p-3 text-right">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-violet-50 text-violet-700 font-bold text-sm">{item.count} veces</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <details className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <summary className="p-3 cursor-pointer bg-slate-50 text-base font-bold text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-between outline-none">
+                  <div>
+                    <span className="block text-base">Productos Internos Menos Recetados</span>
+                    <span className="block text-sm text-slate-400 font-normal mt-0.5">Productos con la menor cantidad de prescripciones.</span>
+                  </div>
+                  <span className="text-sm font-normal text-slate-400 group-open:hidden whitespace-nowrap ml-2">(Click para desplegar)</span>
+                </summary>
+                <div className="max-h-[300px] overflow-y-auto custom-scrollbar border-t border-slate-100">
+                  <table className="w-full text-left text-base">
+                    <thead className="bg-slate-50 text-slate-400 uppercase font-bold tracking-widest sticky top-0">
+                      <tr>
+                        <th className="p-3">#</th>
+                        <th className="p-3">Producto</th>
+                        <th className="p-3 text-right">Incidencia</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {[...filteredMedicineStats.internalMedicines].reverse().slice(0, 50).map((item, idx) => (
+                        <tr key={item.name} className="hover:bg-slate-100 transition-colors cursor-pointer" onClick={() => setSelectedMedicationForModal({name: item.name, isExternal: false})}>
+                          <td className="p-3 text-sm text-slate-400 font-mono">{filteredMedicineStats.internalMedicines.length - idx}</td>
+                          <td className="p-3 text-base font-semibold text-slate-700">{item.name}</td>
+                          <td className="p-3 text-right">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-sm">{item.count} veces</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden border-2 border-rose-100">
+                <div className="p-4 border-b bg-rose-50">
+                  <p className="text-sm font-bold text-rose-900 uppercase tracking-widest">{periodLabel}</p>
+                  <p className="text-base font-bold uppercase tracking-widest text-rose-700 mt-1">Top Productos Externos Más Recetados</p>
+                  <p className="text-sm text-rose-500 font-normal mt-1">Productos externos sugeridos con mayor número de prescripciones en el periodo.</p>
+                </div>
+                <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-base">
+                    <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
+                      <tr>
+                        <th className="p-3">#</th>
+                        <th className="p-3">Producto</th>
+                        <th className="p-3 text-right">Incidencia</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredMedicineStats.externalMedicines.slice(0, 50).map((item, idx) => (
+                        <tr key={item.name} className="hover:bg-rose-100 transition-colors cursor-pointer" onClick={() => setSelectedMedicationForModal({name: item.name, isExternal: true})}>
+                          <td className="p-3 text-sm text-slate-400 font-mono">{idx + 1}</td>
+                          <td className="p-3 text-base font-semibold text-slate-700">{item.name}</td>
+                          <td className="p-3 text-right">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 font-bold text-sm">{item.count} veces</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <details className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <summary className="p-3 cursor-pointer bg-slate-50 text-base font-bold text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-between outline-none">
+                  <div>
+                    <span className="block text-base">Productos Externos Menos Recetados</span>
+                    <span className="block text-sm text-slate-400 font-normal mt-0.5">Productos externos con la menor cantidad de prescripciones.</span>
+                  </div>
+                  <span className="text-sm font-normal text-slate-400 group-open:hidden whitespace-nowrap ml-2">(Click para desplegar)</span>
+                </summary>
+                <div className="max-h-[300px] overflow-y-auto custom-scrollbar border-t border-slate-100">
+                  <table className="w-full text-left text-base">
+                    <thead className="bg-slate-50 text-slate-400 uppercase font-bold tracking-widest sticky top-0">
+                      <tr>
+                        <th className="p-3">#</th>
+                        <th className="p-3">Producto</th>
+                        <th className="p-3 text-right">Incidencia</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {[...filteredMedicineStats.externalMedicines].reverse().slice(0, 50).map((item, idx) => (
+                        <tr key={item.name} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-3 text-sm text-slate-400 font-mono">{filteredMedicineStats.externalMedicines.length - idx}</td>
+                          <td className="p-3 text-base font-semibold text-slate-700">{item.name}</td>
+                          <td className="p-3 text-right">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-sm">{item.count} veces</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </div>
+          </div>
+
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+              <div className="p-4 border-b bg-slate-50/60 flex flex-col justify-center min-h-[70px]">
+                <p className="text-sm font-bold text-slate-900 uppercase tracking-widest">{periodLabel}</p>
+                <p className="text-base font-bold uppercase tracking-widest text-slate-500 mt-1">Top Moléculas</p>
+                <p className="text-sm text-slate-400 font-normal mt-1 leading-tight">Principios activos o componentes principales más frecuentes en las recetas.</p>
+              </div>
+              <div className="p-5 space-y-1 flex-1 overflow-y-auto">
+                {filteredMedicineStats.molecules.slice(0, 8).map(item => (
+                  <div 
+                    key={item.name} 
+                    onClick={() => setSelectedMoleculeForModal(item.name)}
+                    className="flex items-center justify-between text-base cursor-pointer hover:bg-indigo-50/60 rounded-lg px-2 py-1.5 -mx-2 transition-all group"
+                  >
+                    <span className="text-slate-700 font-medium group-hover:text-indigo-700 transition-colors">{item.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800">{item.count}</span>
+                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+              <div className="p-4 border-b bg-slate-50/60 flex flex-col justify-center min-h-[70px]">
+                <p className="text-sm font-bold text-slate-900 uppercase tracking-widest">{periodLabel}</p>
+                <p className="text-base font-bold uppercase tracking-widest text-slate-500 mt-1">Top Médicos</p>
+                <p className="text-sm text-slate-400 font-normal mt-1 leading-tight">Médicos que han prescrito la mayor cantidad total de medicamentos (internos y externos) en el periodo.</p>
+              </div>
+              <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+                {filteredMedicineStats.doctors.slice(0, 8).map(item => (
+                  <div key={item.name} className="flex items-center justify-between text-base">
+                    <span className="text-slate-600">{item.name}</span>
+                    <span className="font-bold text-slate-800">{item.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ===== MOLECULE OVERLAP REPORT: EXTERNOS CUYA MOLÉCULA TENEMOS INTERNAMENTE ===== */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b bg-gradient-to-r from-indigo-50/80 to-violet-50/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                  <FlaskConical className="w-4 h-4 text-indigo-500" /> Cobertura de Moléculas: Externos vs Internos
+                </h3>
+                <p className="text-sm text-slate-400 mt-0.5">Medicamentos externos cuya molécula (ingrediente activo) ya tenemos en inventario</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm font-bold text-indigo-700 flex items-center gap-1.5">
+                  <FlaskConical className="w-3.5 h-3.5" />
+                  {moleculeOverlap.uniqueMoleculesCount} moléculas
+                </span>
+                <span className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-sm font-bold text-rose-700 flex items-center gap-1.5">
+                  <Pill className="w-3.5 h-3.5" />
+                  {moleculeOverlap.totalExternalMedsWithInternalMolecule} externos
+                </span>
+              </div>
+            </div>
+            <div className="p-5">
+              {moleculeOverlap.overlaps.length === 0 ? (
+                <div className="text-center py-10">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
+                  <p className="text-base font-bold text-slate-700">No hay coincidencias</p>
+                  <p className="text-sm text-slate-400 mt-1">
+                    No se encontraron medicamentos externos cuya molécula esté en inventario
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-500 uppercase font-bold tracking-widest border-b border-slate-200">
+                      <tr>
+                        <th className="p-3">Molécula (Interna)</th>
+                        <th className="p-3">Medicamento Externo</th>
+                        <th className="p-3">Coincidencia Interna</th>
+                        <th className="p-3 text-right">Stock</th>
+                        <th className="p-3 text-right">Precio</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {moleculeOverlap.overlaps.map((overlap, idx) => (
+                        <tr key={`${overlap.molecule}-${overlap.externalMedicine.id}-${idx}`} className="hover:bg-indigo-50/40 transition-colors">
+                          <td className="p-3">
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              <FlaskConical className="w-3 h-3" /> {overlap.molecule}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <span className="font-bold text-slate-800">{overlap.externalMedicine.name}</span>
+                            {overlap.externalMedicine.brandName && overlap.externalMedicine.brandName !== overlap.externalMedicine.name && (
+                              <span className="block text-xs text-slate-400 mt-0.5">{overlap.externalMedicine.brandName}</span>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex flex-wrap gap-1">
+                              {overlap.internalMatches.map(internal => (
+                                <span
+                                  key={internal.id}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                >
+                                  <Check className="w-3 h-3" /> {internal.name}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right">
+                            <span className={`font-bold ${overlap.internalMatches.reduce((s, m) => s + (m.stock || 0), 0) > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {overlap.internalMatches.reduce((s, m) => s + (m.stock || 0), 0)}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <span className="text-slate-700 font-medium">
+                              Q{overlap.internalMatches[0]?.price?.toFixed(2) || '0.00'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -2369,16 +3119,16 @@ export const ReportsDashboard: React.FC = () => {
         <div className="space-y-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Stethoscope className="w-5 h-5 text-blue-500" /> Analítica por Médico</h3>
-              <p className="text-xs text-slate-500">Consultas, tiempo promedio y medicamentos</p>
+              <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Stethoscope className="w-5 h-5 text-blue-500" /> Analítica por Médico</h3>
+              <p className="text-base text-slate-500">Consultas, tiempo promedio y medicamentos</p>
             </div>
             <div className="flex items-center gap-3">
-              <select value={selectedDoctorId} onChange={e => setSelectedDoctorId(e.target.value)} className="text-xs font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
+              <select value={selectedDoctorId} onChange={e => setSelectedDoctorId(e.target.value)} className="text-sm font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white">
                 {doctors.map(d => (
                   <option key={d.uid} value={d.uid}>{d.name}</option>
                 ))}
               </select>
-              <button onClick={handleExportDoctor} className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
+              <button onClick={handleExportDoctor} className="px-4 py-2 text-base font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
                 <Download className="w-4 h-4" /> Exportar Excel
               </button>
             </div>
@@ -2386,32 +3136,103 @@ export const ReportsDashboard: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Consultas</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(doctorStats.totalConsultations)}</h3>
-              <p className="text-[10px] text-slate-400 mt-2">Nuevas: {doctorStats.newConsultations} | Re: {doctorStats.reConsultations}</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Total Consultas</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(doctorStats.totalConsultations)}</h3>
+              <p className="text-sm text-slate-400 mt-2">Nuevas: {doctorStats.newConsultations} | Re: {doctorStats.reConsultations}</p>
             </div>
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Promedio Semanal</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{Math.round(doctorStats.avgWeeklyMinutes)} min</h3>
-              <p className="text-[10px] text-slate-400 mt-2">Tiempo de trabajo estimado</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Promedio Semanal</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{doctorStats.avgWeeklyHours.toFixed(1)}h</h3>
+              <p className="text-sm text-slate-400 mt-2">Tiempo promedio por semana</p>
             </div>
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recetas</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(doctorStats.externalCount + doctorStats.internalCount)}</h3>
-              <p className="text-[10px] text-slate-400 mt-2">Ext: {doctorStats.externalCount} | Inv: {doctorStats.internalCount}</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Horas Trabajadas / Contratadas</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{doctorStats.attendedHours.toFixed(1)}h <span className="text-xl text-slate-400">/ {doctorStats.contractedHours.toFixed(1)}h</span></h3>
+              <div className="mt-2">
+                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${doctorStats.utilizationPct >= 80 ? 'bg-emerald-500' : doctorStats.utilizationPct >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                    style={{ width: `${doctorStats.utilizationPct}%` }}
+                  />
+                </div>
+                <p className={`text-sm mt-1 font-bold ${doctorStats.utilizationPct >= 80 ? 'text-emerald-600' : doctorStats.utilizationPct >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                  {doctorStats.utilizationPct.toFixed(0)}% de capacidad utilizada
+                </p>
+              </div>
             </div>
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Semanas Activas</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{doctorStats.weeklyStats.length}</h3>
-              <p className="text-[10px] text-slate-400 mt-2">En el periodo seleccionado</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Semanas Activas</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{doctorStats.weeklyStats.length}</h3>
+              <p className="text-sm text-slate-400 mt-2">En el periodo seleccionado</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Desglose de Recetas</p>
+            <div className="flex items-center gap-6">
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-base font-bold text-slate-700">{formatNumber(doctorStats.totalPrescriptionCount)} recetas totales</span>
+                  <div className="flex items-center gap-3 text-sm font-bold">
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-violet-500" /> Inventario</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-400" /> Externos</span>
+                  </div>
+                </div>
+                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
+                  {doctorStats.totalPrescriptionCount > 0 ? (
+                    <>
+                      <div className="h-full bg-violet-500 transition-all" style={{ width: `${doctorStats.inventoryPct}%` }} />
+                      <div className="h-full bg-rose-400 transition-all" style={{ width: `${doctorStats.externalPct}%` }} />
+                    </>
+                  ) : (
+                    <div className="h-full bg-slate-200 w-full" />
+                  )}
+                </div>
+                <div className="flex items-center justify-between mt-2 text-sm">
+                  <span className="text-violet-700 font-bold">Inventario: {doctorStats.internalCount} ({doctorStats.inventoryPct.toFixed(0)}%)</span>
+                  <span className="text-rose-600 font-bold">Externos: {doctorStats.externalCount} ({doctorStats.externalPct.toFixed(0)}%)</span>
+                </div>
+              </div>
+              {doctorStats.internalCount > 0 && doctorStats.externalCount > 0 && (
+                <span className="px-3 py-1.5 bg-amber-50 text-amber-700 text-sm font-bold rounded-full border border-amber-200 whitespace-nowrap">Recetas mixtas</span>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b bg-emerald-50 text-sm font-bold uppercase tracking-widest text-emerald-700">Top Medicamentos</div>
+              <div className="p-5 space-y-3">
+                {doctorStats.topMeds.length === 0 ? (
+                  <p className="text-base text-slate-400">Sin recetas en el periodo</p>
+                ) : doctorStats.topMeds.map(item => (
+                  <div key={item.name} className="flex items-center justify-between text-sm">
+                    <span className="text-slate-600 truncate mr-2">{item.name}</span>
+                    <span className="font-bold text-slate-800">{item.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b bg-rose-50 text-sm font-bold uppercase tracking-widest text-rose-700">Menos Recetados</div>
+              <div className="p-5 space-y-3">
+                {doctorStats.leastMeds.length === 0 ? (
+                  <p className="text-base text-slate-400">Sin recetas en el periodo</p>
+                ) : doctorStats.leastMeds.map(item => (
+                  <div key={item.name} className="flex items-center justify-between text-sm">
+                    <span className="text-slate-600 truncate mr-2">{item.name}</span>
+                    <span className="font-bold text-slate-800">{item.count}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden h-fit">
-              <div className="p-4 border-b bg-slate-50 text-[10px] font-bold uppercase tracking-widest text-slate-500">Desglose por Semana</div>
+              <div className="p-4 border-b bg-slate-50 text-sm font-bold uppercase tracking-widest text-slate-500">Desglose por Semana</div>
               <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
-                <table className="w-full text-left text-xs">
+                <table className="w-full text-left text-base">
                   <thead className="bg-slate-100 text-slate-500 uppercase font-bold tracking-widest sticky top-0">
                     <tr>
                       <th className="p-4">Semana</th>
@@ -2428,7 +3249,7 @@ export const ReportsDashboard: React.FC = () => {
                         onClick={() => setSelectedDoctorWeek(item.week)}
                         className={`text-slate-600 cursor-pointer hover:bg-slate-50 transition-colors ${selectedDoctorWeek === item.week ? 'bg-brand-50' : ''}`}
                       >
-                        <td className="p-4 font-semibold text-slate-800">{item.week}</td>
+                        <td className="p-4 text-base font-semibold text-slate-800">{item.week}</td>
                         <td className="p-4">{item.appointments.length}</td>
                         <td className="p-4 font-mono">{(item.minutes / 60).toFixed(1)}h</td>
                       </tr>
@@ -2443,8 +3264,8 @@ export const ReportsDashboard: React.FC = () => {
                 <>
                   <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="p-4 border-b bg-slate-50 flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Detalle de Semana {selectedDoctorWeek}</span>
-                      <span className="text-xs font-bold text-brand-600">Total: {(selectedDoctorWeekData.minutes / 60).toFixed(1)} horas</span>
+                      <span className="text-sm font-bold uppercase tracking-widest text-slate-500">Detalle de Semana {selectedDoctorWeek}</span>
+                      <span className="text-base font-bold text-brand-600">Total: {(selectedDoctorWeekData.minutes / 60).toFixed(1)} horas</span>
                     </div>
                     <div className="p-6">
                       <div className="space-y-3">
@@ -2453,45 +3274,20 @@ export const ReportsDashboard: React.FC = () => {
                           return (
                             <div key={appt.id || idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
                               <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-400">
+                                <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-sm font-bold text-slate-400">
                                   {date ? date.toLocaleDateString('es-GT', { weekday: 'short' }) : '—'}
                                 </div>
                                 <div>
-                                  <p className="text-xs font-bold text-slate-800">{appt.patientName}</p>
-                                  <p className="text-[10px] text-slate-400">{date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'} • {appt.consultationType}</p>
+                                  <p className="text-base font-bold text-slate-800">{appt.patientName}</p>
+                                  <p className="text-sm text-slate-400">{date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'} • {appt.consultationType}</p>
                                 </div>
                               </div>
-                              <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-1 rounded-lg border border-slate-200">
+                              <span className="text-sm font-bold text-slate-500 bg-white px-2 py-1 rounded-lg border border-slate-200">
                                 {getAppointmentDurationMinutes(appt)} min
                               </span>
                             </div>
                           );
                         })}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                      <div className="p-4 border-b bg-emerald-50 text-[10px] font-bold uppercase tracking-widest text-emerald-700">Top Medicamentos</div>
-                      <div className="p-5 space-y-3">
-                        {doctorStats.topMeds.map(item => (
-                          <div key={item.name} className="flex items-center justify-between text-xs">
-                            <span className="text-slate-600 truncate mr-2">{item.name}</span>
-                            <span className="font-bold text-slate-800">{item.count}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                      <div className="p-4 border-b bg-rose-50 text-[10px] font-bold uppercase tracking-widest text-rose-700">Menos Recetados</div>
-                      <div className="p-5 space-y-3">
-                        {doctorStats.leastMeds.map(item => (
-                          <div key={item.name} className="flex items-center justify-between text-xs">
-                            <span className="text-slate-600 truncate mr-2">{item.name}</span>
-                            <span className="font-bold text-slate-800">{item.count}</span>
-                          </div>
-                        ))}
                       </div>
                     </div>
                   </div>
@@ -2511,109 +3307,334 @@ export const ReportsDashboard: React.FC = () => {
         <div className="space-y-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-emerald-500" /> Reporte Farmacia</h3>
-              <p className="text-xs text-slate-500">Sube el Excel externo y compara ventas vs recetas</p>
+              <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-emerald-500" /> Reporte Farmacia</h3>
+              <p className="text-base text-slate-500">¿Cuántas recetas se pueden surtir al 100% con el inventario actual?</p>
             </div>
             <div className="flex items-center gap-3">
-              <label className="px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 text-white flex items-center gap-2 cursor-pointer">
+              {/* Excel de ventas deshabilitado temporalmente — descomentar cuando se requiera */}
+              {/* <label className="px-4 py-2 text-base font-bold rounded-xl bg-emerald-600 text-white flex items-center gap-2 cursor-pointer">
                 <UploadCloud className="w-4 h-4" /> {uploadingPharmacy ? 'Subiendo...' : 'Subir Excel'}
                 <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleUploadPharmacyReport} disabled={uploadingPharmacy} />
-              </label>
-              <button onClick={handleExportPharmacy} className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 text-white flex items-center gap-2">
-                <Download className="w-4 h-4" /> Exportar Excel
-              </button>
+              </label> */}
             </div>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">Reporte seleccionado</p>
-                <select value={selectedReportId} onChange={e => setSelectedReportId(e.target.value)} className="mt-2 text-sm font-bold px-3 py-2 rounded-xl border border-slate-200 bg-white min-w-[260px]">
-                  <option value="">Seleccionar reporte</option>
-                  {pharmacyReports.map(r => (
-                    <option key={r.id} value={r.id}>{r.fileName}</option>
-                  ))}
-                </select>
-              </div>
-              {selectedReportId && (
-                <div className="text-xs text-slate-500">
-                  Filas en rango: <span className="font-bold text-slate-800">{pharmacyRows.length}</span>
-                  {pharmacyRows.length === 0 && (
-                    <span className="ml-2 text-red-500 font-bold">(No hay datos en las fechas seleccionadas o el formato del Excel no es compatible)</span>
+          {/* KPIs principales */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <p className="text-base font-bold text-slate-400 uppercase tracking-widest">Medicamentos Únicos</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(pharmacyFillRate.uniqueMedicinesPrescribed)}</h3>
+              <p className="text-sm text-slate-400 mt-1">Distintos recetados en el período (incluso si salen 30 veces)</p>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <p className="text-base font-bold text-slate-400 uppercase tracking-widest">Recetas Totales</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(pharmacyFillRate.totalRecipes)}</h3>
+              <p className="text-sm text-slate-400 mt-1">Consultas con prescripción</p>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <p className="text-base font-bold text-slate-400 uppercase tracking-widest">Items Recetados</p>
+              <h3 className="text-3xl font-bold text-slate-800 mt-2">{formatNumber(pharmacyFillRate.totalItemsPrescribed)}</h3>
+              <p className="text-sm text-slate-400 mt-1">Suma total de unidades recetadas</p>
+            </div>
+            <div className="bg-white rounded-3xl border-2 border-emerald-200 shadow-sm p-5 bg-gradient-to-br from-emerald-50 to-white">
+              <p className="text-base font-bold text-emerald-700 uppercase tracking-widest">% Recetas 100% Surtibles</p>
+              <h3 className="text-3xl font-bold text-emerald-700 mt-2">
+                {pharmacyFillRate.totalRecipes > 0
+                  ? ((pharmacyFillRate.buckets['100%'] / pharmacyFillRate.totalRecipes) * 100).toFixed(1)
+                  : '0.0'}%
+              </h3>
+              <p className="text-sm text-slate-700 mt-1 font-bold">
+                {pharmacyFillRate.buckets['100%']} de {pharmacyFillRate.totalRecipes} recetas
+              </p>
+            </div>
+          </div>
+
+          {/* Distribución de fill rate (5 buckets) */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-slate-200 bg-slate-50">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-brand-600" />
+                Distribución de recetas por capacidad de surtido
+              </h3>
+              <p className="text-sm text-slate-500 mt-1">
+                De cada 100 recetas, cuántas se pueden surtir al X% desde el inventario actual.
+                {pharmacyFillRate.totalRecipes > 0 && (
+                  <span className="ml-1 text-slate-700 font-bold">
+                    Fill rate promedio: {(pharmacyFillRate.averageRate * 100).toFixed(1)}%
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="p-5 space-y-3">
+              {([
+                { bucket: '100%' as const, label: 'Surtibles al 100%', color: 'bg-emerald-500', textColor: 'text-emerald-700' },
+                { bucket: '75-99%' as const, label: 'Surtibles al 75-99%', color: 'bg-lime-500', textColor: 'text-lime-700' },
+                { bucket: '50-74%' as const, label: 'Surtibles al 50-74%', color: 'bg-amber-500', textColor: 'text-amber-700' },
+                { bucket: '25-49%' as const, label: 'Surtibles al 25-49%', color: 'bg-orange-500', textColor: 'text-orange-700' },
+                { bucket: '0-24%' as const, label: 'Surtibles al 0-24%', color: 'bg-rose-500', textColor: 'text-rose-700' },
+              ]).map(({ bucket, label, color, textColor }) => {
+                const count = pharmacyFillRate.buckets[bucket];
+                const pct = pharmacyFillRate.totalRecipes > 0 ? (count / pharmacyFillRate.totalRecipes) * 100 : 0;
+                return (
+                  <div key={bucket} className="flex items-center gap-3">
+                    <div className={`${color} w-2 h-12 rounded-full shrink-0`}></div>
+                    <div className="w-32 shrink-0">
+                      <p className={`text-sm font-bold ${textColor}`}>{label}</p>
+                    </div>
+                    <div className="flex-1 bg-slate-100 rounded-full h-6 relative overflow-hidden">
+                      <div
+                        className={`${color} h-full rounded-full transition-all`}
+                        style={{ width: `${pct}%` }}
+                      ></div>
+                    </div>
+                    <div className="w-32 text-right shrink-0">
+                      <p className="text-base font-bold text-slate-800">{count} recetas</p>
+                      <p className="text-xs text-slate-400">{pct.toFixed(1)}%</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Top medicamentos prescritos */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-slate-200 bg-slate-50">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Pill className="w-5 h-5 text-brand-600" />
+                Top 10 medicamentos más recetados
+              </h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Únicos en el período: <strong className="text-slate-800">{pharmacyFillRate.uniqueMedicinesPrescribed}</strong> · Internos: <strong className="text-emerald-700">{pharmacyFillRate.uniqueMedicinesInternal}</strong> · Externos: <strong className="text-amber-700">{pharmacyFillRate.uniqueMedicinesExternal}</strong>
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-base">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-slate-500 text-xs uppercase tracking-widest">
+                    <th className="p-3 font-bold">Medicamento</th>
+                    <th className="p-3 font-bold text-center"># Recetas</th>
+                    <th className="p-3 font-bold text-center">Origen</th>
+                    <th className="p-3 font-bold text-center">Stock Actual</th>
+                    <th className="p-3 font-bold text-center">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pharmacyFillRate.topPrescribed.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-slate-400 italic">
+                        No hay recetas en el período
+                      </td>
+                    </tr>
+                  ) : (
+                    pharmacyFillRate.topPrescribed.map((med, idx) => (
+                      <tr key={`${med.name}-${idx}`} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="p-3 font-medium text-slate-800">
+                          <span className="text-slate-400 text-xs mr-2">#{idx + 1}</span>
+                          {med.name}
+                        </td>
+                        <td className="p-3 text-center text-slate-800 font-bold">{med.count}</td>
+                        <td className="p-3 text-center">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${med.isExternal ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                            {med.isExternal ? 'EXTERNO' : 'INTERNO'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center text-slate-800 font-mono font-bold">
+                          {med.currentStock}
+                        </td>
+                        <td className="p-3 text-center">
+                          {med.isExternal ? (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold">N/A</span>
+                          ) : med.currentStock === 0 ? (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-bold">AGOTADO</span>
+                          ) : med.currentStock < 20 ? (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">BAJO</span>
+                          ) : (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold">OK</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
                   )}
-                </div>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Sección original del Excel — deshabilitada temporalmente */}
+          {false && (
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-amber-300 bg-amber-100 text-base font-bold uppercase tracking-widest text-amber-800 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" /> Revisar — Ventas de medicamentos externos o no catalogados
+            </div>
+            <div className="p-5">
+              {pharmacyMatch.externalSalesDetected.length === 0 ? (
+                <p className="text-base text-amber-800">Todas las ventas FAR corresponden a productos internos. No hay nada que revisar.</p>
+              ) : (
+                <>
+                  <p className="text-sm text-amber-800 mb-3">
+                    Se detectaron <strong>{pharmacyMatch.externalSalesDetected.length}</strong> ventas de productos que están marcados como externos o que no están en el catálogo.
+                    Los directivos deben revisar si alguno debería reclasificarse como interno.
+                  </p>
+                  <div className="max-h-96 overflow-y-auto bg-white rounded-2xl border border-amber-200">
+                    <table className="w-full text-base">
+                      <thead className="bg-amber-50 sticky top-0">
+                        <tr className="text-left text-amber-800">
+                          <th className="p-3 font-bold">Fecha</th>
+                          <th className="p-3 font-bold">Producto</th>
+                          <th className="p-3 font-bold">Código</th>
+                          <th className="p-3 font-bold">Paciente</th>
+                          <th className="p-3 font-bold">Cant.</th>
+                          <th className="p-3 font-bold">Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pharmacyMatch.externalSalesDetected.map((flag, i) => (
+                          <tr key={`${flag.patientName}-${flag.productName}-${flag.dateMs}-${i}`} className="border-t border-amber-100">
+                            <td className="p-3 text-slate-600 whitespace-nowrap">{flag.dateMs ? formatDate(flag.dateMs) : '—'}</td>
+                            <td className="p-3 text-slate-800 font-bold">{flag.productName}</td>
+                            <td className="p-3 text-slate-500 font-mono text-sm">{flag.productCode}</td>
+                            <td className="p-3 text-slate-600">{flag.patientName}</td>
+                            <td className="p-3 text-slate-800 font-bold">{flag.soldQuantity}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-1 rounded-lg text-xs font-bold ${flag.reason === 'not-in-catalog' ? 'bg-rose-100 text-rose-700' : 'bg-amber-200 text-amber-800'}`}>
+                                {flag.reason === 'not-in-catalog' ? 'NO EN CATÁLOGO' : 'MARCADO EXTERNO'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           </div>
+          )}
+        </div>
+      )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ventas (items)</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(pharmacyMatch.totalSalesItems)}</h3>
+      {/* Modal: Diagnósticos detallados por doctor (clic en categoría) */}
+      {diagnosisDetailModal.open && diagnosisDetailModal.category && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-amber-50 to-white">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                  Diagnósticos de {diagnosisDetailModal.doctorName}
+                </h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  Categoría asignada: <strong className="text-amber-700">
+                    {diagnosisDetailModal.category.kind === 'predefined'
+                      ? diagnosisDetailModal.category.category
+                      : `Otro: ${diagnosisDetailModal.category.subtype}`}
+                  </strong>
+                </p>
+              </div>
+              <button
+                onClick={() => setDiagnosisDetailModal({ open: false, doctorName: '', category: null })}
+                className="px-3 py-1.5 text-sm font-bold rounded-lg text-slate-500 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recetas (items)</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{formatNumber(pharmacyMatch.totalPrescriptionItems)}</h3>
+            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              {(() => {
+                const targetCat = diagnosisDetailModal.category!;
+                const docCons = consultations.filter(c => {
+                  if (c.doctorName !== diagnosisDetailModal.doctorName) return false;
+                  if (!c.diagnosis || !c.diagnosis.trim()) return false;
+                  return true;
+                });
+                return docCons
+                  .sort((a, b) => b.date - a.date)
+                  .map(c => (
+                    <div key={c.id} className="bg-white border border-slate-200 rounded-xl p-4">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <p className="font-bold text-slate-800">{c.patientName}</p>
+                          <p className="text-xs text-slate-400">
+                            {new Date(c.date).toLocaleDateString('es-GT', { day: 'numeric', month: 'long', year: 'numeric' })}
+                            {' • '}
+                            {c.consultationType === 'Nueva' ? 'Primera consulta' : 'Reconsulta'}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-700 italic border-l-2 border-amber-300 pl-3 py-1 bg-amber-50/30 rounded-r">
+                        "{c.diagnosis}"
+                      </p>
+                      {targetCat.kind === 'otro' && (
+                        <p className="text-xs text-slate-400 mt-2">
+                          Clasificado como <em>Otro: {targetCat.subtype}</em> por Gemini
+                        </p>
+                      )}
+                    </div>
+                  ));
+              })()}
             </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Match</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-2">{(pharmacyMatch.matchRate * 100).toFixed(1)}%</h3>
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end">
+              <button
+                onClick={() => setDiagnosisDetailModal({ open: false, doctorName: '', category: null })}
+                className="px-5 py-2 text-sm font-bold rounded-xl bg-slate-900 text-white hover:bg-slate-800"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden border-2 border-blue-100">
-              <div className="p-4 border-b bg-blue-50 text-xs font-bold uppercase tracking-widest text-blue-700">Top Medicamentos Más Vendidos</div>
-              <div className="p-5 space-y-3">
-                {pharmacyMatch.topSold.length === 0 ? (
-                  <p className="text-xs text-slate-400">Sin datos</p>
-                ) : pharmacyMatch.topSold.map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-slate-800">{item.sold}</span>
-                  </div>
-                ))}
-              </div>
+      {/* Modal Rango de Fechas para Upload de Farmacia */}
+      {showPharmacyUploadModal && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-emerald-500" />
+                Rango de Fechas del Excel
+              </h3>
+              <p className="text-base text-slate-500 mt-1">Indica qué fechas abarca el archivo <strong>{pendingUploadFile?.name}</strong></p>
             </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden border-2 border-emerald-100">
-              <div className="p-4 border-b bg-emerald-50 text-xs font-bold uppercase tracking-widest text-emerald-700">Matches (Vendidos vs Recetados)</div>
-              <div className="p-5 space-y-3">
-                {pharmacyMatch.matched.length === 0 ? (
-                  <p className="text-xs text-slate-400">Sin datos</p>
-                ) : pharmacyMatch.matched.map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-emerald-600">{item.sold}/{item.prescribed}</span>
-                  </div>
-                ))}
+            <div className="p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1 block">Desde</label>
+                  <input
+                    type="date"
+                    value={uploadDateStart}
+                    onChange={e => setUploadDateStart(e.target.value)}
+                    className="w-full text-sm font-bold px-3 py-2.5 rounded-xl border border-slate-200 bg-white"
+                  />
+                </div>
+                <span className="text-slate-400 mt-5 font-bold">hasta</span>
+                <div className="flex-1">
+                  <label className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1 block">Hasta</label>
+                  <input
+                    type="date"
+                    value={uploadDateEnd}
+                    onChange={e => setUploadDateEnd(e.target.value)}
+                    className="w-full text-sm font-bold px-3 py-2.5 rounded-xl border border-slate-200 bg-white"
+                  />
+                </div>
               </div>
+              <p className="text-sm text-slate-400">Si es un solo día, selecciona la misma fecha en ambos campos.</p>
             </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-amber-50 text-xs font-bold uppercase tracking-widest text-amber-700">Vendidos sin receta</div>
-              <div className="p-5 space-y-3">
-                {pharmacyMatch.soldOnly.length === 0 ? (
-                  <p className="text-xs text-slate-400">Sin datos</p>
-                ) : pharmacyMatch.soldOnly.map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-slate-800">{item.sold}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b bg-rose-50 text-xs font-bold uppercase tracking-widest text-rose-700">Fuga (Recetados sin venta)</div>
-              <div className="p-5 space-y-3">
-                {pharmacyMatch.prescribedOnly.length === 0 ? (
-                  <p className="text-xs text-slate-400">Sin datos</p>
-                ) : pharmacyMatch.prescribedOnly.map(item => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">{item.name}</span>
-                    <span className="font-bold text-slate-800">{item.prescribed}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                onClick={() => { setShowPharmacyUploadModal(false); setPendingUploadFile(null); }}
+                className="px-4 py-2.5 text-sm font-bold rounded-xl text-slate-500 hover:bg-slate-100 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmPharmacyUpload}
+                disabled={uploadingPharmacy}
+                className="px-6 py-2.5 text-sm font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {uploadingPharmacy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                Subir Reporte
+              </button>
             </div>
           </div>
         </div>
@@ -2625,11 +3646,11 @@ export const ReportsDashboard: React.FC = () => {
           <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
             <div className="p-6 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5 text-amber-500" />
                   Citas sin Expediente Médico ({kpis.missingAppointments.length})
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">Citas marcadas como llegadas en agenda, pero sin registro de consulta.</p>
+                <p className="text-base text-slate-500 mt-1">Citas marcadas como llegadas en agenda, pero sin registro de consulta.</p>
               </div>
               <button onClick={() => setShowMissingModal(false)} className="p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
                 <X className="w-5 h-5" />
@@ -2637,14 +3658,14 @@ export const ReportsDashboard: React.FC = () => {
             </div>
 
             <div className="p-0 overflow-y-auto bg-slate-50">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-base">
                 <thead className="bg-white sticky top-0 border-b border-slate-200">
                   <tr>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest">Fecha y Hora</th>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest">Paciente</th>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest">Médico</th>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest">Motivo</th>
-                    <th className="p-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest">Estado Agenda</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Fecha y Hora</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Paciente</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Médico</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Motivo</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Estado Agenda</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
@@ -2659,7 +3680,7 @@ export const ReportsDashboard: React.FC = () => {
                         <td className="p-4 text-slate-600">{appt.doctorName || 'Sin médico asignado'}</td>
                         <td className="p-4 text-slate-600">{appt.reasonForConsultation || appt.reason || 'Sin especificar'}</td>
                         <td className="p-4">
-                          <span className="inline-flex px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600">
+                          <span className="inline-flex px-2 py-0.5 rounded-md text-sm font-bold bg-slate-100 text-slate-600">
                             {(() => {
                               const statusMap: Record<string, string> = {
                                 scheduled: 'Agendada',
@@ -2683,13 +3704,419 @@ export const ReportsDashboard: React.FC = () => {
               </table>
             </div>
             <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
-              <button onClick={() => setShowMissingModal(false)} className="px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+              <button onClick={() => setShowMissingModal(false)} className="px-5 py-2.5 rounded-xl text-base font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
                 Entendido
               </button>
             </div>
           </div>
         </div>
       )}
+      {/* Modal Especialidades */}
+      {showSpecialtyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowSpecialtyModal(null)}>
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-blue-500" />
+                  {showSpecialtyModal === 'total' ? 'Total Consultas' : showSpecialtyModal === 'new' ? 'Consultas Nuevas' : 'Reconsultas'} por Especialidad
+                </h3>
+              </div>
+              <button onClick={() => setShowSpecialtyModal(null)} className="p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-0 overflow-y-auto bg-slate-50">
+              <table className="w-full text-left text-base">
+                <thead className="bg-white sticky top-0 border-b border-slate-200">
+                  <tr>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Especialidad</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-center">Cantidad</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {consultationBySpecialty.map((item) => {
+                    const count = showSpecialtyModal === 'total' ? item.newCount + item.reCount : showSpecialtyModal === 'new' ? item.newCount : item.reCount;
+                    if (count === 0) return null;
+                    return (
+                      <tr key={item.specialty} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 text-slate-800 font-bold">{item.specialty}</td>
+                        <td className="p-4 text-center font-bold text-slate-600">{count}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
+              <button onClick={() => setShowSpecialtyModal(null)} className="px-5 py-2.5 rounded-xl text-base font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal Consultas no Finalizadas */}
+      {showUnfinishedConsultationsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowUnfinishedConsultationsModal(false)}>
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-amber-500" />
+                  Consultas no Finalizadas ({unfinishedConsultationsList.length})
+                </h3>
+                <p className="text-base text-slate-500 mt-1">Consultas que no se han cerrado correctamente.</p>
+              </div>
+              <button onClick={() => setShowUnfinishedConsultationsModal(false)} className="p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-0 overflow-y-auto bg-slate-50">
+              <table className="w-full text-left text-base">
+                <thead className="bg-white sticky top-0 border-b border-slate-200">
+                  <tr>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Fecha</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Paciente</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Médico</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Especialidad</th>
+                    <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Estatus</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {unfinishedConsultationsList.map((c) => (
+                    <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4 text-slate-600 font-medium">{new Date(c.date).toLocaleDateString('es-GT', { dateStyle: 'medium' })}</td>
+                      <td className="p-4 text-slate-800 font-bold">{c.patientName}</td>
+                      <td className="p-4 text-slate-600">{c.doctorName || '—'}</td>
+                      <td className="p-4 text-slate-600">{c.doctorSpecialty || '—'}</td>
+                      <td className="p-4">
+                        <span className="inline-flex px-2 py-0.5 rounded-md text-sm font-bold bg-amber-100 text-amber-700">
+                          {c.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {unfinishedConsultationsList.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-slate-500">No hay consultas sin finalizar.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
+              <button onClick={() => setShowUnfinishedConsultationsModal(false)} className="px-5 py-2.5 rounded-xl text-base font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Doctores sin Recetar */}
+      {showDoctorsNotPrescribingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowDoctorsNotPrescribingModal(false)}>
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  <Stethoscope className="w-5 h-5 text-indigo-500" />
+                  Consultas sin Receta ({doctorsNotPrescribingList.length})
+                </h3>
+                <p className="text-base text-slate-500 mt-1">Resumen de motivos por los cuales no se emitieron recetas médicas.</p>
+              </div>
+              <button onClick={() => setShowDoctorsNotPrescribingModal(false)} className="p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-0 overflow-y-auto bg-slate-50 grid grid-cols-1 lg:grid-cols-3">
+              <div className="lg:col-span-1 border-r border-slate-200 bg-white">
+                <h4 className="p-4 font-bold text-slate-800 border-b border-slate-100">Resumen de Motivos</h4>
+                <ul className="divide-y divide-slate-100">
+                  {noPrescriptionReasonsSummary.map(item => (
+                    <li key={item.reason} className="p-4 flex items-center justify-between hover:bg-slate-50">
+                      <span className="text-base font-medium text-slate-700">{item.reason}</span>
+                      <span className="text-base font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">{item.count}</span>
+                    </li>
+                  ))}
+                  {noPrescriptionReasonsSummary.length === 0 && (
+                    <li className="p-4 text-base text-slate-500 text-center">Sin datos.</li>
+                  )}
+                </ul>
+              </div>
+              
+              <div className="lg:col-span-2 overflow-x-auto">
+                <table className="w-full text-left text-base">
+                  <thead className="bg-white sticky top-0 border-b border-slate-200">
+                    <tr>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Tipo</th>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Paciente</th>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Médico</th>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Categoría IA</th>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Razón Textual</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {doctorsNotPrescribingList.map((c) => (
+                      <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-sm font-bold ${c.consultationType === 'Nueva' ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700'}`}>
+                            {c.consultationType || '—'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-800 font-bold">{c.patientName}</td>
+                        <td className="p-4 text-slate-600">{c.doctorName || '—'}</td>
+                        <td className="p-4 font-bold text-indigo-700">{c.noPrescriptionReasonCategory || 'Sin clasificar'}</td>
+                        <td className="p-4 text-slate-500 italic max-w-xs truncate" title={c.noPrescriptionReasonText || ''}>
+                          "{c.noPrescriptionReasonText || 'No se proporcionó motivo'}"
+                        </td>
+                      </tr>
+                    ))}
+                    {doctorsNotPrescribingList.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-500">Todas las consultas tienen recetas.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
+              <button onClick={() => setShowDoctorsNotPrescribingModal(false)} className="px-5 py-2.5 rounded-xl text-base font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal Quien recetó medicamento */}
+      <AnimatePresence>
+        {selectedMedicationForModal && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+            onClick={() => setSelectedMedicationForModal(null)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.div
+              className="bg-white rounded-3xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]"
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div>
+                  <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <Pill className="w-5 h-5 text-indigo-500" />
+                    Prescriptores de {selectedMedicationForModal.name}
+                  </h3>
+                  <p className="text-base text-slate-500 mt-1">
+                    Producto {selectedMedicationForModal.isExternal ? 'Externo' : 'Interno'}
+                  </p>
+                </div>
+                <button onClick={() => setSelectedMedicationForModal(null)} className="p-2 bg-slate-200 text-slate-500 rounded-full hover:bg-slate-300 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-0 overflow-y-auto">
+                <table className="w-full text-left text-base">
+                  <thead className="bg-white sticky top-0 border-b border-slate-200">
+                    <tr>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Médico</th>
+                      <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-right">Veces Recetada (Incidencia)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {selectedMedicationModalData.map((d) => (
+                      <tr key={d.name} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 text-slate-800 font-bold">{d.name}</td>
+                        <td className="p-4 text-slate-600 font-bold text-right text-indigo-600 bg-indigo-50/50">{d.count}</td>
+                      </tr>
+                    ))}
+                    {selectedMedicationModalData.length === 0 && (
+                      <tr>
+                        <td colSpan={2} className="p-8 text-center text-slate-500">No hay datos de prescriptores.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+                <button onClick={() => setSelectedMedicationForModal(null)} className="px-5 py-2.5 rounded-xl text-base font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                  Cerrar
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Marcas por Molécula */}
+      <AnimatePresence>
+        {selectedMoleculeForModal && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+            onClick={() => setSelectedMoleculeForModal(null)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.div
+              className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]"
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div>
+                  <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <FlaskConical className="w-5 h-5 text-indigo-500" />
+                    Marcas de {selectedMoleculeForModal}
+                  </h3>
+                  <p className="text-base text-slate-500 mt-1">
+                    {selectedMoleculeBrands.total} recetas en total
+                  </p>
+                </div>
+                <button onClick={() => setSelectedMoleculeForModal(null)} className="p-2 bg-slate-200 text-slate-500 rounded-full hover:bg-slate-300 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex border-b border-slate-200 bg-slate-50/50">
+                <button
+                  onClick={() => setMoleculeModalTab('internal')}
+                  className={`flex-1 px-4 py-3 text-sm font-bold uppercase tracking-widest transition-all border-b-2 ${
+                    moleculeModalTab === 'internal'
+                      ? 'border-emerald-500 text-emerald-700 bg-emerald-50/50'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  Internos ({selectedMoleculeBrands.internal.length})
+                </button>
+                <button
+                  onClick={() => setMoleculeModalTab('external')}
+                  className={`flex-1 px-4 py-3 text-sm font-bold uppercase tracking-widest transition-all border-b-2 ${
+                    moleculeModalTab === 'external'
+                      ? 'border-amber-500 text-amber-700 bg-amber-50/50'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  Externos ({selectedMoleculeBrands.external.length})
+                </button>
+              </div>
+
+              <div className="p-0 overflow-y-auto flex-1">
+                <AnimatePresence mode="wait">
+                  {moleculeModalTab === 'internal' ? (
+                    <motion.div
+                      key="internal"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {selectedMoleculeBrands.internal.length === 0 ? (
+                        <div className="p-8 text-center text-slate-400">
+                          <p className="text-base">Esta molécula no se vende en inventario interno.</p>
+                        </div>
+                      ) : (
+                        <table className="w-full text-left text-base">
+                          <thead className="bg-white sticky top-0 border-b border-slate-200">
+                            <tr>
+                              <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Marca Comercial</th>
+                              <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Proveedor</th>
+                              <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-right">Recetas</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {selectedMoleculeBrands.internal.map(brand => (
+                              <tr key={brand.name} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-4 text-slate-800 font-bold">{brand.name}</td>
+                                <td className="p-4">
+                                  <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
+                                    Inventario
+                                  </span>
+                                  {brand.providers.map(p => (
+                                    <span key={p} className="ml-1 inline-flex px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600">
+                                      {p}
+                                    </span>
+                                  ))}
+                                </td>
+                                <td className="p-4 text-slate-600 font-bold text-right text-emerald-600 bg-emerald-50/50">{brand.count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="external"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {selectedMoleculeBrands.external.length === 0 ? (
+                        <div className="p-8 text-center text-slate-400">
+                          <p className="text-base">Esta molécula no se receta de forma externa.</p>
+                        </div>
+                      ) : (
+                        <table className="w-full text-left text-base">
+                          <thead className="bg-white sticky top-0 border-b border-slate-200">
+                            <tr>
+                              <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Marca Comercial</th>
+                              <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest">Proveedor</th>
+                              <th className="p-4 text-sm text-slate-500 uppercase font-bold tracking-widest text-right">Recetas</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {selectedMoleculeBrands.external.map(brand => (
+                              <tr key={brand.name} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-4 text-slate-800 font-bold">{brand.name}</td>
+                                <td className="p-4">
+                                  <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
+                                    Externo
+                                  </span>
+                                  {brand.providers.map(p => (
+                                    <span key={p} className="ml-1 inline-flex px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600">
+                                      {p}
+                                    </span>
+                                  ))}
+                                </td>
+                                <td className="p-4 text-slate-600 font-bold text-right text-amber-600 bg-amber-50/50">{brand.count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+                <button onClick={() => setSelectedMoleculeForModal(null)} className="px-5 py-2.5 rounded-xl text-base font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors">
+                  Cerrar
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

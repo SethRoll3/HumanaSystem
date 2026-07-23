@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check, Calendar, Users } from 'lucide-react';
+import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check, Calendar, Users, Pill, FlaskConical } from 'lucide-react';
 import { UserProfile, AppNotification } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, onSnapshot, orderBy, doc, updateDoc, getDocs } from 'firebase/firestore';
@@ -18,8 +18,8 @@ interface MainLayoutProps {
   children: React.ReactNode;
   currentTitle?: string;
   onBack?: () => void;
-  activeView: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule';
-  onViewChange: (view: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule') => void;
+  activeView: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule' | 'medicine_review' | 'medicine_normalization';
+  onViewChange: (view: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule' | 'medicine_review' | 'medicine_normalization') => void;
   allowDoctorSelfManage?: boolean;
 }
 
@@ -59,6 +59,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const isReceptionist = user.role === 'receptionist';
   const isAdmin = user.role === 'admin';
   const isDoctor = user.role === 'doctor' || user.role === 'licenciado';
+  const isResident = user.role === 'resident';
 
   const canSeeNotifications = ['doctor', 'licenciado', 'nurse', 'admin', 'receptionist'].includes(user.role);
 
@@ -204,6 +205,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     { id: 'dashboard', label: 'Gestión / Check-In', icon: Ticket, show: true, onClick: () => onViewChange('dashboard') },
     { id: 'history', label: 'Historiales', icon: ClipboardList, show: true, onClick: () => onViewChange('history') },
     { id: 'patients', label: 'Pacientes', icon: Users, show: true, onClick: () => onViewChange('patients') },
+    { id: 'medicine_review', label: 'Control de Calidad', icon: Pill, show: isResident || isAdmin, onClick: () => onViewChange('medicine_review') },
+    { id: 'medicine_normalization', label: 'Normalización', icon: FlaskConical, show: isResident || isAdmin, onClick: () => onViewChange('medicine_normalization') },
     { id: 'admin', label: 'Panel Administrativo', icon: ShieldCheck, show: isAdmin, onClick: () => onViewChange('admin') },
     { id: 'my_schedule', label: 'Mi Horario', icon: Calendar, show: isDoctor && allowDoctorSelfManage, onClick: () => onViewChange('my_schedule') },
     { id: 'settings', label: 'Configuración', icon: Settings, show: true, onClick: () => onViewChange('settings') }

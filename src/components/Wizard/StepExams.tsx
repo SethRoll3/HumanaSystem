@@ -2,10 +2,11 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useFormContext } from 'react-hook-form';
-import { Share2, FileText, CheckSquare, Square, Stethoscope, X, FlaskConical, StickyNote, Trash2, ArrowDownCircle, Microscope, PenTool, BadgeCheck } from 'lucide-react';
+import { Share2, FileText, CheckSquare, Square, Stethoscope, X, FlaskConical, StickyNote, Trash2, ArrowDownCircle, Microscope, PenTool, BadgeCheck, ChevronDown, ChevronRight, CheckCircle2, XCircle, ListChecks, Sparkles, Eye, Lock } from 'lucide-react';
 import { getPathologies } from '../../services/inventoryService.ts';
 import { Pathology, ReferralGroup, Patient } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ExamValidationModal } from './ExamValidationModal';
 
 interface StepExamsProps {
     userSpecialties?: string[];
@@ -44,12 +45,62 @@ const normalizeText = (text: string) => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 };
 
+// Categorías para sub-menus de exámenes
+const EXAM_CATEGORY_LABORATORIOS = 'Laboratorios';
+const EXAM_CATEGORY_IMAGENES = 'Imágenes';
+const EXAM_CATEGORY_NEUROFISIOLOGIA = 'Neurofisiología';
+const EXAM_CATEGORY_PROCEDIMIENTOS = 'Procedimientos';
+
+interface ExamCategory {
+  label: string;
+  exams: string[];
+}
+
+const groupExamsByCategory = (exams: string[]): ExamCategory[] => {
+  const laboratorios: string[] = [];
+  const imagenes: string[] = [];
+  const neurofisiologia: string[] = [];
+  const procedimientos: string[] = [];
+
+  exams.forEach(exam => {
+    const norm = normalizeText(exam).replace(/[^a-z0-9]/g, '');
+    if (normalizeText(exam).includes('laboratorio')) {
+      laboratorios.push(exam);
+    } else if (
+      norm.includes('resonancia') ||
+      norm.includes('tomografia') ||
+      norm.includes('ecografia') ||
+      norm.includes('radiografia') ||
+      norm.includes('imagen')
+    ) {
+      imagenes.push(exam);
+    } else if (
+      norm.includes('eeg') ||
+      norm.includes('electroencefalograma') ||
+      norm.includes('videoencefalograma') ||
+      norm.includes('videoeeg')
+    ) {
+      neurofisiologia.push(exam);
+    } else {
+      procedimientos.push(exam);
+    }
+  });
+
+  const result: ExamCategory[] = [];
+  if (laboratorios.length > 0) result.push({ label: EXAM_CATEGORY_LABORATORIOS, exams: laboratorios });
+  if (imagenes.length > 0) result.push({ label: EXAM_CATEGORY_IMAGENES, exams: imagenes });
+  if (neurofisiologia.length > 0) result.push({ label: EXAM_CATEGORY_NEUROFISIOLOGIA, exams: neurofisiologia });
+  if (procedimientos.length > 0) result.push({ label: EXAM_CATEGORY_PROCEDIMIENTOS, exams: procedimientos });
+  return result;
+};
+
 export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, appointmentType }) => {
   const { register, watch, setValue, getValues } = useFormContext();
   
   const [pathologies, setPathologies] = useState<Pathology[]>([]);
   const [selectedPathology, setSelectedPathology] = useState<Pathology | null>(null);
   const [loadingPaths, setLoadingPaths] = useState(false);
+  const [userManuallySelectedPathology, setUserManuallySelectedPathology] = useState(false);
 
   // State for Optional Exams Categories
   const [selectedOptionals, setSelectedOptionals] = useState<{
@@ -59,11 +110,34 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
   // State for "Otros" text area
   const [otherExamsText, setOtherExamsText] = useState('');
 
+  // State for collapsed sub-menus (Set of category labels that are COLLAPSED)
+  const [collapsedSubGroups, setCollapsedSubGroups] = useState<Set<string>>(new Set());
+
+  // State for validation modal
+  const [validationModalOpen, setValidationModalOpen] = useState(false);
+  const [validationModalDismissed, setValidationModalDismissed] = useState(false);
+
   // Watchers
   const referralGroups: ReferralGroup[] = watch('referralGroups') || [];
   const resonanceOrders = watch('resonanceOrders') || [];
   const eegOrders = watch('eegOrders') || [];
   const emotionalEvaluationSelections = watch('emotionalEvaluationSelections') || [];
+  const autoSuggestedPathologyName = watch('autoSuggestedPathology');
+
+  useEffect(() => {
+      if (!autoSuggestedPathologyName) {
+          if (!userManuallySelectedPathology && selectedPathology) {
+              const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
+              const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
+              setValue('referralGroups', currentGroups.filter(g => g.id !== groupId));
+              setSelectedPathology(null);
+          }
+          return;
+      }
+      if (userManuallySelectedPathology) return;
+      const suggested = pathologies.find(p => p.name === autoSuggestedPathologyName);
+      if (suggested) applyAutoSuggestedPathology(suggested);
+  }, [autoSuggestedPathologyName, pathologies, userManuallySelectedPathology]);
   
   // Load Pathologies & Labs
   useEffect(() => {
@@ -238,6 +312,28 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       const patName = e.target.value;
       const pat = pathologies.find(p => p.name === patName);
       setSelectedPathology(pat || null);
+      if (patName) {
+          setUserManuallySelectedPathology(true);
+      }
+  };
+
+  const applyAutoSuggestedPathology = (suggested: Pathology | null) => {
+      if (userManuallySelectedPathology) return;
+      if (!suggested) return;
+      setSelectedPathology(suggested);
+      const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
+      const groupId = `pat-${suggested.id || suggested.name}`;
+      const existingGroupIndex = currentGroups.findIndex(g => g.id === groupId);
+      if (existingGroupIndex === -1) {
+          const isReconsulta = appointmentType === 'Reconsulta';
+          currentGroups.push({
+              id: groupId,
+              pathology: suggested.name,
+              exams: isReconsulta ? [] : [...suggested.exams],
+              note: ''
+          });
+          setValue('referralGroups', currentGroups);
+      }
   };
 
   const toggleExamInGroup = (examName: string) => {
@@ -245,7 +341,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
       const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
       let groupIndex = currentGroups.findIndex(g => g.id === groupId);
-      
+
       if (groupIndex === -1) {
            const newGroup: ReferralGroup = { id: groupId, pathology: selectedPathology.name, exams: [examName], note: '' };
           currentGroups.push(newGroup);
@@ -259,6 +355,48 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
           }
       }
       setValue('referralGroups', currentGroups);
+  };
+
+  const selectAllInGroup = () => {
+      if (!selectedPathology) return;
+      const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
+      const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
+      const groupIndex = currentGroups.findIndex(g => g.id === groupId);
+
+      const allExams = [...selectedPathology.exams];
+      if (groupIndex === -1) {
+          currentGroups.push({ id: groupId, pathology: selectedPathology.name, exams: allExams, note: '' });
+      } else {
+          currentGroups[groupIndex] = {
+              ...currentGroups[groupIndex],
+              exams: allExams
+          };
+      }
+      setValue('referralGroups', currentGroups);
+      setValidationModalDismissed(false);
+      setValidationModalOpen(true);
+  };
+
+  const deselectAllInGroup = () => {
+      if (!selectedPathology) return;
+      const groupId = `pat-${selectedPathology.id || selectedPathology.name}`;
+      const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
+      const group = currentGroups.find(g => g.id === groupId);
+      if (!group) return;
+      if (group.note) {
+          setValue('referralGroups', currentGroups.map(g => g.id === groupId ? { ...g, exams: [] } : g));
+      } else {
+          setValue('referralGroups', currentGroups.filter(g => g.id !== groupId));
+      }
+  };
+
+  const toggleSubGroup = (label: string) => {
+      setCollapsedSubGroups(prev => {
+          const next = new Set(prev);
+          if (next.has(label)) next.delete(label);
+          else next.add(label);
+          return next;
+      });
   };
 
   const updateGroupNote = (groupId: string, note: string) => {
@@ -356,6 +494,27 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       if (group.exams.length !== before) setValue('referralGroups', currentGroups);
   }, [isLabProtocolActive, selectedPathology, getValues, setValue]);
 
+  // Auto-open validation modal when exams that require data are selected
+  useEffect(() => {
+      const allExamsList: string[] = [];
+      referralGroups.forEach(group => group.exams.forEach(exam => allExamsList.push(exam)));
+      const optionalExams = getValues('exams') || [];
+      optionalExams.forEach((exam: string) => allExamsList.push(exam));
+      const unique = Array.from(new Set(allExamsList));
+      const hasResonance = unique.some(exam => normalizeText(exam).includes('resonancia'));
+      const hasEeg = unique.some(exam => {
+          const norm = normalizeText(exam).replace(/[^a-z0-9]/g, '');
+          return norm.includes('eeg') || norm.includes('electroencefalograma')
+              || norm.includes('videoencefalograma') || norm.includes('videoeeg');
+      });
+      const hasEmotionalEval = unique.some(exam => normalizeText(exam).includes('evaluacion emocional'));
+      const hasLabs = unique.some(exam => normalizeText(exam).includes('laboratorio'));
+
+      if ((hasResonance || hasEeg || hasEmotionalEval || hasLabs) && !validationModalOpen && !validationModalDismissed) {
+          setValidationModalOpen(true);
+      }
+  }, [referralGroups, validationModalOpen, validationModalDismissed, getValues]);
+
   // --- OPTIONAL CATEGORIES LOGIC ---
   const toggleOptionalCategory = (type: string) => {
       const exists = selectedOptionals.find(o => o.type === type);
@@ -388,6 +547,25 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8 pb-10">
+
+       <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
+           <div className="flex items-center gap-2 text-slate-600 text-xs font-bold uppercase tracking-wider">
+               <Eye className="w-4 h-4" /> Código de colores:
+           </div>
+           <div className="flex items-center gap-2">
+               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200">
+                   <Eye className="w-3 h-3" /> Amarillo
+               </span>
+               <span className="text-xs text-slate-600">Visible para el paciente (receta, PDF de laboratorios)</span>
+           </div>
+           <div className="flex items-center gap-2">
+               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                   <Lock className="w-3 h-3" /> Azul
+               </span>
+               <span className="text-xs text-slate-600">Interno (no se muestra al paciente)</span>
+           </div>
+       </div>
+
        <div className="flex items-center justify-between border-b pb-4 mb-6">
         <div>
             <h3 className="text-xl font-semibold text-slate-800">Referencia y Laboratorios</h3>
@@ -411,19 +589,25 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                 )}
            </div>
            
-           <div>
-               <label className="block text-sm font-semibold text-slate-700 mb-2">Clasificación según patología de paciente</label>
-               {loadingPaths ? <p className="text-xs text-slate-400">Cargando diagnósticos...</p> : (
-                   <select 
-                       value={selectedPathology?.name || ''}
-                       onChange={handlePathologyChange}
-                       className="w-full rounded-lg border-slate-300 p-2.5 bg-white text-slate-800 focus:ring-brand-500 focus:border-brand-500 shadow-sm"
-                   >
-                       <option value="">-- Seleccionar Clasificación --</option>
-                       {pathologies.map(p => (
-                           <option key={p.name} value={p.name}>{p.name}</option>
-                       ))}
-                   </select>
+            <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Clasificación según patología de paciente</label>
+                {!userManuallySelectedPathology && selectedPathology && autoSuggestedPathologyName === selectedPathology.name && (
+                    <div className="mb-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                        <Sparkles className="w-3 h-3" />
+                        Auto-seleccionada desde el diagnóstico (puedes cambiarla)
+                    </div>
+                )}
+                {loadingPaths ? <p className="text-xs text-slate-400">Cargando diagnósticos...</p> : (
+                    <select
+                        value={selectedPathology?.name || ''}
+                        onChange={handlePathologyChange}
+                        className="w-full rounded-lg border-slate-300 p-2.5 bg-white text-slate-800 focus:ring-brand-500 focus:border-brand-500 shadow-sm"
+                    >
+                        <option value="">-- Seleccionar Clasificación --</option>
+                        {pathologies.map(p => (
+                            <option key={p.name} value={p.name}>{p.name}</option>
+                        ))}
+                    </select>
                )}
                <p className="text-xs text-slate-400 mt-2">Al seleccionar una clasificación, los exámenes del protocolo se marcarán automáticamente.</p>
            </div>
@@ -432,24 +616,80 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
        {/* 2. EXÁMENES SUGERIDOS (GRID) */}
        {selectedPathology && (
          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-             <div className="flex justify-between items-end mb-3">
+             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3 mb-3">
                 <label className="block text-sm font-bold text-slate-700">
                    2. Clasificación: <span className="text-brand-600">{selectedPathology.name}</span>
                 </label>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={selectAllInGroup}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow-sm"
+                    >
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Aceptar todo
+                    </button>
+                    <button
+                        type="button"
+                        onClick={deselectAllInGroup}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 text-slate-600 hover:bg-slate-300 transition"
+                    >
+                        <XCircle className="w-3.5 h-3.5" /> Deseleccionar todo
+                    </button>
+                </div>
              </div>
-             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-                 {selectedPathology.exams.map(exam => {
-                     const isChecked = isExamCheckedInGroup(exam);
+             <div className="space-y-2 mb-4">
+                 {groupExamsByCategory(selectedPathology.exams).map(category => {
+                     const isCollapsed = collapsedSubGroups.has(category.label);
+                     const selectedCount = category.exams.filter(e => isExamCheckedInGroup(e)).length;
                      return (
-                         <motion.div 
-                            key={exam} 
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => toggleExamInGroup(exam)}
-                            className={`flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all select-none ${isChecked ? 'bg-brand-600 border-brand-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
-                         >
-                             {isChecked ? <CheckSquare className="w-5 h-5 text-white"/> : <Square className="w-5 h-5 text-slate-300"/>}
-                             <span className="text-sm font-medium">{exam}</span>
-                         </motion.div>
+                         <div key={category.label} className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                             <button
+                                 type="button"
+                                 onClick={() => toggleSubGroup(category.label)}
+                                 className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
+                             >
+                                 <div className="flex items-center gap-2">
+                                     {isCollapsed ? <ChevronRight className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                                     <span className="text-sm font-bold text-slate-700">{category.label}</span>
+                                     <span className="text-xs text-slate-400 font-medium">({category.exams.length})</span>
+                                 </div>
+                                 <div className="flex items-center gap-2">
+                                     {selectedCount > 0 && (
+                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                             <CheckCircle2 className="w-3 h-3" /> {selectedCount}/{category.exams.length}
+                                         </span>
+                                     )}
+                                 </div>
+                             </button>
+                             <AnimatePresence initial={false}>
+                                 {!isCollapsed && (
+                                     <motion.div
+                                         initial={{ height: 0, opacity: 0 }}
+                                         animate={{ height: 'auto', opacity: 1 }}
+                                         exit={{ height: 0, opacity: 0 }}
+                                         transition={{ duration: 0.2 }}
+                                         className="overflow-hidden"
+                                     >
+                                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 p-3 border-t border-slate-100 bg-slate-50/40">
+                                             {category.exams.map(exam => {
+                                                 const isChecked = isExamCheckedInGroup(exam);
+                                                 return (
+                                                     <motion.div
+                                                        key={exam}
+                                                        whileTap={{ scale: 0.95 }}
+                                                        onClick={() => toggleExamInGroup(exam)}
+                                                        className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all select-none ${isChecked ? 'bg-brand-600 border-brand-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                                                     >
+                                                         {isChecked ? <CheckSquare className="w-4 h-4 text-white"/> : <Square className="w-4 h-4 text-slate-300"/>}
+                                                         <span className="text-sm font-medium">{exam}</span>
+                                                     </motion.div>
+                                                 );
+                                             })}
+                                         </div>
+                                     </motion.div>
+                                 )}
+                             </AnimatePresence>
+                         </div>
                      );
                  })}
              </div>
@@ -991,9 +1231,22 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                     {...register('referralNote')} 
                     placeholder="Observaciones generales para cualquier laboratorio..."
                     className="w-full rounded-lg border shadow-sm focus:ring-2 p-3 bg-white text-slate-900 border-slate-300 focus:border-brand-500 focus:ring-brand-200 resize-none"
-                 />
-            </div>
-       </div>
+                  />
+             </div>
+        </div>
+
+        <ExamValidationModal
+            open={validationModalOpen}
+            onClose={() => {
+                setValidationModalOpen(false);
+                setValidationModalDismissed(true);
+            }}
+            referralGroups={referralGroups}
+            resonanceOrders={resonanceOrders}
+            eegOrders={eegOrders}
+            emotionalEvaluationSelections={emotionalEvaluationSelections}
+            pathologyNames={pathologies.filter(p => referralGroups.some(g => g.pathology === p.name)).map(p => ({ name: p.name, normalizedKey: normalizeText(p.name) }))}
+        />
     </motion.div>
   );
 };

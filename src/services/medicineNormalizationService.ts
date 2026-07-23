@@ -2,6 +2,32 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 import { db } from '../firebase/config';
 import { extractActiveIngredient } from './geminiService';
 
+const hasGeminiKey = (): boolean => {
+  const env = (import.meta as any)?.env;
+  const key = env?.VITE_GEMINI_API_KEY || env?.VITE_API_KEY || (process as any)?.env?.API_KEY;
+  return Boolean(key);
+};
+
+const activeIngredientCache = new Map<string, string>();
+
+const fetchActiveIngredientSafe = async (canonicalName: string): Promise<string> => {
+  if (activeIngredientCache.has(canonicalName)) {
+    return activeIngredientCache.get(canonicalName)!;
+  }
+  if (!hasGeminiKey()) {
+    activeIngredientCache.set(canonicalName, '');
+    return '';
+  }
+  try {
+    const value = await extractActiveIngredient(canonicalName);
+    activeIngredientCache.set(canonicalName, value || '');
+    return value || '';
+  } catch {
+    activeIngredientCache.set(canonicalName, '');
+    return '';
+  }
+};
+
 export interface MedNormalizationRule {
   id: string;
   dirtyName: string;
@@ -50,6 +76,21 @@ const similarity = (a: string, b: string): number => {
   return 1 - levenshtein(a, b) / maxLen;
 };
 
+// Extract dosage from string (e.g. 50mg, 100 mg, 5ml, 1g, 250/25mg, 100/25mg, 28/10, 14/10)
+const extractDosage = (name: string): string | null => {
+  // Match compound dosages with unit: "250/25 mg", "100/25mg", "50 mg"
+  const compoundMatch = name.match(/(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s*(mg|ml|g|mcg|ui|u|mEq|mEq\/ml)\b/i);
+  if (compoundMatch) {
+    return `${compoundMatch[1]}${compoundMatch[2].toLowerCase()}`;
+  }
+  // Fallback: bare compound numbers like "28/10", "14/10" (no unit suffix)
+  const bareMatch = name.match(/(\d+(?:\.\d+)?\/\d+(?:\.\d+)?)/);
+  if (bareMatch) {
+    return bareMatch[1];
+  }
+  return null;
+};
+
 // Normalize text for comparison: lowercase, remove accents, strip parenthetical brand names
 const normalizeForComparison = (name: string): string => {
   return name
@@ -69,7 +110,8 @@ export const detectDuplicateClusters = (
 ): DuplicateCluster[] => {
   const normalized = medNames.map(m => ({
     ...m,
-    norm: normalizeForComparison(m.name)
+    norm: normalizeForComparison(m.name),
+    dosage: extractDosage(m.name)
   }));
 
   // Build a set of already-ruled dirty names for quick lookup
@@ -88,6 +130,11 @@ export const detectDuplicateClusters = (
     for (let j = i + 1; j < normalized.length; j++) {
       if (visited.has(j)) continue;
       if (normalized[j].norm.length < 3) continue;
+
+      // DO NOT group if dosages are explicitly different (e.g. 50mg vs 100mg)
+      if (normalized[i].dosage && normalized[j].dosage && normalized[i].dosage !== normalized[j].dosage) {
+        continue;
+      }
 
       const sim = similarity(normalized[i].norm, normalized[j].norm);
       if (sim >= threshold) {
@@ -163,11 +210,8 @@ export const medicineNormalizationService = {
   },
 
   async addRule(dirtyName: string, canonicalName: string, activeIngredient?: string): Promise<string> {
-    let aiIngredient = activeIngredient;
-    if (!aiIngredient) {
-      aiIngredient = await extractActiveIngredient(canonicalName);
-    }
-    
+    const aiIngredient = activeIngredient || await fetchActiveIngredientSafe(canonicalName);
+
     const docRef = await addDoc(collection(db, COLLECTION), {
       dirtyName,
       canonicalName,
@@ -196,8 +240,8 @@ export const medicineNormalizationService = {
 
   // Bulk approve a cluster: creates approved rules for all variants pointing to canonical
   async approveCluster(canonicalName: string, variants: string[], userId: string): Promise<void> {
-    const aiIngredient = await extractActiveIngredient(canonicalName);
-    
+    const aiIngredient = await fetchActiveIngredientSafe(canonicalName);
+
     const promises = variants
       .filter(v => v !== canonicalName) // Don't create a rule for canonical → canonical
       .map(dirtyName =>

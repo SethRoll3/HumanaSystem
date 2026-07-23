@@ -159,7 +159,7 @@ service cloud.firestore {
     }
 
     match /quality_reviews/{reviewId} {
-      allow read, write: if esAdmin();
+      allow read, write: if esPersonal();
     }
 
     // 13. REPORTES DE FARMACIA (pharmacy_sales_reports)
@@ -168,6 +168,22 @@ service cloud.firestore {
     }
     match /pharmacy_sales_reports/{reportId}/rows/{rowId} {
       allow read, write: if esAdmin();
+    }
+
+    // 14. NORMALIZACIÓN DE MEDICAMENTOS
+    // Lectura abierta al personal para que las reglas se apliquen en flujos de consulta.
+    // Escritura: residentes y administradores pueden crear/aprobar/rechazar reglas.
+    match /med_normalization_rules/{ruleId} {
+      allow read: if esPersonal();
+      allow write: if tieneRol('resident') || tieneRol('admin');
+    }
+
+    // 15. REVISIÓN DE MEDICAMENTOS PRESCRITOS (residents + admins)
+    match /prescription_reviews/{reviewId} {
+      allow read: if estaAutenticado();
+      allow create: if esPersonal();
+      allow update: if tieneRol('resident') || tieneRol('admin');
+      allow delete: if tieneRol('admin');
     }
   }
 }

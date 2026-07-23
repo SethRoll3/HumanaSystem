@@ -12,7 +12,7 @@ import { StepExams } from '../Wizard/StepExams';
 import { StepPrescription } from '../Wizard/StepPrescription';
 import { updateConsultation } from '../../services/patientService';
 import { getSpecialties } from '../../services/inventoryService';
-import { Trash2, Plus, UserPlus, FileText, AlertCircle } from 'lucide-react';
+import { Trash2, Plus, UserPlus, FileText, AlertCircle, Stethoscope } from 'lucide-react';
 
 interface EditConsultationModalProps {
     consultation: Consultation;
@@ -241,30 +241,33 @@ export const EditConsultationModal: React.FC<EditConsultationModalProps> = ({
                                         </div>
                                         <div className="space-y-3">
                                             {specialtyReferrals.map(r => (
-                                                <div key={r.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
-                                                    <div className="flex justify-between items-center mb-2">
-                                                        <span className="font-bold text-slate-800 text-sm">{r.specialty}</span>
-                                                        <button 
-                                                            type="button" 
-                                                            onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))} 
-                                                            className="text-red-400 hover:text-red-600"
-                                                        >
-                                                            <Trash2 className="w-4 h-4"/>
-                                                        </button>
+                                                <div key={r.id} className="flex items-start gap-3 p-3 bg-pink-50 border-l-4 border-pink-500 rounded-r-lg shadow-sm">
+                                                    <Stethoscope className="w-5 h-5 text-pink-600 flex-shrink-0 mt-0.5" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex justify-between items-start gap-2">
+                                                            <span className="font-bold text-pink-800 text-base">{r.specialty}</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))}
+                                                                className="text-red-400 hover:text-red-600 shrink-0"
+                                                            >
+                                                                <Trash2 className="w-4 h-4"/>
+                                                            </button>
+                                                        </div>
+                                                        <textarea
+                                                            placeholder={`Motivo de la referencia o nota para ${r.specialty}...`}
+                                                            className="w-full text-sm mt-2 bg-white/60 border border-pink-200 rounded-lg p-2 focus:ring-2 focus:ring-pink-300 focus:border-pink-400 placeholder:text-pink-400 text-slate-700 resize-none"
+                                                            rows={2}
+                                                            value={r.note || ''}
+                                                            onChange={(e) => {
+                                                                const updated = specialtyReferrals.map(ref => {
+                                                                    if (ref.id === r.id) return { ...ref, note: e.target.value };
+                                                                    return ref;
+                                                                });
+                                                                setValue('specialtyReferrals', updated);
+                                                            }}
+                                                        />
                                                     </div>
-                                                    <textarea 
-                                                        placeholder={`Motivo de la referencia o nota para ${r.specialty}...`}
-                                                        className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-2 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none"
-                                                        rows={2}
-                                                        value={r.note || ''}
-                                                        onChange={(e) => {
-                                                            const updated = specialtyReferrals.map(ref => {
-                                                                if (ref.id === r.id) return { ...ref, note: e.target.value };
-                                                                return ref;
-                                                            });
-                                                            setValue('specialtyReferrals', updated);
-                                                        }}
-                                                    />
                                                 </div>
                                             ))}
                                         </div>

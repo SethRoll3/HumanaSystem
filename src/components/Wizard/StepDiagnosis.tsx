@@ -373,10 +373,13 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
                                 {cons.specialtyReferrals?.map((ref) => (
                                   <div
                                     key={ref.id}
-                                    className="p-3 bg-pink-50 border border-pink-100 rounded-xl text-xs text-pink-900"
+                                    className="flex items-start gap-2.5 p-3 bg-pink-50 border-l-4 border-pink-500 rounded-r-lg"
                                   >
-                                    <span className="text-[11px] font-bold uppercase block">{ref.specialty}</span>
-                                    {ref.note && <p className="mt-1 italic">{ref.note}</p>}
+                                    <Stethoscope className="w-4 h-4 text-pink-600 flex-shrink-0 mt-0.5" />
+                                    <div className="flex-1 min-w-0">
+                                      <span className="font-bold text-pink-800 text-sm block">{ref.specialty}</span>
+                                      {ref.note && <p className="mt-1 text-xs text-pink-900 italic">{ref.note}</p>}
+                                    </div>
                                   </div>
                                 ))}
                               </div>

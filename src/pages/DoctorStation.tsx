@@ -22,6 +22,8 @@ import { StepFinalize } from '../components/Wizard/StepFinalize';
 import { StepPrescription } from '../components/Wizard/StepPrescription';
 import { ConsultationDetail } from '../components/History/ConsultationDetail';
 import { HistoryList } from '../components/History/HistoryList';
+import { MedicineReviewPage } from '../components/Resident/MedicineReviewPage';
+import { MedicineNormalizationPage } from '../components/Resident/MedicineNormalizationPage';
 import { QuickPatientModal } from '../components/Patients/QuickPatientModal';
 import { PatientModal } from '../components/Patients/PatientModal';
 import { Cuaderno } from '../components/Patients/Cuaderno';
@@ -110,6 +112,8 @@ interface WizardFormValues {
   diagnosis: string;
   referralNote: string;
   exams: string[];
+  otherExams?: string;
+  customOtherExams?: string;
   referralGroups: ReferralGroup[];
   specialtyReferrals: SpecialtyReferral[];
   prescription: PrescriptionItem[];
@@ -119,7 +123,9 @@ interface WizardFormValues {
   followUpDays?: number;
   followUpEstimatedDate?: number;
   followUpRequired?: boolean;
-  omittedFields: { [key: string]: boolean };
+  noPrescriptionReasonText?: string;
+  noPrescriptionReasonCategory?: string;
+  omittedFields?: { [key: string]: boolean };
   isReadyToFinish: boolean;
   prescriptionNotes: string;
   importantNotices: string;
@@ -129,6 +135,7 @@ interface WizardFormValues {
   specialtyData?: Record<string, any>;
   resonanceOrders?: ResonanceOrder[];
   eegOrders?: EegOrder[];
+  autoSuggestedPathology?: string;
 }
 
 export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) => {
@@ -142,7 +149,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const canConsult = isDoctor || isAdmin;
   const canCreate = isAdmin || isReceptionist;
 
-  const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'patients' | 'patient_detail' | 'admin' | 'history_detail' | 'settings' | 'my_schedule'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'patients' | 'patient_detail' | 'admin' | 'history_detail' | 'settings' | 'my_schedule' | 'medicine_review' | 'medicine_normalization'>('dashboard');
   const [allowDoctorSelfManage, setAllowDoctorSelfManage] = useState(false);
 
   // ESTADO PARA ALTERNAR VISTA AGENDA (Lista vs Calendario)
@@ -226,7 +233,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   };
 
   const methods = useForm<WizardFormValues>({
-    defaultValues: { diagnosis: '', prescription: [], exams: [], referralGroups: [], specialtyReferrals: [], isReadyToFinish: false, followUpText: '', followUpRequestText: '', followUpDays: undefined, followUpEstimatedDate: undefined, followUpRequired: false, prescriptionNotes: '', importantNotices: '', emotionalEvaluationSelections: [], specialtyFormId: undefined, specialtyFormName: undefined, specialtyData: {}, resonanceOrders: undefined, eegOrders: undefined }
+    defaultValues: { diagnosis: '', signature: null, prescription: [], exams: [], referralGroups: [], specialtyReferrals: [], isReadyToFinish: false, followUpText: '', followUpRequestText: '', followUpDays: undefined, followUpEstimatedDate: undefined, followUpRequired: false, prescriptionNotes: '', importantNotices: '', emotionalEvaluationSelections: [], specialtyFormId: undefined, specialtyFormName: undefined, specialtyData: {}, resonanceOrders: undefined, eegOrders: undefined }
   });
 
   const formValues = methods.watch();
@@ -610,6 +617,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const getEmptyForm = (overrides?: Partial<WizardFormValues>) => ({
     diagnosis: '',
+    signature: null,
     prescription: [],
     exams: [],
     referralGroups: [],
@@ -628,6 +636,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
     specialtyData: {},
     resonanceOrders: undefined,
     eegOrders: undefined,
+    autoSuggestedPathology: undefined,
     ...overrides
   });
 
@@ -637,8 +646,8 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
   const isFilled = (value?: string) => typeof value === 'string' && value.trim().length > 0;
 
-  const areResonanceOrdersComplete = resonanceOrders.length === 0 || resonanceOrders.every((order: ResonanceOrder) => true);
-  const areEegOrdersComplete = eegOrders.length === 0 || eegOrders.every((order: EegOrder) => true);
+  const areResonanceOrdersComplete = resonanceOrders.length === 0 || resonanceOrders.every((order: ResonanceOrder) => isFilled(order.probableDiagnosis));
+  const areEegOrdersComplete = eegOrders.length === 0 || eegOrders.every((order: EegOrder) => isFilled(order.probableDiagnosis) && isFilled(order.duration));
   const hasIncompleteOrders = (resonanceOrders.length > 0 && !areResonanceOrdersComplete) || (eegOrders.length > 0 && !areEegOrdersComplete);
   const isFollowUpMissing = !isFilled(followUpRequestText);
   const nextDisabled = (step === 2 && isFollowUpMissing) || (step === 3 && hasIncompleteOrders);
@@ -1037,6 +1046,10 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
           <UserProfileSettings user={user} />
         ) : activeView === 'admin' && isAdmin ? (
           <AdminPanel user={user} />
+        ) : activeView === 'medicine_review' && (isResident || isAdmin) ? (
+          <MedicineReviewPage currentUser={user} />
+        ) : activeView === 'medicine_normalization' && (isResident || isAdmin) ? (
+          <MedicineNormalizationPage currentUser={user} />
         ) : activeView === 'my_schedule' && isDoctor && allowDoctorSelfManage ? (
           <DoctorScheduleAdmin currentUser={user} fixedDoctorId={user.uid} />
         ) : activeView === 'history' ? (
@@ -1291,11 +1304,36 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 lg:p-8">
                 {/* {step === 1 && <StepDiagnosis patient={currentPatient} currentUser={user} />} */}
                 {step === 2 && (
-                  <StepPrescription
+                  <StepPrescription currentUser={user} />
+                )}
+                {/* {step === 3 && (
+                  <StepExams
+                    userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
+                    patient={currentPatient}
+                    appointmentType={currentConsultationType}
+                  />
+                )}
+                {step === 4 && <StepFinalize
+                  currentUser={user}
+                  hasUnseenImportantNotices={hasUnseenImportantNotices}
+                  onFinish={methods.handleSubmit(async (d) => {
+                    // Logic already moved up
+                  })} isSaving={isSaving} />} */}
+
+                {step === 3 && (
+                  <StepExams
+                    userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
+                    patient={currentPatient}
+                    appointmentType={currentConsultationType}
+                  />
+                )}
+                {step === 4 && (
+                  <StepFinalize
                     currentUser={user}
+                    hasUnseenImportantNotices={hasUnseenImportantNotices}
                     isSaving={isSaving}
                     onFinish={methods.handleSubmit(async (d) => {
-                      // EL SIGUIENTE CÓDIGO ES EL MISMO QUE ESTABA EN STEPFINALIZE
+                      // Lógica de guardado que estaba en StepPrescription, ahora se ejecuta desde el paso final
                       if (hasIncompleteOrders) {
                         toast.error('Complete todos los campos de las órdenes antes de finalizar.');
                         return;
@@ -1334,17 +1372,26 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
 
                         const { specialtyData, ...rest } = raw;
 
+                        let finalNoPrescriptionReasonCategory = null;
+                        if (rest.noPrescriptionReasonText?.trim() && (!rest.prescription || rest.prescription.length === 0)) {
+                          try {
+                            const { classifyNoPrescriptionReason } = await import('../services/geminiService.ts');
+                            finalNoPrescriptionReasonCategory = await classifyNoPrescriptionReason(rest.noPrescriptionReasonText);
+                          } catch (e) {
+                            console.error("Error classifying no prescription reason", e);
+                            finalNoPrescriptionReasonCategory = "Otra razón no clasificada";
+                          }
+                        } else {
+                          rest.noPrescriptionReasonText = null;
+                        }
+
                         const finishedData: any = {
                           status: 'finished' as const,
                           ...rest,
+                          noPrescriptionReasonCategory: finalNoPrescriptionReasonCategory,
                           specialtyFormId: specialtyFormId || null,
                           specialtyFormName: specialtyFormName || null,
                           specialtyData: filteredSpecialtyData || {},
-                          // MARCAMOS ESTOS CAMPOS COMO DESACTIVADOS
-                          exams: [],
-                          referralGroups: [],
-                          specialtyReferrals: [],
-                          followUpText: 'Sección desactivada temporalmente',
                           printedDocs: { prescription: false, labs: false, report: false, resonanceOrders: false, eegOrders: false }
                         };
 
@@ -1354,7 +1401,6 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                           finishedData.prescriptionNumber = null;
                         }
 
-                        // Sanitizar undefined a null para evitar errores de Firestore
                         Object.keys(finishedData).forEach(key => {
                           if (finishedData[key] === undefined) {
                             finishedData[key] = null;
@@ -1362,6 +1408,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                         });
 
                         await updateDoc(consultationRef, finishedData);
+
+                        try {
+                          const { createPrescriptionReviewsForConsultation } = await import('../services/prescriptionReviewService');
+                          await createPrescriptionReviewsForConsultation({ ...finishedData, id: currentConsultationId } as any);
+                        } catch (reviewError) {
+                          console.warn('Could not create prescription reviews (non-blocking):', reviewError);
+                        }
 
                         if (currentAppointmentId) {
                           try {
@@ -1372,7 +1425,6 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                           }
                         }
 
-                        // NOTIFICAR A PERSONAL (Admin, Enfermería, Recepción)
                         const notificationPayload = {
                           ...finishedData,
                           patientName: currentPatient!.fullName,
@@ -1440,22 +1492,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                     })}
                   />
                 )}
-                {/* {step === 3 && (
-                  <StepExams
-                    userSpecialties={user.specialties || (user.specialty ? [user.specialty] : [])}
-                    patient={currentPatient}
-                    appointmentType={currentConsultationType}
-                  />
-                )}
-                {step === 4 && <StepFinalize
-                  currentUser={user}
-                  hasUnseenImportantNotices={hasUnseenImportantNotices}
-                  onFinish={methods.handleSubmit(async (d) => {
-                    // Logic already moved up
-                  })} isSaving={isSaving} />} */}
 
-                {/* COMENTADO: Navegación de múltiples pasos desactivada temporalmente */}
-                {/* {nextDisabled && (
+                {/* Navegación de múltiples pasos */}
+                {nextDisabled && (
                   <p className="mb-3 text-xs font-bold text-red-600">
                     {step === 2 && isFollowUpMissing && 'Debe completar la reconsulta para continuar.'}
                     {step === 3 && hasIncompleteOrders && 'Complete todos los campos de las órdenes para continuar.'}
@@ -1463,7 +1502,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                 )}
                 <div className="mt-4 flex justify-between gap-4">
                   <button onClick={() => {
-                    if (step === 1) {
+                    if (step === 2) {
                       setCurrentPatient(null);
                       setCurrentConsultationType(undefined);
                       setCurrentModality(undefined);
@@ -1474,6 +1513,28 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                   {step < 4 && (
                     <button
                       onClick={() => {
+                        // Step 2 → 3: Validar diagnóstico obligatorio
+                        if (step === 2) {
+                          const diagnosis = methods.getValues('diagnosis');
+                          if (!diagnosis?.trim()) {
+                            toast.error('Ingrese el diagnóstico antes de continuar.');
+                            return;
+                          }
+                        }
+                        // Si va de step 3 a 4 y NO hay examenes, pedir confirmación
+                        if (step === 3) {
+                          const hasExams =
+                            (methods.getValues('referralGroups')?.length || 0) > 0 ||
+                            !!methods.getValues('otherExams')?.trim() ||
+                            (methods.getValues('resonanceOrders')?.length || 0) > 0 ||
+                            (methods.getValues('eegOrders')?.length || 0) > 0 ||
+                            !!methods.getValues('referralNote')?.trim();
+                          if (!hasExams) {
+                            if (!window.confirm('No se ha seleccionado ningún examen. ¿Continuar sin laboratorios?')) {
+                              return;
+                            }
+                          }
+                        }
                         setStep(s => s + 1);
                         setIsCuadernoExpanded(false);
                       }}
@@ -1483,7 +1544,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                       Siguiente
                     </button>
                   )}
-                </div> */}
+                </div>
 
                 {/* BOTÓN ATRÁS SIMPLIFICADO PARA SALIR DE LA CONSULTA */}
                 <div className="mt-4 flex justify-start">

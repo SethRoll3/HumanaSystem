@@ -1,8 +1,9 @@
 
-import { collection, query, where, getDocs, limit, orderBy, startAt, endAt, addDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, orderBy, startAt, endAt, addDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { db, auth } from '../firebase/config.ts';
 import { Medicine, Specialty, Pathology, LaboratoryItem } from '../types.ts';
+import { normalizeText } from './pharmacySalesService.ts';
 
 // --- OBTENER TODOS LOS MEDICAMENTOS (PARA CACHÉ LOCAL) ---
 export const getAllMedicines = async (): Promise<Medicine[]> => {
@@ -102,7 +103,7 @@ export const searchMedicine = async (term: string): Promise<Medicine[]> => {
         return [...internalResults, ...externalResults];
     }
 
-    const termLower = term.toLowerCase();
+    const termLower = normalizeText(term);
     const termCap = termLower.charAt(0).toUpperCase() + termLower.slice(1);
     
     const mapDocToMedicine = (docSnap: any, isExternalCol: boolean): Medicine => {
@@ -178,7 +179,7 @@ export const saveExternalMedicine = async (name: string, aiData: any) => {
         const q = query(ref, where('name', '==', name));
         const snap = await getDocs(q);
 
-        if (!snap.empty) return; 
+        if (!snap.empty) return;
 
         await addDoc(ref, {
             name: name,
@@ -195,6 +196,84 @@ export const saveExternalMedicine = async (name: string, aiData: any) => {
     }
 };
 
+// --- OBTENER MEDICAMENTOS EXTERNOS CON PLACEHOLDERS FALSOS ---
+export interface PlaceholderMedicine {
+  id: string;
+  name: string;
+  activeIngredient?: string;
+  distributorGT?: string;
+  pharmacy?: string;
+  commercialName?: string;
+}
+
+const PLACEHOLDER_VALUES = {
+  activeIngredient: 'No identificado',
+  distributorGT: 'Desconocido',
+  pharmacy: 'Farmacias Generales',
+};
+
+const isPlaceholder = (med: PlaceholderMedicine): boolean => {
+  return (
+    med.activeIngredient === PLACEHOLDER_VALUES.activeIngredient ||
+    med.distributorGT === PLACEHOLDER_VALUES.distributorGT ||
+    med.pharmacy === PLACEHOLDER_VALUES.pharmacy
+  );
+};
+
+export const getPlaceholderExternalMedicines = async (): Promise<PlaceholderMedicine[]> => {
+  try {
+    const ref = collection(db, 'external_medicines');
+    const [aiSnap, distSnap, pharmSnap] = await Promise.all([
+      getDocs(query(ref, where('activeIngredient', '==', PLACEHOLDER_VALUES.activeIngredient))),
+      getDocs(query(ref, where('distributorGT', '==', PLACEHOLDER_VALUES.distributorGT))),
+      getDocs(query(ref, where('pharmacy', '==', PLACEHOLDER_VALUES.pharmacy))),
+    ]);
+
+    const map = new Map<string, PlaceholderMedicine>();
+    const collect = (snap: any) => {
+      snap.docs.forEach((d: any) => {
+        const data = d.data() as any;
+        map.set(d.id, {
+          id: d.id,
+          name: data.name,
+          activeIngredient: data.activeIngredient,
+          distributorGT: data.distributorGT,
+          pharmacy: data.pharmacy,
+          commercialName: data.commercialName || data.brandName,
+        });
+      });
+    };
+    collect(aiSnap);
+    collect(distSnap);
+    collect(pharmSnap);
+    return Array.from(map.values()).filter(isPlaceholder);
+  } catch (e) {
+    console.error('Error fetching placeholder medicines:', e);
+    return [];
+  }
+};
+
+// --- RE-ANALIZAR MEDICAMENTO EXTERNO CON IA Y ACTUALIZAR EN FIRESTORE ---
+export const reanalyzeExternalMedicine = async (
+  medId: string,
+  aiData: { activeIngredient: string; distributorGT: string; pharmacy: string; commercialName: string }
+): Promise<void> => {
+  try {
+    const ref = doc(db, 'external_medicines', medId);
+    await updateDoc(ref, {
+      activeIngredient: aiData.activeIngredient || '',
+      distributorGT: aiData.distributorGT || '',
+      pharmacy: aiData.pharmacy || '',
+      commercialName: aiData.commercialName || '',
+      brandName: aiData.commercialName || '',
+      reanalyzedAt: new Date(),
+    });
+    } catch (e) {
+        console.error('Error re-analyzing medicine:', e);
+        throw e;
+    }
+};
+
 export const getSpecialties = async (): Promise<Specialty[]> => {
   try {
     const ref = collection(db, 'specialties');
@@ -204,6 +283,134 @@ export const getSpecialties = async (): Promise<Specialty[]> => {
     console.error(e);
     return [];
   }
+};
+
+// --- CROSS-REFERENCE: MEDICAMENTOS EXTERNOS CUYA MOLÉCULA TENEMOS INTERNAMENTE ---
+export interface MoleculeOverlap {
+  molecule: string; // Active ingredient (canonical display)
+  externalMedicine: Medicine; // The external medicine that has this molecule
+  internalMatches: Medicine[]; // All internal medicines with the same molecule
+}
+
+export interface MoleculeOverlapReport {
+  overlaps: MoleculeOverlap[];
+  totalExternalMedsWithInternalMolecule: number;
+  uniqueMoleculesCount: number;
+  totalInternalMeds: number;
+  totalExternalMeds: number;
+}
+
+const buildMoleculeIndex = (meds: Medicine[]): Map<string, Medicine[]> => {
+  const index = new Map<string, Medicine[]>();
+  meds.forEach(med => {
+    const mol = (med.activeIngredient || '').trim();
+    if (!mol) return;
+    const key = normalizeText(mol);
+    if (!key) return;
+    const list = index.get(key) || [];
+    list.push(med);
+    index.set(key, list);
+  });
+  return index;
+};
+
+export const findMoleculeOverlaps = (allMedicines: Medicine[]): MoleculeOverlapReport => {
+  const internal = allMedicines.filter(m => !m.isExternal);
+  const external = allMedicines.filter(m => m.isExternal);
+
+  const moleculeIndex = buildMoleculeIndex(internal);
+  const overlapMap = new Map<string, MoleculeOverlap>();
+
+  external.forEach(extMed => {
+    const mol = (extMed.activeIngredient || '').trim();
+    if (!mol) return;
+    const key = normalizeText(mol);
+    const internalMatches = moleculeIndex.get(key) || [];
+    if (internalMatches.length === 0) return;
+
+    const canonical = internalMatches[0].activeIngredient || mol;
+    const overlapKey = `${key}|${normalizeText(extMed.name)}`;
+    if (overlapMap.has(overlapKey)) return;
+
+    overlapMap.set(overlapKey, {
+      molecule: canonical,
+      externalMedicine: extMed,
+      internalMatches,
+    });
+  });
+
+  const overlaps = Array.from(overlapMap.values()).sort((a, b) => {
+    const m = a.molecule.localeCompare(b.molecule, 'es');
+    if (m !== 0) return m;
+    return a.externalMedicine.name.localeCompare(b.externalMedicine.name, 'es');
+  });
+
+  return {
+    overlaps,
+    totalExternalMedsWithInternalMolecule: overlaps.length,
+    uniqueMoleculesCount: new Set(overlaps.map(o => normalizeText(o.molecule))).size,
+    totalInternalMeds: internal.length,
+    totalExternalMeds: external.length,
+  };
+};
+
+// --- OVERLAP DESDE RECETAS FILTRADAS (reactivo a filtros de doctor/especialidad/molecula) ---
+export interface PrescriptionOverlapInput {
+  name: string;
+  activeIngredient?: string;
+  isExternal: boolean;
+}
+
+export const findMoleculeOverlapsFromPrescriptions = (
+  filteredPrescriptionItems: PrescriptionOverlapInput[],
+  allMedicines: Medicine[]
+): MoleculeOverlapReport => {
+  const internalCatalog = allMedicines.filter(m => !m.isExternal);
+  const moleculeIndex = buildMoleculeIndex(internalCatalog);
+
+  const prescribedExternalNames = new Set(
+    filteredPrescriptionItems
+      .filter(p => p.isExternal)
+      .map(p => normalizeText(p.name))
+  );
+
+  const prescribedExternalFromCatalog = allMedicines.filter(
+    m => m.isExternal && prescribedExternalNames.has(normalizeText(m.name))
+  );
+
+  const overlapMap = new Map<string, MoleculeOverlap>();
+
+  prescribedExternalFromCatalog.forEach(extMed => {
+    const mol = (extMed.activeIngredient || '').trim();
+    if (!mol) return;
+    const key = normalizeText(mol);
+    const internalMatches = moleculeIndex.get(key) || [];
+    if (internalMatches.length === 0) return;
+
+    const canonical = internalMatches[0].activeIngredient || mol;
+    const overlapKey = `${key}|${normalizeText(extMed.name)}`;
+    if (overlapMap.has(overlapKey)) return;
+
+    overlapMap.set(overlapKey, {
+      molecule: canonical,
+      externalMedicine: extMed,
+      internalMatches,
+    });
+  });
+
+  const overlaps = Array.from(overlapMap.values()).sort((a, b) => {
+    const m = a.molecule.localeCompare(b.molecule, 'es');
+    if (m !== 0) return m;
+    return a.externalMedicine.name.localeCompare(b.externalMedicine.name, 'es');
+  });
+
+  return {
+    overlaps,
+    totalExternalMedsWithInternalMolecule: overlaps.length,
+    uniqueMoleculesCount: new Set(overlaps.map(o => normalizeText(o.molecule))).size,
+    totalInternalMeds: internalCatalog.length,
+    totalExternalMeds: prescribedExternalFromCatalog.length,
+  };
 };
 
 export const getPathologies = async (): Promise<Pathology[]> => {

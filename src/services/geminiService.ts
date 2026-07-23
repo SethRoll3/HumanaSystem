@@ -3,6 +3,8 @@ import { addDays, addWeeks, addMonths, differenceInCalendarDays } from 'date-fns
 
 const API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || (import.meta as any).env?.VITE_API_KEY || (process as any).env?.API_KEY;
 
+export const hasGeminiKey = (): boolean => Boolean(API_KEY);
+
 // --- FALLBACK: CÁLCULO LOCAL (REGEX) ---
 const calculateLocalFallback = (text: string, unitsPerBox: number = 0): { quantity: number; duration: string } => {
   const lower = text.toLowerCase();
@@ -114,7 +116,8 @@ export const parsePrescriptionWithAI = async (
     
     if (!jsonStr) throw new Error("Sin respuesta de texto");
 
-    const result = JSON.parse(jsonStr);
+    const cleanJsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const result = JSON.parse(cleanJsonStr);
     
     return {
         quantity: typeof result.quantity === 'number' ? result.quantity : 1,
@@ -167,7 +170,8 @@ export const analyzeExternalMedicine = async (medName: string) => {
         const data = await response.json();
         const jsonStr = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!jsonStr) throw new Error("Sin respuesta de texto");
-        return JSON.parse(jsonStr);
+        const cleanJsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
+        return JSON.parse(cleanJsonStr);
 
     } catch (e) {
         console.error("Error analyzing external med:", e);
@@ -398,5 +402,158 @@ export const analyzeFollowUpIntent = async (notes: string): Promise<FollowUpAnal
   } catch (e) {
     console.error("Follow-up AI error", e);
     return { hasFollowUp: false, rawText: trimmed };
+  }
+};
+
+/**
+ * Classifies a doctor's reason for NOT prescribing any medication into one of 10 predefined categories.
+ * 
+ * @param text The free text reason provided by the doctor
+ * @returns A promise that resolves to the matched category string.
+ */
+export const classifyNoPrescriptionReason = async (text: string): Promise<string> => {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return "Otro";
+  
+  const API_KEY = (import.meta as any).env.VITE_GEMINI_API_KEY;
+  if (!API_KEY) return "Otro";
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+
+  const promptText = `
+    Eres un asistente médico experto. El doctor no recetó ningún medicamento al paciente en esta consulta.
+    El doctor escribió el siguiente motivo: "${trimmed}"
+
+    Tu tarea es clasificar este motivo en EXACTAMENTE UNA de las siguientes 10 categorías:
+    1. Referencia a especialista
+    2. Tratamiento no farmacológico
+    3. Paciente ya cuenta con medicación
+    4. Alta médica / Fin de tratamiento
+    5. Evaluación de laboratorio o imágenes pendiente
+    6. Paciente se niega a recibir medicación
+    7. Interacciones o contraindicaciones evaluadas
+    8. Tratamiento quirúrgico indicado
+    9. Remisión a emergencias o cuidado hospitalario
+    10. Otro
+
+    Instrucciones:
+    1. Lee el motivo e identifica cuál de las 10 categorías lo describe mejor.
+    2. Responde ÚNICAMENTE con el texto de la categoría elegida, exactamente como está escrito arriba. No incluyas el número ni ningún otro texto adicional.
+    3. Si el motivo no encaja claramente en ninguna de las primeras 9 categorías, responde "Otro".
+  `;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: { 
+          temperature: 0.1,
+          maxOutputTokens: 50
+        }
+      })
+    });
+
+    if (!response.ok) throw new Error("Error API de Gemini");
+    
+    const data = await response.json();
+    let result = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+    
+    // Validar que el resultado esté en las opciones
+    const validCategories = [
+      "Referencia a especialista",
+      "Tratamiento no farmacológico",
+      "Paciente ya cuenta con medicación",
+      "Alta médica / Fin de tratamiento",
+      "Evaluación de laboratorio o imágenes pendiente",
+      "Paciente se niega a recibir medicación",
+      "Interacciones o contraindicaciones evaluadas",
+      "Tratamiento quirúrgico indicado",
+      "Remisión a emergencias o cuidado hospitalario",
+      "Otro"
+    ];
+    
+    const matched = validCategories.find(cat => cat.toLowerCase() === result.toLowerCase());
+    return matched || "Otro";
+    
+  } catch (error) {
+    console.error("AI classification error for no prescription reason:", error);
+    return "Otro";
+  }
+};
+
+/**
+ * Classifies a free-text diagnosis into either a predefined neurological
+ * category or a custom "Otro" subtype (invented by Gemini).
+ * Returns `{ categoria, subtipo }` — subtipo is set only when categoria === 'Otro'.
+ * Handles non-Spanish input by interpreting and translating to Latin-American Spanish.
+ */
+export const geminiClassifyDiagnosis = async (diagnosis: string): Promise<{ categoria: string; subtipo: string | null } | null> => {
+  const trimmed = (diagnosis || '').trim();
+  if (!trimmed) return null;
+
+  const API_KEY = (import.meta as any).env.VITE_GEMINI_API_KEY;
+  if (!API_KEY) return null;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+
+  const promptText = `Eres un neurólogo experto. Tu tarea es clasificar el siguiente diagnóstico en UNA categoría de esta lista:
+
+- Epilepsia
+- Parkinson
+- Migraña/Dolor de cabeza
+- Dolor neuropático
+- Tumores cerebrales
+- Esclerosis múltiple
+- ACV
+- Demencia
+- Trastornos del movimiento
+- Neuropatía
+- Cefalea tensional
+- Enfermedad neuromuscular
+- Trastorno del sueño
+- Otro (si no encaja en ninguna de las anteriores)
+
+Si el diagnóstico está en otro idioma (inglés u otro), interprétalo y clasifícalo en la categoría apropiada EN ESPAÑOL LATINOAMERICANO.
+
+Diagnóstico: "${trimmed}"
+
+Responde ÚNICAMENTE en este formato JSON (sin markdown, sin texto adicional):
+{
+  "categoria": "Una de las 13 categorías o 'Otro'",
+  "subtipo": "Si categoria es 'Otro', describe el tipo en 1-3 palabras en español (ej: 'Síndrome de Tourette', 'Trastorno del espectro autista'); si no es 'Otro', null"
+}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 200,
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Gemini classify diagnosis error:', errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleanJson);
+    return {
+      categoria: typeof parsed.categoria === 'string' ? parsed.categoria.trim() : 'Otro',
+      subtipo: typeof parsed.subtipo === 'string' && parsed.subtipo.trim() ? parsed.subtipo.trim() : null,
+    };
+  } catch (error) {
+    console.error('Gemini classify diagnosis error:', error);
+    return null;
   }
 };

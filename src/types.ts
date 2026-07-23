@@ -226,6 +226,8 @@ export interface Consultation {
   prescription?: PrescriptionItem[];
   prescriptionNotes?: string; // New field for general prescription observations
   prescriptionNumber?: string;
+  noPrescriptionReasonText?: string;
+  noPrescriptionReasonCategory?: string;
   exams?: string[];
 
   signature?: {

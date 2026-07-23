@@ -1080,7 +1080,21 @@ export const AppointmentDetailsModal: React.FC<AppointmentDetailsModalProps> = (
           patient={patientForEdit}
           currentUser={currentUser}
           appointmentId={appointment.id}
-          onSaved={(updated) => setPatientForEdit(updated)}
+          onSaved={async (updated) => {
+            setPatientForEdit(updated);
+            // Sync the updated name to the appointment document and local UI
+            if (updated.fullName) {
+              setDisplayPatientName(updated.fullName);
+              if (appointment.id) {
+                try {
+                  const apptRef = doc(db, 'appointments', appointment.id);
+                  await updateDoc(apptRef, { patientName: updated.fullName });
+                } catch (e) {
+                  console.error('Error syncing patient name to appointment', e);
+                }
+              }
+            }
+          }}
         />
       )}
     </div>

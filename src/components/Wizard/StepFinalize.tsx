@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useFormContext } from 'react-hook-form';
-import { CheckCircle, Key, UserPlus, AlertCircle, FileText, Save, Loader2, FileKey, XCircle, Trash2, Lock, Eye, EyeOff } from 'lucide-react';
+import { CheckCircle, Key, UserPlus, AlertCircle, FileText, Save, Loader2, FileKey, XCircle, Trash2, Lock, Eye, EyeOff, Stethoscope, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSpecialties } from '../../services/inventoryService.ts';
 import { Specialty, SpecialtyReferral, UserProfile } from '../../../types.ts';
@@ -93,7 +93,6 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
         if (!hasLabs) items.push({ key: 'exams', label: 'Sin Solicitud de Laboratorios' });
         if (!specialtyReferrals?.length) items.push({ key: 'referrals', label: 'Sin Referencia a Especialistas' });
         if (!nursingNotes?.trim()) items.push({ key: 'nursing', label: 'Sin Anotaciones para Enfermería' });
-        if (!currentSignature) items.push({ key: 'signature', label: hasStoredCert ? 'Falta Firmar Digitalmente' : 'Firma Manual Requerida' });
         return items;
     };
 
@@ -165,6 +164,23 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
 
     return (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2 text-slate-600 text-xs font-bold uppercase tracking-wider">
+                    <Eye className="w-4 h-4" /> Código de colores:
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200">
+                        <Eye className="w-3 h-3" /> Amarillo
+                    </span>
+                    <span className="text-xs text-slate-600">Visible para el paciente (receta, PDF, recetas)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                        <Lock className="w-3 h-3" /> Azul
+                    </span>
+                    <span className="text-xs text-slate-600">Interno (no se muestra al paciente)</span>
+                </div>
+            </div>
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold"><UserPlus className="w-5 h-5 text-brand-600" /><h4>Referencia a Especialistas</h4></div>
                 <div className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -176,25 +192,36 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                 </div>
                 <div className="space-y-3">
                     {specialtyReferrals.map(r => (
-                        <div key={r.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
-                            <div className="flex justify-between items-center mb-2">
-                                <span className="font-bold text-slate-800 text-sm">{r.specialty}</span>
-                                <button type="button" onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                        <div key={r.id} className="flex items-start gap-3 p-3 bg-pink-50 border-l-4 border-pink-500 rounded-r-lg shadow-sm">
+                            <Stethoscope className="w-5 h-5 text-pink-600 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                                <div className="flex justify-between items-start gap-2">
+                                    <span className="font-bold text-pink-800 text-base">{r.specialty}</span>
+                                    <button type="button" onClick={() => setValue('specialtyReferrals', specialtyReferrals.filter(ref => ref.id !== r.id))} className="text-red-400 hover:text-red-600 shrink-0"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                                <textarea
+                                    placeholder={`Motivo de la referencia o nota para ${r.specialty}...`}
+                                    className="w-full text-sm mt-2 bg-white/60 border border-pink-200 rounded-lg p-2 focus:ring-2 focus:ring-pink-300 focus:border-pink-400 placeholder:text-pink-400 text-slate-700 resize-none"
+                                    rows={2}
+                                    value={r.note || ''}
+                                    onChange={(e) => updateReferralNote(r.id, e.target.value)}
+                                />
                             </div>
-                            <textarea
-                                placeholder={`Motivo de la referencia o nota para ${r.specialty}...`}
-                                className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-lg p-2 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-slate-700 resize-none"
-                                rows={2}
-                                value={r.note || ''}
-                                onChange={(e) => updateReferralNote(r.id, e.target.value)}
-                            />
                         </div>
                     ))}
                 </div>
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold"><FileText className="w-5 h-5 text-brand-600" /><h4>Anotaciones para Enfermería</h4></div>
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 text-slate-800 font-bold">
+                        <FileText className="w-5 h-5 text-brand-600" />
+                        <h4>Anotaciones para Enfermería</h4>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200 uppercase tracking-wider">
+                        <Eye className="w-3 h-3" /> Visible para el paciente
+                    </span>
+                </div>
                 <textarea
                     {...register('followUpText')}
                     rows={3}
@@ -203,16 +230,21 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
                 />
             </div>
 
-            <div className="bg-white rounded-xl border border-red-200 p-6 shadow-sm">
-                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
-                    <AlertCircle className="w-5 h-5 text-red-500" />
-                    <h4>Avisos Importantes</h4>
+            <div className="bg-white rounded-xl border border-blue-200 p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 text-slate-800 font-bold">
+                        <AlertCircle className="w-5 h-5 text-blue-500" />
+                        <h4>Avisos Importantes</h4>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 uppercase tracking-wider">
+                        <Lock className="w-3 h-3" /> Interno (no se muestra al paciente)
+                    </span>
                 </div>
                 <textarea
                     {...register('importantNotices')}
                     rows={3}
-                    placeholder="Registrar alertas críticas, advertencias al paciente o recordatorios importantes..."
-                    className="w-full text-sm bg-red-50/40 border border-red-200 rounded-lg p-3 focus:ring-2 focus:ring-red-400 focus:border-transparent placeholder:text-red-400 text-red-800 resize-none"
+                    placeholder="Registrar alertas críticas, advertencias internas o recordatorios importantes..."
+                    className="w-full text-sm bg-blue-50/50 border border-blue-200 rounded-lg p-3 focus:ring-2 focus:ring-blue-400 focus:border-transparent placeholder:text-blue-300 text-blue-900 resize-none"
                 />
             </div>
 

@@ -455,9 +455,9 @@ export const generateNursingPDF = async (
                     head: [['REFERENCIA A ESPECIALIDAD', 'MOTIVO / NOTA']],
                     body: referralRows,
                     theme: 'grid',
-                    styles: { fontSize: 9, cellPadding: 3, textColor: COLORS.TEXT_DARK, lineColor: COLORS.BORDER, lineWidth: 0.1 },
-                    headStyles: { fillColor: COLORS.PRIMARY, textColor: [255, 255, 255], fontSize: 10, fontStyle: 'bold' },
-                    columnStyles: { 0: { cellWidth: 60, fontStyle: 'bold' }, 1: { cellWidth: 122 } },
+                    styles: { fontSize: 10, cellPadding: 4, textColor: COLORS.TEXT_DARK, lineColor: COLORS.BORDER, lineWidth: 0.1 },
+                    headStyles: { fillColor: COLORS.PRIMARY, textColor: [255, 255, 255], fontSize: 11, fontStyle: 'bold' },
+                    columnStyles: { 0: { cellWidth: 75, fontStyle: 'bold', fontSize: 11, textColor: [157, 23, 77] }, 1: { cellWidth: 107 } },
                     margin: { left: 14, right: 14 }
                 });
                 // @ts-ignore

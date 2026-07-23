@@ -2,21 +2,78 @@
 import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useFormContext, useFieldArray } from 'react-hook-form';
-import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote, Filter, Save, Loader2, FileText } from 'lucide-react';
-import { getAllMedicines, saveExternalMedicine } from '../../services/inventoryService.ts';
+import { Search, Plus, Trash2, Pill, ExternalLink, StickyNote, Filter, FileText, AlertTriangle, Microscope, Sparkles, Eye, Lock } from 'lucide-react';
+import { getAllMedicines, saveExternalMedicine, getPathologies } from '../../services/inventoryService.ts';
 import { parsePrescriptionWithAI, analyzeExternalMedicine, analyzeFollowUpIntent } from '../../services/geminiService.ts';
-import { Medicine, UserProfile } from '../../../types.ts';
+import { normalizeText } from '../../services/pharmacySalesService.ts';
+import { suggestPathology } from '../../services/pathologySuggestion.ts';
+import { Medicine, UserProfile, Pathology } from '../../../types.ts';
 import { logAuditAction } from '../../services/auditService.ts';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface StepPrescriptionProps {
     currentUser: UserProfile;
-    onFinish?: () => void;
-    isSaving?: boolean;
 }
 
-export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser, onFinish, isSaving }) => {
+const COMMON_MOLECULES = ['Paracetamol', 'Ibuprofeno', 'Acetaminofen', 'Aspirina', 'Diclofenaco', 'Omeprazol'];
+
+type SearchMode = 'all' | 'molecule';
+
+type MatchType = 'molecule' | 'name' | 'brand';
+
+/** Determines which field the search term matched in. */
+export function getMatchType(med: Medicine, term: string): MatchType | null {
+    if (!term.trim()) return null;
+    const lower = normalizeText(term);
+    if (med.activeIngredient && normalizeText(med.activeIngredient).includes(lower)) return 'molecule';
+    if (normalizeText(med.name).includes(lower)) return 'name';
+    if (med.brandName && normalizeText(med.brandName).includes(lower)) return 'brand';
+    return null;
+}
+
+/** Renders text with the matching substring wrapped in <mark> for highlight. */
+export function highlightMatch(text: string, term: string): React.ReactNode {
+    if (!term.trim() || !text) return text;
+    const lower = normalizeText(term);
+    const lowerText = normalizeText(text);
+    const idx = lowerText.indexOf(lower);
+    if (idx === -1) return text;
+
+    // Find the matched position in the original text by walking through both
+    // texts in lockstep. For each char in lowerText, find the corresponding
+    // position in text (skipping whitespace, expanding accents back).
+    let origIdx = 0;
+    let normIdx = 0;
+    while (normIdx < idx && origIdx < text.length) {
+        const ch = text[origIdx];
+        if (/\s/.test(ch)) {
+            origIdx++;
+            continue;
+        }
+        const normalized = normalizeText(ch);
+        if (normalized.length > 0) {
+            normIdx++;
+        }
+        origIdx++;
+    }
+    // origIdx is now at the position of the char that contributed to lowerText[idx].
+    // But due to the off-by-one, it's actually one past. We need to back up.
+    const matchedStart = Math.max(0, origIdx - 1);
+
+    const before = text.substring(0, matchedStart);
+    const matched = text.substring(matchedStart, matchedStart + term.length);
+    const after = text.substring(matchedStart + term.length);
+    return (
+        <>
+            {before}
+            <mark className="bg-yellow-200 text-slate-900 px-0.5 rounded font-bold">{matched}</mark>
+            {after}
+        </>
+    );
+}
+
+export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser }) => {
     const { register, control, setValue, watch, setFocus, formState: { errors } } = useFormContext();
     const { fields, prepend, remove } = useFieldArray({
         control,
@@ -28,18 +85,22 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
     const [searchResults, setSearchResults] = useState<Medicine[]>([]);
     const [showDropdown, setShowDropdown] = useState(false);
     const [filterSource, setFilterSource] = useState<'all' | 'external' | 'inventory'>('all');
+    const [searchMode, setSearchMode] = useState<SearchMode>('all');
     const [loading, setLoading] = useState(true);
     const containerRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const dropdownPanelRef = useRef<HTMLUListElement>(null);
     const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
     const [followUpTouched, setFollowUpTouched] = useState(false);
+    const [pathologies, setPathologies] = useState<Pathology[]>([]);
+    const [suggestedPathology, setSuggestedPathology] = useState<Pathology | null>(null);
     const followUpRequestText = watch('followUpRequestText');
     const followUpEstimatedDate = watch('followUpEstimatedDate');
     const followUpDays = watch('followUpDays');
     const diagnosis = watch('diagnosis');
+    const noPrescriptionReasonText = watch('noPrescriptionReasonText');
 
-    // Load all medicines on mount
+    // Load all medicines and pathologies on mount
     useEffect(() => {
         const load = async () => {
             setLoading(true);
@@ -47,9 +108,30 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
             setAllMedicines(res);
             setSearchResults(res);
             setLoading(false);
+            try {
+                const paths = await getPathologies();
+                setPathologies(paths);
+            } catch (e) {
+                console.error('Error loading pathologies:', e);
+            }
         };
         load();
     }, []);
+
+    // Debounce pathology suggestion when diagnosis changes
+    useEffect(() => {
+        if (!diagnosis || !diagnosis.trim() || pathologies.length === 0) {
+            setSuggestedPathology(null);
+            setValue('autoSuggestedPathology', null, { shouldDirty: false });
+            return;
+        }
+        const handle = setTimeout(async () => {
+            const suggested = await suggestPathology(diagnosis, pathologies);
+            setSuggestedPathology(suggested);
+            setValue('autoSuggestedPathology', suggested?.name ?? null, { shouldDirty: false });
+        }, 800);
+        return () => clearTimeout(handle);
+    }, [diagnosis, pathologies]);
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -67,7 +149,7 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
         };
     }, []);
     // Local filtering logic
-    const performLocalSearch = (term: string, source: 'all' | 'external' | 'inventory') => {
+    const performLocalSearch = (term: string, source: 'all' | 'external' | 'inventory', mode: SearchMode = searchMode) => {
         let filtered = allMedicines;
 
         // 1. Filter by Source
@@ -77,14 +159,20 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
             filtered = filtered.filter(m => !m.isExternal);
         }
 
-        // 2. Filter by Term
+        // 2. Filter by Term (accent + case insensitive)
         if (term.trim()) {
-            const lower = term.toLowerCase();
-            filtered = filtered.filter(m =>
-                m.name.toLowerCase().includes(lower) ||
-                (m.brandName && m.brandName.toLowerCase().includes(lower)) ||
-                (m.activeIngredient && m.activeIngredient.toLowerCase().includes(lower))
-            );
+            const lower = normalizeText(term);
+            if (mode === 'molecule') {
+                // Only search in activeIngredient
+                filtered = filtered.filter(m => m.activeIngredient && normalizeText(m.activeIngredient).includes(lower));
+            } else {
+                // Search in name, brandName, AND molecule
+                filtered = filtered.filter(m =>
+                    normalizeText(m.name).includes(lower) ||
+                    (m.brandName && normalizeText(m.brandName).includes(lower)) ||
+                    (m.activeIngredient && normalizeText(m.activeIngredient).includes(lower))
+                );
+            }
         }
 
         setSearchResults(filtered);
@@ -94,16 +182,27 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
     const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setSearchTerm(val);
-        performLocalSearch(val, filterSource);
+        performLocalSearch(val, filterSource, searchMode);
     };
 
     const handleSourceChange = (source: 'all' | 'external' | 'inventory') => {
         setFilterSource(source);
-        performLocalSearch(searchTerm, source);
+        performLocalSearch(searchTerm, source, searchMode);
+    };
+
+    const handleSearchModeChange = (mode: SearchMode) => {
+        setSearchMode(mode);
+        performLocalSearch(searchTerm, filterSource, mode);
+    };
+
+    const handleQuickPickMolecule = (mol: string) => {
+        setSearchTerm(mol);
+        setSearchMode('molecule');
+        performLocalSearch(mol, filterSource, 'molecule');
     };
 
     const handleFocus = () => {
-        performLocalSearch(searchTerm, filterSource);
+        performLocalSearch(searchTerm, filterSource, searchMode);
         const input = searchInputRef.current;
         if (input) {
             input.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -178,8 +277,9 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
         if (!searchTerm) return;
         const medName = searchTerm;
 
-        // CHECK: Does it exist in the current search results (exact match, case insensitive)?
-        const existingInSearch = searchResults.find(r => r.name.toLowerCase() === medName.toLowerCase());
+        // CHECK: Does it exist in the current search results (exact match, case + accent insensitive)?
+        const normalizedSearch = normalizeText(medName);
+        const existingInSearch = searchResults.find(r => normalizeText(r.name) === normalizedSearch);
 
         if (existingInSearch) {
             // If found, treat as selecting existing (no new AI call, no new DB entry)
@@ -266,8 +366,8 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
         }
     };
 
-    const goToField = (field: 'diagnosis' | 'followUpRequestText') => {
-        const elementId = field === 'diagnosis' ? 'diagnosis-input' : 'follow-up-request-input';
+    const goToField = (field: 'diagnosis' | 'followUpRequestText' | 'noPrescriptionReasonText') => {
+        const elementId = field === 'diagnosis' ? 'diagnosis-input' : field === 'followUpRequestText' ? 'follow-up-request-input' : 'no-prescription-reason-input';
         const element = document.getElementById(elementId);
         if (element) {
             element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -280,6 +380,24 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-8 pb-10">
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2 text-slate-600 text-xs font-bold uppercase tracking-wider">
+                    <Eye className="w-4 h-4" /> Código de colores:
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200">
+                        <Eye className="w-3 h-3" /> Amarillo
+                    </span>
+                    <span className="text-xs text-slate-600">Visible para el paciente (receta, PDF)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                        <Lock className="w-3 h-3" /> Azul
+                    </span>
+                    <span className="text-xs text-slate-600">Interno (no se muestra al paciente)</span>
+                </div>
+            </div>
 
             {/* 0. DIAGNÓSTICO MÉDICO - MANDATORY */}
             <div className="space-y-4 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm">
@@ -303,6 +421,22 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                     />
                     {errors.diagnosis && (
                         <p className="text-[10px] text-red-500 mt-1 font-bold">Este campo es obligatorio para finalizar la consulta.</p>
+                    )}
+                    {diagnosis && diagnosis.trim() && (
+                        <div className="mt-2 flex items-center gap-2">
+                            {suggestedPathology ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                                    <Sparkles className="w-3 h-3" />
+                                    Patología detectada: <strong>{suggestedPathology.name}</strong>
+                                    <span className="text-emerald-600 font-normal">(se auto-seleccionará en el siguiente paso)</span>
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-[11px] font-medium">
+                                    <Microscope className="w-3 h-3" />
+                                    Sin patología detectada — selecciona manualmente si aplica
+                                </span>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>
@@ -341,6 +475,42 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                         </button>
                     </div>
 
+                    {/* MODO DE BÚSQUEDA: TODO vs SOLO MOLÉCULA */}
+                    <div className="flex items-center gap-2 p-1 bg-violet-50 rounded-xl w-fit border border-violet-100">
+                        <button
+                            type="button"
+                            onClick={() => handleSearchModeChange('all')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${searchMode === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            title="Buscar por nombre, marca O molécula"
+                        >
+                            🔍 Todo
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleSearchModeChange('molecule')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${searchMode === 'molecule' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            title="Buscar SOLO por principio activo (molécula)"
+                        >
+                            🧪 Solo molécula
+                        </button>
+                    </div>
+
+                    {/* QUICK-PICK: MOLÉCULAS COMUNES */}
+                    <div className="flex flex-wrap gap-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest self-center mr-1">Rápido:</span>
+                        {COMMON_MOLECULES.map(mol => (
+                            <button
+                                key={mol}
+                                type="button"
+                                onClick={() => handleQuickPickMolecule(mol)}
+                                className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 hover:bg-violet-100 text-slate-600 hover:text-violet-700 font-semibold border border-transparent hover:border-violet-200 transition-colors"
+                                title={`Buscar productos con ${mol}`}
+                            >
+                                {mol}
+                            </button>
+                        ))}
+                    </div>
+
                     <div className="flex gap-2">
                         <div className="relative flex-1">
                             <Search className="absolute left-3 top-3 text-slate-400 w-5 h-5" />
@@ -351,7 +521,7 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                                 onChange={handleSearchChange}
                                 onFocus={handleFocus}
                                 disabled={loading}
-                                placeholder={loading ? "Cargando catálogo..." : "Buscar por nombre, marca o principio activo..."}
+                                placeholder={loading ? "Cargando catálogo..." : (searchMode === 'molecule' ? "Buscar SOLO por principio activo..." : "Buscar por nombre, marca o principio activo...")}
                                 className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm bg-white text-slate-900 text-sm md:text-base disabled:bg-slate-50 disabled:text-slate-400"
                                 autoComplete="off"
                             />
@@ -376,38 +546,62 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                             exit={{ opacity: 0, y: -10 }}
                             className="fixed bg-white border border-slate-200 rounded-xl shadow-2xl overflow-y-auto z-[120] [scrollbar-width:auto] [scrollbar-color:#94a3b8_#e2e8f0] [&::-webkit-scrollbar]:w-4 [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:bg-slate-500 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-slate-200"
                         >
-                            {searchResults.length > 0 ? searchResults.map(med => (
-                                <li
-                                    key={med.id}
-                                    onMouseDown={(e) => { e.preventDefault(); addMedicine(med); }}
-                                    className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 flex justify-between group items-center"
-                                >
-                                    <div>
-                                        <span className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-emerald-700 text-sm">
-                                            {med.name}
-                                            {med.isExternal && (
-                                                <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
-                                                    <ExternalLink className="w-3 h-3" /> Externo
+                            {searchResults.length > 0 ? searchResults.map(med => {
+                                const matchType = getMatchType(med, searchTerm);
+                                return (
+                                    <li
+                                        key={med.id}
+                                        onMouseDown={(e) => { e.preventDefault(); addMedicine(med); }}
+                                        className="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 flex justify-between group items-center"
+                                    >
+                                        <div className="flex-1 min-w-0">
+                                            <span className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-emerald-700 text-sm flex-wrap">
+                                                <span>{highlightMatch(med.name, searchTerm)}</span>
+                                                {matchType === 'molecule' && (
+                                                    <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full border border-violet-200 font-semibold flex items-center gap-1" title="Coincidencia por molécula">
+                                                        🧪 Molécula
+                                                    </span>
+                                                )}
+                                                {matchType === 'name' && (
+                                                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200 font-semibold flex items-center gap-1" title="Coincidencia por nombre">
+                                                        💊 Nombre
+                                                    </span>
+                                                )}
+                                                {matchType === 'brand' && (
+                                                    <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200 font-semibold flex items-center gap-1" title="Coincidencia por marca">
+                                                        🏷️ Marca
+                                                    </span>
+                                                )}
+                                                {med.isExternal && (
+                                                    <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold flex items-center gap-1">
+                                                        <ExternalLink className="w-3 h-3" /> Externo
+                                                    </span>
+                                                )}
+                                            </span>
+                                            <span className="text-xs text-slate-500 block">
+                                                {med.presentation}
+                                                {med.brandName && (
+                                                    <> • Marca: <span className={matchType === 'brand' ? 'bg-blue-50 font-semibold' : ''}>{highlightMatch(med.brandName, searchTerm)}</span></>
+                                                )}
+                                                {med.activeIngredient && (
+                                                    <> • Principio activo: <span className={matchType === 'molecule' ? 'bg-violet-50 font-semibold text-violet-700' : ''}>{highlightMatch(med.activeIngredient, searchTerm)}</span></>
+                                                )}
+                                            </span>
+                                        </div>
+                                        <div className="text-right shrink-0 ml-2">
+                                            {(!med.isExternal && med.stock !== undefined) && (
+                                                <span className={`text-xs font-bold px-2 py-1 rounded ${med.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                    Stock: {med.stock}
                                                 </span>
                                             )}
-                                        </span>
-                                        <span className="text-xs text-slate-400 block">
-                                            {med.presentation}
-                                            {med.brandName && ` • Marca: ${med.brandName}`}
-                                            {med.activeIngredient && ` • Principio activo: ${med.activeIngredient}`}
-                                        </span>
-                                    </div>
-                                    <div className="text-right">
-                                        {(!med.isExternal && med.stock !== undefined) && (
-                                            <span className={`text-xs font-bold px-2 py-1 rounded ${med.stock > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                                Stock: {med.stock}
-                                            </span>
-                                        )}
-                                    </div>
-                                </li>
-                            )) : (
+                                        </div>
+                                    </li>
+                                );
+                            }) : (
                                 <li className="p-4 text-center text-slate-400 italic text-sm">
-                                    No se encontraron medicamentos con ese criterio.
+                                    {searchMode === 'molecule'
+                                        ? 'No se encontraron medicamentos con esa molécula. Intenta con otro nombre de molécula o cambia a modo "Todo".'
+                                        : 'No se encontraron medicamentos con ese criterio.'}
                                 </li>
                             )}
                         </motion.ul>
@@ -469,8 +663,26 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                         })}
                     </AnimatePresence>
                     {fields.length === 0 && (
-                        <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 text-sm">
-                            Busque un medicamento para agregarlo a la receta.
+                        <div className="p-6 border-2 border-dashed border-blue-300 rounded-xl bg-blue-50/30 flex flex-col gap-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-blue-800 font-bold">
+                                    <AlertTriangle className="w-5 h-5" />
+                                    Sin medicamentos recetados
+                                </div>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 uppercase tracking-wider">
+                                    <Lock className="w-3 h-3" /> Interno
+                                </span>
+                            </div>
+                            <p className="text-sm text-slate-600">
+                                Como no se han agregado medicamentos a la receta, es obligatorio indicar el motivo.
+                            </p>
+                            <textarea
+                                id="no-prescription-reason-input"
+                                {...register('noPrescriptionReasonText')}
+                                rows={2}
+                                placeholder="Ej: Se remite a especialista, alta médica, el paciente ya cuenta con medicación..."
+                                className="w-full text-sm bg-blue-50/50 border border-blue-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-400 focus:border-transparent placeholder:text-blue-300 text-blue-900 shadow-sm resize-none"
+                            />
                         </div>
                     )}
                 </div>
@@ -482,6 +694,9 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                         <StickyNote className="w-4 h-4" />
                     </div>
                     2. Observaciones y Recomendaciones
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200 uppercase tracking-wider ml-auto">
+                        <Eye className="w-3 h-3" /> Visible para el paciente
+                    </span>
                 </h4>
 
                 <div>
@@ -494,21 +709,24 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                         placeholder="Especifique reposo, dieta, cuidados de heridas, uso de compresas, signos de alarma..."
                         className="w-full text-sm bg-yellow-50/50 border border-yellow-200 rounded-xl p-4 focus:ring-2 focus:ring-yellow-400 focus:border-transparent placeholder:text-slate-400 text-yellow-900 shadow-sm resize-none"
                     />
-                    <p className="text-[10px] text-slate-400 mt-2 ml-1">Estas observaciones aparecerán impresas en la receta médica.</p>
+                    <p className="text-[10px] text-slate-400 mt-2 ml-1">Estas observaciones aparecerán impresas en la receta médica (color amarillo = visible para el paciente).</p>
                 </div>
 
                 <div className="mt-5">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block flex items-center gap-2">
                         <StickyNote className="w-3 h-3 text-yellow-600" /> Reconsulta / Próxima cita
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200 uppercase tracking-wider">
+                            <Eye className="w-2.5 h-2.5" /> Visible para el paciente
+                        </span>
                     </label>
                     <input
                         id="follow-up-request-input"
                         type="text"
                         {...register('followUpRequestText', { required: true })}
                         placeholder='Ej: Reconsulta en 2 semanas, en 6 meses, verlo en 10 días...'
-                        className={`w-full text-sm bg-white border rounded-xl p-3 focus:ring-2 focus:border-transparent placeholder:text-slate-400 text-slate-800 shadow-sm ${followUpTouched && !followUpRequestText?.trim()
+                        className={`w-full text-sm bg-yellow-50/50 border rounded-xl p-3 focus:ring-2 focus:border-transparent placeholder:text-slate-400 text-yellow-900 shadow-sm ${followUpTouched && !followUpRequestText?.trim()
                             ? 'border-red-300 focus:ring-red-200'
-                            : 'border-slate-200 focus:ring-brand-200'
+                            : 'border-yellow-200 focus:ring-yellow-200'
                             }`}
                         onBlur={(e) => {
                             setFollowUpTouched(true);
@@ -525,44 +743,6 @@ export const StepPrescription: React.FC<StepPrescriptionProps> = ({ currentUser,
                     )}
                 </div>
             </div>
-
-            {onFinish && (
-                <div className="pt-8 border-t flex flex-col items-center">
-                    <button
-                        type="button"
-                        onClick={onFinish}
-                        disabled={isSaving || !diagnosis?.trim() || !followUpRequestText?.trim()}
-                        className="w-full max-w-md py-4 bg-slate-900 text-white rounded-2xl font-bold text-xl shadow-2xl hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-3 transition-all transform active:scale-95"
-                    >
-                        {isSaving ? <Loader2 className="animate-spin w-6 h-6" /> : <Save className="w-6 h-6" />}
-                        Finalizar Consulta
-                    </button>
-                    {!diagnosis?.trim() && (
-                        <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse flex items-center gap-2">
-                            Debe ingresar un diagnóstico para finalizar.
-                            <button
-                                type="button"
-                                onClick={() => goToField('diagnosis')}
-                                className="px-2 py-0.5 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-200 transition"
-                            >
-                                Ir
-                            </button>
-                        </p>
-                    )}
-                    {diagnosis?.trim() && !followUpRequestText?.trim() && (
-                        <p className="mt-3 text-orange-600 font-bold text-xs animate-pulse flex items-center gap-2">
-                            Debe ingresar la reconsulta / próxima cita para finalizar.
-                            <button
-                                type="button"
-                                onClick={() => goToField('followUpRequestText')}
-                                className="px-2 py-0.5 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-200 transition"
-                            >
-                                Ir
-                            </button>
-                        </p>
-                    )}
-                </div>
-            )}
         </motion.div>
     );
 };
