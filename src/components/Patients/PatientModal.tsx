@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { X, Save, Loader2, UploadCloud, Camera, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Patient, PatientFile, UserProfile } from '../../types';
-import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES } from '../../data/geography.ts';
+import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES, getMunicipalitiesForDepartment } from '../../data/geography.ts';
 import { db, storage } from '../../firebase/config';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
@@ -158,7 +158,7 @@ const AddressSection = React.memo(({ address, onAddressChange }: AddressProps) =
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Municipio</label>
             <select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={address?.municipality} onChange={e => onAddressChange('municipality', e.target.value)}>
               <option value="">-- Seleccionar --</option>
-              {GT_DEPARTMENTS[address.department].map(m => <option key={m} value={m}>{m}</option>)}
+              {getMunicipalitiesForDepartment(address.department).map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
         )}

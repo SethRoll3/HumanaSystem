@@ -66,7 +66,6 @@ export const StepFinalize: React.FC<StepFinalizeProps> = ({ onFinish, isSaving, 
         if (!hasLabs) missing.push('exams');
         if (!specialtyReferrals?.length) missing.push('referrals');
         if (!nursingNotes?.trim()) missing.push('nursing');
-        if (!currentSignature) missing.push('signature');
 
         const allConfirmed = missing.every(key => confirmedKeys.has(key));
         setValue('isReadyToFinish', allConfirmed);

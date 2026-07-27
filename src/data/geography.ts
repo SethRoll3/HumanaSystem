@@ -181,3 +181,8 @@ export const GT_DEPARTMENTS: { [key: string]: string[] } = {
     "Usumatlán", "Cabañas", "San Diego", "La Unión", "Huité", "San Jorge"
   ]
 };
+
+export const getMunicipalitiesForDepartment = (department?: string): string[] => {
+  if (!department) return [];
+  return GT_DEPARTMENTS[department] ?? [];
+};

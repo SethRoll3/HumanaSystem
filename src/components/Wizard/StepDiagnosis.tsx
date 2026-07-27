@@ -127,7 +127,7 @@ export const StepDiagnosis: React.FC<StepDiagnosisProps> = ({ patient, currentUs
   const getOptionalExams = (c: Consultation) => {
       const allExams = c.exams || [];
       const groupedExams = new Set<string>();
-      c.referralGroups?.forEach(g => g.exams.forEach(e => groupedExams.add(e)));
+      c.referralGroups?.forEach(g => (g.exams ?? []).forEach(e => groupedExams.add(e)));
       return allExams.filter(e => !groupedExams.has(e));
   };
 

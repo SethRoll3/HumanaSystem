@@ -22,7 +22,6 @@ import { StepFinalize } from '../components/Wizard/StepFinalize';
 import { StepPrescription } from '../components/Wizard/StepPrescription';
 import { ConsultationDetail } from '../components/History/ConsultationDetail';
 import { HistoryList } from '../components/History/HistoryList';
-import { MedicineReviewPage } from '../components/Resident/MedicineReviewPage';
 import { MedicineNormalizationPage } from '../components/Resident/MedicineNormalizationPage';
 import { QuickPatientModal } from '../components/Patients/QuickPatientModal';
 import { PatientModal } from '../components/Patients/PatientModal';
@@ -149,7 +148,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const canConsult = isDoctor || isAdmin;
   const canCreate = isAdmin || isReceptionist;
 
-  const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'patients' | 'patient_detail' | 'admin' | 'history_detail' | 'settings' | 'my_schedule' | 'medicine_review' | 'medicine_normalization'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'history' | 'patients' | 'patient_detail' | 'admin' | 'history_detail' | 'settings' | 'my_schedule' | 'medicine_normalization'>('dashboard');
   const [allowDoctorSelfManage, setAllowDoctorSelfManage] = useState(false);
 
   // ESTADO PARA ALTERNAR VISTA AGENDA (Lista vs Calendario)
@@ -1046,8 +1045,6 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
           <UserProfileSettings user={user} />
         ) : activeView === 'admin' && isAdmin ? (
           <AdminPanel user={user} />
-        ) : activeView === 'medicine_review' && (isResident || isAdmin) ? (
-          <MedicineReviewPage currentUser={user} />
         ) : activeView === 'medicine_normalization' && (isResident || isAdmin) ? (
           <MedicineNormalizationPage currentUser={user} />
         ) : activeView === 'my_schedule' && isDoctor && allowDoctorSelfManage ? (

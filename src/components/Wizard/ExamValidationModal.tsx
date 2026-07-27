@@ -69,14 +69,14 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
     // Compute which steps are available
     const labGroups = useMemo(() => {
         return referralGroups.filter(g =>
-            g.exams.some(e => normalizeText(e).includes('laboratorio'))
+            (g.exams ?? []).some(e => normalizeText(e).includes('laboratorio'))
         );
     }, [referralGroups]);
 
     const hasLabs = labGroups.length > 0;
     const hasResonance = resonanceOrders.length > 0;
     const hasEeg = eegOrders.length > 0;
-    const emotionalExam = referralGroups.flatMap(g => g.exams).find(e => normalizeText(e).includes('evaluacion emocional'));
+    const emotionalExam = referralGroups.flatMap(g => g.exams ?? []).find(e => normalizeText(e).includes('evaluacion emocional'));
     const hasEmotional = !!emotionalExam;
 
     const allSteps: StepDescriptor[] = [
@@ -108,7 +108,7 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
                 if (selected.has(item)) doneItems++;
             }));
         });
-        return { complete: doneItems === totalItems, total: totalItems, done: doneItems };
+        return { complete: doneItems > 0, total: totalItems, done: doneItems };
     }, [hasLabs, labGroups]);
 
     const resonanceCompletion = useMemo(() => {
@@ -172,8 +172,8 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
         const group = groups.find(g => g.id === groupId);
         if (!group) return;
         const tag = `Laboratorios: ${labName}`;
-        if (group.exams.includes(tag)) {
-            group.exams = group.exams.filter(e => e !== tag);
+        if ((group.exams ?? []).includes(tag)) {
+            group.exams = (group.exams ?? []).filter(e => e !== tag);
         } else {
             group.exams = [...group.exams, tag];
         }
@@ -182,7 +182,7 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
 
     const isProtocolLabSelected = (groupId: string, labName: string) => {
         const group = referralGroups.find(g => g.id === groupId);
-        return group ? group.exams.includes(`Laboratorios: ${labName}`) : false;
+        return group ? (group.exams ?? []).includes(`Laboratorios: ${labName}`) : false;
     };
 
     const selectAllLabsInProtocol = (groupId: string) => {
@@ -193,7 +193,7 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
         const groups_protocol = LAB_PROTOCOLS[protocolKey];
         const allTags: string[] = [];
         groups_protocol.forEach(g => g.items.forEach(item => allTags.push(`Laboratorios: ${item}`)));
-        const filtered = group.exams.filter(e => !e.startsWith('Laboratorios:'));
+        const filtered = (group.exams ?? []).filter(e => !e.startsWith('Laboratorios:'));
         group.exams = [...filtered, ...allTags];
         setValue('referralGroups', groups, { shouldDirty: true });
     };
@@ -202,7 +202,7 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
         const groups = [...referralGroups];
         const group = groups.find(g => g.id === groupId);
         if (!group) return;
-        group.exams = group.exams.filter(e => !e.startsWith('Laboratorios:'));
+        group.exams = (group.exams ?? []).filter(e => !e.startsWith('Laboratorios:'));
         setValue('referralGroups', groups, { shouldDirty: true });
     };
 
@@ -212,7 +212,7 @@ export const ExamValidationModal: React.FC<ExamValidationModalProps> = ({
         const protocolKey = normalizeText(group.pathology).includes('parkinson') ? 'parkinson' : 'epilepsia';
         const groups_protocol = LAB_PROTOCOLS[protocolKey];
         const totalItems = groups_protocol.reduce((sum, g) => sum + g.items.length, 0);
-        const selectedCount = group.exams.filter(e => e.startsWith('Laboratorios:')).length;
+        const selectedCount = (group.exams ?? []).filter(e => e.startsWith('Laboratorios:')).length;
         return totalItems > 0 && selectedCount === totalItems;
     };
 

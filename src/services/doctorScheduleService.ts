@@ -68,12 +68,37 @@ export const doctorScheduleService = {
       where('doctorId', '==', doctorId),
       where('date', '==', dateKey)
     );
-    const snap = await getDocs(q);
-    const exceptions = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as DoctorDaySchedule));
-    
+
+    let exceptions: DoctorDaySchedule[] = [];
+    let queryFailed = false;
+    try {
+      const snap = await getDocs(q);
+      exceptions = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as DoctorDaySchedule));
+    } catch (queryError) {
+      console.error(`[Schedule] Error en query doctor_day_schedules para doctorId=${doctorId}, date=${dateKey}:`, queryError);
+      queryFailed = true;
+    }
+
+    if (exceptions.length === 0 && queryFailed) {
+      console.warn(`[Schedule] Query compuesta fallo. Usando fallback: query por doctorId y filtrando en memoria...`);
+      try {
+        const allSchedules = await this.getSchedulesByDoctor(doctorId);
+        exceptions = allSchedules.filter(s => s.date === dateKey);
+        if (exceptions.length > 0) {
+          console.log(`[Schedule] Fallback exitoso: encontro ${exceptions.length} schedule(s) para ${dateKey}`);
+        }
+      } catch (fallbackError) {
+        console.error(`[Schedule] Fallback tambien fallo:`, fallbackError);
+      }
+    }
+
     if (exceptions.length > 0) {
+      const ex = exceptions[0];
+      console.log(`[Schedule] Override diario encontrado: date=${ex.date}, mode=${ex.mode}, startTime=${ex.startTime}, endTime=${ex.endTime}`);
       return exceptions;
     }
+
+    console.warn(`[Schedule] No se encontro override diario para doctorId=${doctorId}, date=${dateKey}. Verificando weeklySchedule...`);
 
     // No exception found, fallback to weekly schedule
     const userDoc = await getDoc(doc(db, 'users', doctorId));
@@ -83,6 +108,7 @@ export const doctorScheduleService = {
         const dayOfWeek = date.getDay();
         const rule = userData.weeklySchedule[dayOfWeek];
         if (rule) {
+          console.log(`[Schedule] Usando weeklySchedule: dayOfWeek=${dayOfWeek}, mode=${rule.mode}, startTime=${rule.startTime}, endTime=${rule.endTime}`);
           return [{
             id: `weekly-${dateKey}`,
             doctorId,
@@ -96,6 +122,7 @@ export const doctorScheduleService = {
           }];
         }
       }
+      console.warn(`[Schedule] Doctor ${doctorId} no tiene weeklySchedule configurado para dayOfWeek=${date.getDay()}`);
     }
     
     return [];
@@ -123,11 +150,14 @@ export const doctorScheduleService = {
 
   async validateAppointmentForDoctor(doctorId: string, dateTime: Date): Promise<{ ok: boolean; message?: string }> {
     const schedules = await this.getSchedulesByDoctorAndDate(doctorId, dateTime);
+
     if (schedules.length === 0) {
+      console.warn(`[Schedule] validate: sin horarios para doctorId=${doctorId}. Permitiendo cita.`);
       return { ok: true };
     }
 
     const schedule = schedules[0];
+    console.log(`[Schedule] validate: usando schedule id=${schedule.id} date=${schedule.date} mode=${schedule.mode} start=${schedule.startTime} end=${schedule.endTime}`);
 
     if (schedule.mode === 'unavailable') {
       return {
@@ -146,7 +176,11 @@ export const doctorScheduleService = {
       const windowEnd = new Date(dateTime);
       windowEnd.setHours(endHour, endMin, 0, 0);
 
+      const appointmentTime = `${String(dateTime.getHours()).padStart(2, '0')}:${String(dateTime.getMinutes()).padStart(2, '0')}`;
+      console.log(`[Schedule] validate: appointmentTime=${appointmentTime}, window=[${schedule.startTime}, ${schedule.endTime}), dateTime=${dateTime.toISOString()}, windowEnd=${windowEnd.toISOString()}`);
+
       if (dateTime < windowStart || dateTime >= windowEnd) {
+        console.warn(`[Schedule] validate: RECHAZADA - ${appointmentTime} fuera de ventana [${schedule.startTime}, ${schedule.endTime})`);
         return {
           ok: false,
           message: `El doctor solo atiende de ${schedule.startTime} a ${schedule.endTime} ese día.`,

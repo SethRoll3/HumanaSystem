@@ -361,8 +361,8 @@ export const SpecialtyFormsAdmin: React.FC = () => {
                       onChange={e => {
                         const value = e.target.value;
                         if (!value) return;
-                        if (selectedForm.specialties.includes(value)) return;
-                        const next = [...selectedForm.specialties, value];
+                        if ((selectedForm.specialties ?? []).includes(value)) return;
+                        const next = [...(selectedForm.specialties ?? []), value];
                         console.log('[SpecialtyFormsAdmin] Añadiendo especialidad a ficha', {
                           formId: selectedForm.id,
                           value,
@@ -374,7 +374,7 @@ export const SpecialtyFormsAdmin: React.FC = () => {
                     >
                       <option value="">Seleccionar especialidad...</option>
                       {specialties
-                        .filter(s => !selectedForm.specialties.includes(s.name))
+                        .filter(s => !(selectedForm.specialties ?? []).includes(s.name))
                         .map(spec => (
                           <option key={spec.id || spec.name} value={spec.name}>
                             {spec.name}
@@ -382,7 +382,7 @@ export const SpecialtyFormsAdmin: React.FC = () => {
                         ))}
                     </select>
                     <div className="flex flex-wrap gap-2">
-                      {selectedForm.specialties.map(name => (
+                      {(selectedForm.specialties ?? []).map(name => (
                         <button
                           key={name}
                           type="button"
@@ -398,7 +398,7 @@ export const SpecialtyFormsAdmin: React.FC = () => {
                           <span className="text-[10px] opacity-70">×</span>
                         </button>
                       ))}
-                      {selectedForm.specialties.length === 0 && (
+                      {(selectedForm.specialties ?? []).length === 0 && (
                         <span className="text-[11px] text-slate-400">
                           Ninguna especialidad asignada.
                         </span>
@@ -591,7 +591,7 @@ export const SpecialtyFormsAdmin: React.FC = () => {
                                 }}
                               >
                                 <option value="">Sin condición</option>
-                                {selectedForm.sections
+                                {(selectedForm.sections ?? [])
                                   .flatMap(s => s.fields)
                                   .filter(f => f.id !== field.id && f.type !== 'header' && f.type !== 'subHeader')
                                   .filter(isYesNoField)

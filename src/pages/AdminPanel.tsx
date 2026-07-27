@@ -13,7 +13,7 @@ import { createSystemUser, updateSystemUser } from '../services/userService.ts';
 import { checkPatientDuplicates, createPatient } from '../services/patientService.ts';
 import { getSpecialties } from '../services/inventoryService.ts';
 import { generateSystemBackup, restoreSystemBackup, getBackupSettings, saveBackupSettings, generateReadableExcelReport } from '../services/backupService.ts';
-import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES } from '../data/geography.ts';
+import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES, getMunicipalitiesForDepartment } from '../data/geography.ts';
 import { UserModal } from '../components/Admin/UserModal.tsx';
 import { AccountingDashboard } from '../components/Admin/AccountingDashboard.tsx';
 import { SpecialtyFormsAdmin } from '../components/Admin/SpecialtyFormsAdmin.tsx';
@@ -402,7 +402,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
       setPhotoMimeType('image/jpeg');
 
       if (activeTab === 'pathologies' && item?.exams) {
-          setFormValues({ ...item, exams: item.exams.join(', ') });
+          setFormValues({ ...item, exams: (item.exams ?? []).join(', ') });
       } else if (activeTab === 'patients' && item) {
           setFormValues(item);
           setIsNoResponsible(item.responsibleName === 'No hay');
@@ -939,7 +939,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user }) => {
                                 <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">País</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.address?.country} onChange={e => handleUpdateAddress('country', e.target.value)}>{COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
                                     {formValues.address?.country === 'Guatemala' && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Departamento</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.address?.department} onChange={e => handleUpdateAddress('department', e.target.value)}><option value="">-- Seleccionar --</option>{Object.keys(GT_DEPARTMENTS).map(d => <option key={d} value={d}>{d}</option>)}</select></div>}
-                                    {formValues.address?.department && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Municipio</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.address?.municipality} onChange={e => handleUpdateAddress('municipality', e.target.value)}><option value="">-- Seleccionar --</option>{GT_DEPARTMENTS[formValues.address.department].map(m => <option key={m} value={m}>{m}</option>)}</select></div>}
+                                    {formValues.address?.department && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Municipio</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.address?.municipality} onChange={e => handleUpdateAddress('municipality', e.target.value)}><option value="">-- Seleccionar --</option>{getMunicipalitiesForDepartment(formValues.address.department).map(m => <option key={m} value={m}>{m}</option>)}</select></div>}
                                     {formValues.address?.department === 'Guatemala' && hasZones(formValues.address.municipality) && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Zona</label><select className="w-full p-4 bg-white border border-slate-200 rounded-2xl" value={formValues.address?.zone} onChange={e => handleUpdateAddress('zone', e.target.value)}><option value="">-- Zona --</option>{GT_ZONES.map(z => <option key={z} value={z}>{z}</option>)}</select></div>}
                                 </div>
 

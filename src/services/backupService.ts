@@ -243,7 +243,7 @@ export const generateReadableExcelReport = async (userEmail: string) => {
             ).join('\n') || '';
 
             const labsStr = [
-                ...(c.referralGroups?.map((g: any) => `[${g.pathology}]: ${g.exams.join(', ')}${g.note ? ' Nota: ' + g.note : ''}`) || []),
+                ...(c.referralGroups?.map((g: any) => `[${g.pathology}]: ${(g.exams ?? []).join(', ')}${g.note ? ' Nota: ' + g.note : ''}`) || []),
                 ...(c.exams || []).map((e: string) => `• ${e}`)
             ].join('\n');
 

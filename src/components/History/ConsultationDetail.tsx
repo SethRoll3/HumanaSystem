@@ -412,7 +412,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             {(consultation.referralGroups?.length || 0) > 0 || (consultation.exams && consultation.exams.length > 0) ? (
                                 <div className="space-y-3">
                                     {consultation.referralGroups?.map((g, idx) => {
-                                        const filteredExams = g.exams.filter(exam => {
+                                        const filteredExams = (g.exams ?? []).filter(exam => {
                                             const normalized = exam.toLowerCase();
                                             const isLabToggle = normalized.includes('laboratorios') && !exam.startsWith('Laboratorios:');
                                             return !isLabToggle;
@@ -423,7 +423,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                                             <p className="text-xs text-blue-600 mt-1">{filteredExams.join(', ')}</p>
                                         </div>
                                     )})}
-                                    {consultation.exams?.filter(e => !consultation.referralGroups?.some(g => g.exams.includes(e))).map(e => (
+                                    {consultation.exams?.filter(e => !consultation.referralGroups?.some(g => (g.exams ?? []).includes(e))).map(e => (
                                         <div key={e} className="text-xs bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 inline-block mr-2 mb-2">{e}</div>
                                     ))}
                                     {consultation.emotionalEvaluationSelections && consultation.emotionalEvaluationSelections.length > 0 && (

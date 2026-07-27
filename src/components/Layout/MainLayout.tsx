@@ -4,13 +4,11 @@ import { useState, useEffect } from 'react';
 import { LogOut, Activity, ClipboardList, Ticket, Menu, X, Bell, CheckCircle, ShieldCheck, Settings, AlertTriangle, Download, Check, Calendar, Users, Pill, FlaskConical } from 'lucide-react';
 import { UserProfile, AppNotification } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { collection, query, where, onSnapshot, orderBy, doc, updateDoc, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config.ts';
 import { getBackupSettings, generateSystemBackup } from '../../services/backupService.ts';
 import { toast } from 'sonner';
 import { LOGOLARGO_BASE64 } from '../../data/assets.ts';
-import { DataQualityReport } from '../Admin/DataQualityReport.tsx';
-import { doctorScheduleService } from '../../services/doctorScheduleService.ts';
 
 interface MainLayoutProps {
   user: UserProfile;
@@ -18,8 +16,8 @@ interface MainLayoutProps {
   children: React.ReactNode;
   currentTitle?: string;
   onBack?: () => void;
-  activeView: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule' | 'medicine_review' | 'medicine_normalization';
-  onViewChange: (view: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule' | 'medicine_review' | 'medicine_normalization') => void;
+  activeView: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule' | 'medicine_normalization';
+  onViewChange: (view: 'dashboard' | 'history' | 'patients' | 'admin' | 'settings' | 'my_schedule' | 'medicine_normalization') => void;
   allowDoctorSelfManage?: boolean;
 }
 
@@ -54,7 +52,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [showBackupAlert, setShowBackupAlert] = useState(false);
-  const [showQualityReport, setShowQualityReport] = useState(false);
 
   const isReceptionist = user.role === 'receptionist';
   const isAdmin = user.role === 'admin';
@@ -93,54 +90,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     };
     checkBackupStatus();
     const interval = setInterval(checkBackupStatus, 3600000);
-    return () => clearInterval(interval);
-  }, [isAdmin]);
-
-  // --- DAILY QUALITY REPORT CHECK (Admin only) ---
-  useEffect(() => {
-    if (!isAdmin) return;
-
-    const checkReportTime = async () => {
-      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
-      const lastReviewed = localStorage.getItem('qualityReport_lastReviewed');
-      
-      // 1. Check local storage first (fastest)
-      if (lastReviewed === todayStr) return;
-
-      try {
-        // 2. Fallback: Check Firestore to see if ANY admin already reviewed it today
-        const q = query(
-          collection(db, 'quality_reviews'),
-          where('dateKey', '==', todayStr)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          localStorage.setItem('qualityReport_lastReviewed', todayStr);
-          return;
-        }
-
-        // 3. Check if it's already past the trigger time
-        const settings = await doctorScheduleService.getGlobalSettings();
-        const triggerTimeStr = settings.qualityReportTime || '16:00';
-        const [trigHour, trigMin] = triggerTimeStr.split(':').map(Number);
-
-        const now = new Date();
-        // Use Guatemala time for comparison
-        const gtNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Guatemala' }));
-        const currentHour = gtNow.getHours();
-        const currentMin = gtNow.getMinutes();
-
-        // Trigger if current time is >= configured time
-        if (currentHour > trigHour || (currentHour === trigHour && currentMin >= trigMin)) {
-          setShowQualityReport(true);
-        }
-      } catch (err) {
-        console.error("Error fetching quality report settings", err);
-      }
-    };
-
-    checkReportTime();
-    const interval = setInterval(checkReportTime, 60000); // Check every minute
     return () => clearInterval(interval);
   }, [isAdmin]);
 
@@ -205,7 +154,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     { id: 'dashboard', label: 'Gestión / Check-In', icon: Ticket, show: true, onClick: () => onViewChange('dashboard') },
     { id: 'history', label: 'Historiales', icon: ClipboardList, show: true, onClick: () => onViewChange('history') },
     { id: 'patients', label: 'Pacientes', icon: Users, show: true, onClick: () => onViewChange('patients') },
-    { id: 'medicine_review', label: 'Control de Calidad', icon: Pill, show: isResident || isAdmin, onClick: () => onViewChange('medicine_review') },
     { id: 'medicine_normalization', label: 'Normalización', icon: FlaskConical, show: isResident || isAdmin, onClick: () => onViewChange('medicine_normalization') },
     { id: 'admin', label: 'Panel Administrativo', icon: ShieldCheck, show: isAdmin, onClick: () => onViewChange('admin') },
     { id: 'my_schedule', label: 'Mi Horario', icon: Calendar, show: isDoctor && allowDoctorSelfManage, onClick: () => onViewChange('my_schedule') },
@@ -346,13 +294,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         </header>
         <div className="flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
       </main>
-
-      {/* DAILY QUALITY REPORT MODAL (Admin only) */}
-      <DataQualityReport
-        isOpen={showQualityReport}
-        onConfirm={() => setShowQualityReport(false)}
-        currentUser={user}
-      />
     </div>
   );
 };

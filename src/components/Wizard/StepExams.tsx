@@ -115,7 +115,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
 
   // State for validation modal
   const [validationModalOpen, setValidationModalOpen] = useState(false);
-  const [validationModalDismissed, setValidationModalDismissed] = useState(false);
+  const [dismissedExamSignature, setDismissedExamSignature] = useState('');
 
   // Watchers
   const referralGroups: ReferralGroup[] = watch('referralGroups') || [];
@@ -207,7 +207,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
 
   useEffect(() => {
       const allExams: string[] = [];
-      referralGroups.forEach(group => group.exams.forEach(exam => allExams.push(exam)));
+      referralGroups.forEach(group => (group.exams ?? []).forEach(exam => allExams.push(exam)));
       const optionalExams = getValues('exams') || [];
       optionalExams.forEach((exam: string) => allExams.push(exam));
       const unique = Array.from(new Set(allExams));
@@ -236,7 +236,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
 
   useEffect(() => {
       const allExams: string[] = [];
-      referralGroups.forEach(group => group.exams.forEach(exam => allExams.push(exam)));
+      referralGroups.forEach(group => (group.exams ?? []).forEach(exam => allExams.push(exam)));
       const optionalExams = getValues('exams') || [];
       optionalExams.forEach((exam: string) => allExams.push(exam));
       const unique = Array.from(new Set(allExams));
@@ -363,7 +363,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
       const groupIndex = currentGroups.findIndex(g => g.id === groupId);
 
-      const allExams = [...selectedPathology.exams];
+      const allExams = [...(selectedPathology.exams ?? [])];
       if (groupIndex === -1) {
           currentGroups.push({ id: groupId, pathology: selectedPathology.name, exams: allExams, note: '' });
       } else {
@@ -373,7 +373,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
           };
       }
       setValue('referralGroups', currentGroups);
-      setValidationModalDismissed(false);
+      setDismissedExamSignature('');
       setValidationModalOpen(true);
   };
 
@@ -485,8 +485,8 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       const currentGroups = [...(getValues('referralGroups') || [])] as ReferralGroup[];
       const group = currentGroups.find(g => g.id === groupId);
       if (!group) return;
-      const before = group.exams.length;
-      group.exams = group.exams.filter(exam => !exam.startsWith('Laboratorios:'));
+      const before = (group.exams ?? []).length;
+      group.exams = (group.exams ?? []).filter(exam => !exam.startsWith('Laboratorios:'));
       if (group.exams.length === 0 && !group.note) {
           setValue('referralGroups', currentGroups.filter(g => g.id !== groupId));
           return;
@@ -494,10 +494,10 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       if (group.exams.length !== before) setValue('referralGroups', currentGroups);
   }, [isLabProtocolActive, selectedPathology, getValues, setValue]);
 
-  // Auto-open validation modal when exams that require data are selected
+  // Auto-open validation modal when NEW exam types that require data are selected
   useEffect(() => {
       const allExamsList: string[] = [];
-      referralGroups.forEach(group => group.exams.forEach(exam => allExamsList.push(exam)));
+      referralGroups.forEach(group => (group.exams ?? []).forEach(exam => allExamsList.push(exam)));
       const optionalExams = getValues('exams') || [];
       optionalExams.forEach((exam: string) => allExamsList.push(exam));
       const unique = Array.from(new Set(allExamsList));
@@ -510,10 +510,17 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
       const hasEmotionalEval = unique.some(exam => normalizeText(exam).includes('evaluacion emocional'));
       const hasLabs = unique.some(exam => normalizeText(exam).includes('laboratorio'));
 
-      if ((hasResonance || hasEeg || hasEmotionalEval || hasLabs) && !validationModalOpen && !validationModalDismissed) {
+      const currentSignature = [hasResonance, hasEeg, hasEmotionalEval, hasLabs].join(',');
+
+      if ((hasResonance || hasEeg || hasEmotionalEval || hasLabs) && !validationModalOpen) {
+          // Check if any NEW type appeared since last dismissal
+          if (dismissedExamSignature && currentSignature === dismissedExamSignature) {
+              return; // Same types, don't re-open
+          }
+          // New type detected or never dismissed - open modal
           setValidationModalOpen(true);
       }
-  }, [referralGroups, validationModalOpen, validationModalDismissed, getValues]);
+  }, [referralGroups, validationModalOpen, dismissedExamSignature, getValues]);
 
   // --- OPTIONAL CATEGORIES LOGIC ---
   const toggleOptionalCategory = (type: string) => {
@@ -530,7 +537,7 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
 
   const allExams = (() => {
       const list: string[] = [];
-      referralGroups.forEach(group => group.exams.forEach(exam => list.push(exam)));
+      referralGroups.forEach(group => (group.exams ?? []).forEach(exam => list.push(exam)));
       const optionalExams = getValues('exams') || [];
       optionalExams.forEach((exam: string) => list.push(exam));
       return Array.from(new Set(list));
@@ -812,6 +819,9 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1 flex items-center gap-1">
                                         <StickyNote className="w-3 h-3"/> Nota para {group.pathology} (Opcional)
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200 ml-1">
+                                            <Eye className="w-2 h-2" /> Visible para el paciente
+                                        </span>
                                     </label>
                                     <textarea 
                                         rows={2}
@@ -1225,6 +1235,9 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
             <div>
                  <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
                    <FileText className="w-4 h-4 text-brand-600" /> Nota de Referencia General
+                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200">
+                       <Eye className="w-2.5 h-2.5" /> Visible para el paciente
+                   </span>
                  </label>
                  <textarea 
                     rows={4}
@@ -1239,7 +1252,23 @@ export const StepExams: React.FC<StepExamsProps> = ({ userSpecialties, patient, 
             open={validationModalOpen}
             onClose={() => {
                 setValidationModalOpen(false);
-                setValidationModalDismissed(true);
+                // Save current exam types signature so we only re-open for NEW types
+                const allExamsList: string[] = [];
+                referralGroups.forEach(group => (group.exams ?? []).forEach(exam => allExamsList.push(exam)));
+                const optionalExams = getValues('exams') || [];
+                optionalExams.forEach((exam: string) => allExamsList.push(exam));
+                const unique = Array.from(new Set(allExamsList));
+                const sig = [
+                    unique.some(exam => normalizeText(exam).includes('resonancia')),
+                    unique.some(exam => {
+                        const norm = normalizeText(exam).replace(/[^a-z0-9]/g, '');
+                        return norm.includes('eeg') || norm.includes('electroencefalograma')
+                            || norm.includes('videoencefalograma') || norm.includes('videoeeg');
+                    }),
+                    unique.some(exam => normalizeText(exam).includes('evaluacion emocional')),
+                    unique.some(exam => normalizeText(exam).includes('laboratorio'))
+                ].join(',');
+                setDismissedExamSignature(sig);
             }}
             referralGroups={referralGroups}
             resonanceOrders={resonanceOrders}

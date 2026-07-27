@@ -387,7 +387,7 @@ export const generateNursingPDF = async (
             return !isLabToggle;
         };
         consultation.referralGroups?.forEach(g => {
-            const filtered = g.exams.filter(shouldIncludeExam);
+            const filtered = (g.exams ?? []).filter(shouldIncludeExam);
             if (filtered.length === 0 && !g.note) return;
             labsRows.push(`[${g.pathology}]`);
             filtered.forEach(e => labsRows.push(`• ${e}`));
@@ -837,7 +837,7 @@ export const generateExamsPDF = async (
             const isLabToggle = normalized.includes('laboratorios') && !exam.startsWith('Laboratorios:');
             return !isLabToggle;
         };
-        consultation.referralGroups?.forEach(g => g.exams.forEach(e => {
+        consultation.referralGroups?.forEach(g => (g.exams ?? []).forEach(e => {
             if (shouldIncludeExam(e)) uniqueExams.add(e);
         }));
         consultation.exams?.forEach(e => {

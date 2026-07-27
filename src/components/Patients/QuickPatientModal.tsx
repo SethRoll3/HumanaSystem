@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { checkPatientDuplicates, createPatient } from '../../services/patientService.ts';
 import { logAuditAction } from '../../services/auditService.ts';
 import { Patient, PatientFile, UserProfile } from '../../../types.ts';
-import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES } from '../../data/geography.ts';
+import { COUNTRIES, GT_DEPARTMENTS, GT_ZONES, MUNICIPALITIES_WITH_ZONES, getMunicipalitiesForDepartment } from '../../data/geography.ts';
 import { db, storage } from '../../firebase/config.ts';
 import { doc, updateDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
@@ -527,7 +527,7 @@ export const QuickPatientModal: React.FC<QuickPatientModalProps> = ({ onClose, c
                                         onChange={(e) => updateAddress('municipality', e.target.value)}
                                     >
                                         <option value="">-- Seleccionar --</option>
-                                        {GT_DEPARTMENTS[form.address.department].sort().map(m => <option key={m} value={m}>{m}</option>)}
+                                        {getMunicipalitiesForDepartment(form.address.department).sort().map(m => <option key={m} value={m}>{m}</option>)}
                                     </select>
                                 </div>
                             )}

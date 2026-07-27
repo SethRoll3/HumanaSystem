@@ -50,6 +50,7 @@ update-remaining-medicines.mjs
 wipe-schedules.js
 import-users.js
 resume-migration.js
+AGENTS.md
 
 # Excel reports (datos sensibles)
 *.xlsx
