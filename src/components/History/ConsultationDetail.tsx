@@ -1,7 +1,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool, Scale, Wind, Droplets, Activity, Thermometer, Stethoscope } from 'lucide-react';
+import { User, Phone, History, HeartPulse, Pill, FlaskConical, Share2, ShieldCheck, CheckCircle, CircleSlash, FileCheck, Clock, ArrowLeft, Printer, Loader2, AlertTriangle, FileText, Download, X, Paperclip, Image, ExternalLink, PenTool, Scale, Wind, Droplets, Activity, Thermometer, Stethoscope, Eye } from 'lucide-react';
 import { Consultation, Patient, UserProfile } from '../../types.ts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EditConsultationModal } from './EditConsultationModal';
@@ -597,7 +597,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         >
                             <Pill className={`w-8 h-8 mb-3 ${consultation.printedDocs?.prescription ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
                             <span className="font-bold text-sm">
-                                {isDoctor && !isNurseOrAdmin ? 'Descargar Receta' : 'Imprimir Receta'}
+                                {isDoctor && !isNurseOrAdmin ? 'Ver Receta' : 'Imprimir Receta'}
                             </span>
                             {consultation.printedDocs?.prescription && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                         </button>
@@ -609,7 +609,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         >
                             <FlaskConical className={`w-8 h-8 mb-3 ${consultation.printedDocs?.labs ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
                             <span className="font-bold text-sm">
-                                {isDoctor && !isNurseOrAdmin ? 'Descargar Labs' : 'Imprimir Labs'}
+                                {isDoctor && !isNurseOrAdmin ? 'Ver Labs' : 'Imprimir Labs'}
                             </span>
                             {consultation.printedDocs?.labs && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                         </button>
@@ -621,7 +621,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             >
                                 <FileCheck className={`w-8 h-8 mb-3 ${consultation.printedDocs?.resonanceOrders ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
                                 <span className="font-bold text-sm">
-                                    {isDoctor && !isNurseOrAdmin ? 'Descargar Órdenes RM' : 'Imprimir Órdenes RM'}
+                                    {isDoctor && !isNurseOrAdmin ? 'Ver Órdenes RM' : 'Imprimir Órdenes RM'}
                                 </span>
                                 {consultation.printedDocs?.resonanceOrders && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                             </button>
@@ -634,7 +634,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                             >
                                 <FileCheck className={`w-8 h-8 mb-3 ${consultation.printedDocs?.eegOrders ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
                                 <span className="font-bold text-sm">
-                                    {isDoctor && !isNurseOrAdmin ? 'Descargar Órdenes EEG' : 'Imprimir Órdenes EEG'}
+                                    {isDoctor && !isNurseOrAdmin ? 'Ver Órdenes EEG' : 'Imprimir Órdenes EEG'}
                                 </span>
                                 {consultation.printedDocs?.eegOrders && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                             </button>
@@ -646,7 +646,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         >
                             <FileText className={`w-8 h-8 mb-3 ${consultation.printedDocs?.report ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
                             <span className="font-bold text-sm">
-                                {isDoctor && !isNurseOrAdmin ? 'Descargar Reporte para Enfermería' : 'Imprimir Reporte para Enfermería'}
+                                {isDoctor && !isNurseOrAdmin ? 'Ver Reporte para Enfermería' : 'Imprimir Reporte para Enfermería'}
                             </span>
                             {consultation.printedDocs?.report && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                         </button>
@@ -657,7 +657,7 @@ export const ConsultationDetail: React.FC<ConsultationDetailProps> = ({
                         >
                             <FileText className={`w-8 h-8 mb-3 ${consultation.printedDocs?.fullFicha ? 'text-emerald-600' : 'text-slate-400 group-hover:text-brand-500'}`} />
                             <span className="font-bold text-sm">
-                                {isDoctor && !isNurseOrAdmin ? 'Descargar Ficha Completa' : 'Imprimir Ficha Completa'}
+                                {isDoctor && !isNurseOrAdmin ? 'Ver Ficha Completa' : 'Imprimir Ficha Completa'}
                             </span>
                             {consultation.printedDocs?.fullFicha && <span className="text-[10px] mt-1 font-bold uppercase tracking-wider flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Impreso</span>}
                         </button>

@@ -43,6 +43,7 @@ import { appointmentService } from '../services/appointmentService';
 import { userService } from '../services/userService';
 import { notifyConsultationFinished, notifyReceptionFollowUp } from '../services/notificationService';
 import { generatePrescriptionPDF, generateExamsPDF, generateNursingPDF, generateFullFichaPDF, generateResonanceOrdersPDF, generateEegOrdersPDF } from '../services/pdfService';
+import { PdfViewerModal } from '../components/ui/PdfViewerModal';
 import { specialtyFormsService } from '../services/specialtyFormsService';
 import { doctorScheduleService } from '../services/doctorScheduleService';
 import { logAuditAction } from '../services/auditService.ts';
@@ -180,6 +181,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const [showResidentIntakeModal, setShowResidentIntakeModal] = useState(false);
   const [showResidentClinicalModal, setShowResidentClinicalModal] = useState(false);
   const [residentClinicalAppointment, setResidentClinicalAppointment] = useState<Appointment | null>(null);
+  const [pdfModal, setPdfModal] = useState<{ blobUrl: string; filename: string } | null>(null);
   const [residentClinicalPatient, setResidentClinicalPatient] = useState<Patient | null>(null);
 
   // Estados para Entrega con Excepciones (Enfermería)
@@ -681,7 +683,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
   const handlePrintDoc = async (type: 'prescription' | 'labs' | 'report' | 'full_ficha' | 'resonance_orders' | 'eeg_orders') => {
     if (!selectedHistoryConsultation || !historyPatient) return;
     try {
-      const action: 'download' | 'print' = (isDoctor && !isNurse && !isAdmin) ? 'download' : 'print';
+      const action: 'download' | 'print' | 'blob' = (isDoctor && !isNurse && !isAdmin) ? 'blob' : 'print';
       let consultationToPrint = selectedHistoryConsultation;
 
       let doctorProfileForPdf = user;
@@ -704,6 +706,9 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
         }
       }
 
+      let blobUrl: string | null = null;
+      let pdfFilename = '';
+
       if (type === 'prescription') {
         if (!consultationToPrint.prescriptionNumber) {
           const prescriptionNumber = await generateUniquePrescriptionNumber();
@@ -714,17 +719,27 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
           consultationToPrint = { ...consultationToPrint, prescriptionNumber };
           setSelectedHistoryConsultation(prev => prev ? ({ ...prev, prescriptionNumber }) : prev);
         }
-        await generatePrescriptionPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+        pdfFilename = `Receta_${historyPatient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        blobUrl = await generatePrescriptionPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action) ?? null;
       } else if (type === 'labs') {
-        await generateExamsPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+        pdfFilename = `Laboratorios_${historyPatient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        blobUrl = await generateExamsPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action) ?? null;
       } else if (type === 'report') {
-        await generateNursingPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+        pdfFilename = `Reporte_${historyPatient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        blobUrl = await generateNursingPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action) ?? null;
       } else if (type === 'resonance_orders') {
-        await generateResonanceOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+        pdfFilename = `Ordenes_Resonancia_${historyPatient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        blobUrl = await generateResonanceOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action) ?? null;
       } else if (type === 'eeg_orders') {
-        await generateEegOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+        pdfFilename = `Ordenes_EEG_${historyPatient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        blobUrl = await generateEegOrdersPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action) ?? null;
       } else {
-        await generateFullFichaPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action);
+        pdfFilename = `FichaCompleta_${historyPatient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+        blobUrl = await generateFullFichaPDF(consultationToPrint, historyPatient, doctorProfileForPdf, action) ?? null;
+      }
+
+      if (action === 'blob' && blobUrl) {
+        setPdfModal({ blobUrl, filename: pdfFilename });
       }
 
       if (!isDoctor && (isNurse || isAdmin || isReceptionist) && selectedHistoryConsultation.status !== 'delivered') {
@@ -762,7 +777,7 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
                 : type === 'full_ficha'
                   ? 'ficha completa'
                   : 'receta';
-      toast.success(`${action === 'print' ? 'Imprimiendo' : 'Descargando'} ${label}...`);
+      toast.success(action === 'blob' ? `Abriendo ${label}...` : `${action === 'print' ? 'Imprimiendo' : 'Descargando'} ${label}...`);
     } catch (e) {
       console.error("Error al generar documento", e);
       toast.error("Error al generar documento");
@@ -1955,6 +1970,13 @@ export const DoctorStation: React.FC<DoctorStationProps> = ({ user, onLogout }) 
           onSaveComplete={handleResidentClinicalSaved}
         />
       )}
+
+      <PdfViewerModal
+        isOpen={!!pdfModal}
+        onClose={() => setPdfModal(null)}
+        blobUrl={pdfModal?.blobUrl || ''}
+        filename={pdfModal?.filename || ''}
+      />
     </MainLayout>
   );
 };

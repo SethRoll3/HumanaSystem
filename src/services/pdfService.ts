@@ -68,7 +68,7 @@ const loadPdfLibs = async () => {
   }
 };
 
-type PdfOutputAction = 'download' | 'print' | 'preview';
+type PdfOutputAction = 'download' | 'print' | 'preview' | 'blob';
 
 const handlePdfOutput = (doc: any, filename: string, action: PdfOutputAction) => {
     if (action === 'print') {
@@ -78,9 +78,13 @@ const handlePdfOutput = (doc: any, filename: string, action: PdfOutputAction) =>
     } else if (action === 'preview') {
         const blob = doc.output('bloburl');
         window.open(blob, '_blank');
+    } else if (action === 'blob') {
+        // Return blob URL for modal viewer (handled by caller)
+        return doc.output('bloburl');
     } else {
         doc.save(filename);
     }
+    return null;
 };
 
 // --- MARCA DE AGUA (SUTIL Y ELEGANTE) ---
@@ -524,7 +528,7 @@ export const generateNursingPDF = async (
 
         await drawSignature(pdfDoc, currentY, doctor, consultation);
 
-        handlePdfOutput(pdfDoc, `ReporteConsulta_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+        return handlePdfOutput(pdfDoc, `ReporteConsulta_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
 
     } catch (error) {
         console.error("PDF Nursing Generation Error", error);
@@ -660,7 +664,7 @@ export const generateFullFichaPDF = async (
 
         await drawSignature(pdfDoc, currentY, doctor, consultation);
 
-        handlePdfOutput(
+        return handlePdfOutput(
             pdfDoc,
             `FichaClinica_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`,
             action
@@ -797,7 +801,7 @@ export const generatePrescriptionPDF = async (
     
     await drawSignature(doc, currentY, doctor, consultation);
 
-    handlePdfOutput(doc, `Receta_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+    return handlePdfOutput(doc, `Receta_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
 
   } catch (error) {
     console.error("PDF Generation Error", error);
@@ -895,7 +899,7 @@ export const generateExamsPDF = async (
 
         await drawSignature(doc, currentY, doctor, consultation);
 
-        handlePdfOutput(doc, `Laboratorios_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+        return handlePdfOutput(doc, `Laboratorios_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
 
     } catch (error) {
         console.error("PDF Generation Error", error);
@@ -1028,7 +1032,7 @@ export const generateResonanceOrdersPDF = async (
         };
 
         orders.forEach(drawOrder);
-        handlePdfOutput(doc, `Ordenes_Resonancia_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+        return handlePdfOutput(doc, `Ordenes_Resonancia_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
     } catch (error) {
         console.error("PDF Generation Error", error);
         alert("Error generando PDF de órdenes de resonancia.");
@@ -1221,7 +1225,7 @@ export const generateEegOrdersPDF = async (
         };
 
         orders.forEach(drawOrder);
-        handlePdfOutput(doc, `Ordenes_EEG_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
+        return handlePdfOutput(doc, `Ordenes_EEG_${patient.fullName.replace(/\s+/g, '_')}_${Date.now()}.pdf`, action);
     } catch (error) {
         console.error("PDF Generation Error", error);
         alert("Error generando PDF de órdenes de EEG.");
